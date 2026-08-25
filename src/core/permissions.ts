@@ -1,0 +1,218 @@
+import { errForbidden } from "./errors";
+
+export type RoleId = "owner" | "manager" | "reception" | "trainer";
+
+export const ROLES: readonly RoleId[] = ["owner", "manager", "reception", "trainer"];
+
+export type DepartmentScope = "general" | "men" | "women";
+
+export const PERMS = [
+  "members.view",
+  "members.create",
+  "members.edit",
+  "members.delete",
+  "members.restore",
+  "members.purge",
+  "members.change_status",
+  "members.view_all_departments",
+  "cards.view",
+  "cards.register",
+  "cards.assign",
+  "cards.unassign",
+  "cards.report_lost",
+  "cards.block",
+  "plans.view",
+  "plans.create",
+  "plans.edit",
+  "subscriptions.view",
+  "subscriptions.create",
+  "subscriptions.edit",
+  "subscriptions.cancel",
+  "subscriptions.freeze",
+  "checkin.create",
+  "checkin.view_history",
+  "checkin.checkout",
+  "assessments.view",
+  "assessments.manage",
+  "payments.view",
+  "payments.create",
+  "payments.discount",
+  "payments.refund",
+  "payments.void",
+  "expenses.view",
+  "expenses.create",
+  "expenses.edit",
+  "expenses.attachments",
+  "cash.open",
+  "cash.close",
+  "reports.view",
+  "reports.export",
+  "store.view",
+  "store.products",
+  "store.sell",
+  "store.credit",
+  "store.repayments",
+  "store.void_sale",
+  "store.inventory",
+  "store.profit",
+  "classes.view",
+  "classes.manage",
+  "classes.checkin",
+  "trainers.view",
+  "trainers.manage",
+  "training.manage",
+  "employees.view",
+  "employees.manage",
+  "salaries.view",
+  "salaries.manage",
+  "crm.send",
+  "crm.templates",
+  "backup.create",
+  "backup.restore",
+  "diagnostics.view",
+  "users.view",
+  "users.manage",
+  "audit.view",
+  "settings.view",
+  "settings.edit",
+] as const;
+
+export type Permission = (typeof PERMS)[number];
+
+const MANAGER_PERMS: readonly Permission[] = [
+  "members.view",
+  "members.create",
+  "members.edit",
+  "members.change_status",
+  "members.delete",
+  "members.restore",
+  "members.purge",
+  "members.view_all_departments",
+  "cards.view",
+  "cards.register",
+  "cards.assign",
+  "cards.unassign",
+  "cards.report_lost",
+  "cards.block",
+  "plans.view",
+  "plans.create",
+  "plans.edit",
+  "subscriptions.view",
+  "subscriptions.create",
+  "subscriptions.edit",
+  "subscriptions.cancel",
+  "subscriptions.freeze",
+  "checkin.create",
+  "checkin.view_history",
+  "checkin.checkout",
+  "assessments.view",
+  "assessments.manage",
+  "payments.view",
+  "payments.create",
+  "payments.discount",
+  "payments.refund",
+  "payments.void",
+  "expenses.view",
+  "expenses.create",
+  "expenses.edit",
+  "expenses.attachments",
+  "cash.open",
+  "cash.close",
+  "reports.view",
+  "reports.export",
+  "store.view",
+  "store.products",
+  "store.sell",
+  "store.credit",
+  "store.repayments",
+  "store.void_sale",
+  "store.inventory",
+  "store.profit",
+  "classes.view",
+  "classes.manage",
+  "classes.checkin",
+  "trainers.view",
+  "trainers.manage",
+  "training.manage",
+  "employees.view",
+  "employees.manage",
+  "salaries.view",
+  "salaries.manage",
+  "crm.send",
+  "crm.templates",
+  "backup.create",
+  "backup.restore",
+  "diagnostics.view",
+  "users.view",
+  "audit.view",
+  "settings.view",
+];
+
+const RECEPTION_PERMS: readonly Permission[] = [
+  "members.view",
+  "members.create",
+  "members.edit",
+  "cards.view",
+  "cards.register",
+  "cards.assign",
+  "plans.view",
+  "subscriptions.view",
+  "subscriptions.create",
+  "checkin.create",
+  "checkin.view_history",
+  "payments.view",
+  "payments.create",
+  "cash.open",
+  "cash.close",
+  "store.view",
+  "store.sell",
+  "store.credit",
+  "store.repayments",
+  "classes.view",
+  "classes.checkin",
+  "trainers.view",
+  "crm.send",
+];
+
+const TRAINER_PERMS: readonly Permission[] = [
+  "members.view",
+  "classes.view",
+  "assessments.view",
+];
+
+export const ROLE_GRANTS: Record<RoleId, readonly Permission[]> = {
+  owner: PERMS,
+  manager: MANAGER_PERMS,
+  reception: RECEPTION_PERMS,
+  trainer: TRAINER_PERMS,
+};
+
+export interface ActorLike {
+  roleId: RoleId;
+}
+
+export interface ServiceActor extends ActorLike {
+  userId: string;
+  username: string;
+  /** Department scoping for data isolation; 'general' sees everything allowed by role. */
+  department?: DepartmentScope;
+}
+
+let dbGrants: Record<string, ReadonlySet<Permission>> | null = null;
+
+export function setDbGrants(grants: Record<string, ReadonlySet<Permission>>): void {
+  dbGrants = grants;
+}
+
+export function roleHasPermission(roleId: RoleId, perm: Permission): boolean {
+  if (roleId === "owner") return true;
+  if (dbGrants) {
+    const perms = dbGrants[roleId];
+    if (perms) return perms.has(perm);
+  }
+  return ROLE_GRANTS[roleId].includes(perm);
+}
+
+export function requirePermission(actor: ActorLike | null | undefined, perm: Permission): void {
+  if (!actor || !roleHasPermission(actor.roleId, perm)) throw errForbidden();
+}
