@@ -27,6 +27,7 @@ import { HealthPage } from "@/pages/health-page";
 import { StorePage } from "@/pages/store-page";
 import { ClassesPage } from "@/pages/classes-page";
 import { EmployeesPage } from "@/pages/employees-page";
+import { HrPage } from "@/pages/hr-page";
 import { CrmPage } from "@/pages/crm-page";
 import { PermissionsPage } from "@/pages/permissions-page";
 
@@ -149,6 +150,14 @@ export function AppRoutes() {
           element={
             <RequirePermission permission="employees.view">
               <EmployeesPage />
+            </RequirePermission>
+          }
+        />
+        <Route
+          path="hr"
+          element={
+            <RequirePermission permission="hr.view">
+              <HrPage />
             </RequirePermission>
           }
         />

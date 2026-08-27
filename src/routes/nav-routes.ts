@@ -17,6 +17,7 @@ export const NAV_ROUTES: NavRoute[] = [
   { path: "/expenses", key: "nav.expenses", permission: "expenses.view" },
   { path: "/cash", key: "nav.cash", permission: "payments.view" },
   { path: "/employees", key: "nav.employees", permission: "employees.view" },
+  { path: "/hr", key: "nav.hr", permission: "hr.view" },
   { path: "/crm", key: "nav.crm", permission: "crm.send" },
   { path: "/reports", key: "nav.reports", permission: "reports.view" },
   { path: "/trainers", key: "nav.trainers", permission: "trainers.view" },

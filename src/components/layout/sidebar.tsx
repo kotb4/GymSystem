@@ -5,6 +5,7 @@ import {
   Banknote,
   BarChart3,
   CalendarCheck,
+  CalendarClock,
   ChevronsLeft,
   ChevronsRight,
   CreditCard,
@@ -45,6 +46,7 @@ const ICONS: Record<string, LucideIcon> = {
   "/permissions": ShieldCheck,
   "/audit": ScrollText,
   "/settings": Settings,
+  "/hr": CalendarClock,
 };
 
 export function Sidebar() {

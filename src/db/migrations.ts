@@ -280,6 +280,22 @@ function buildMigrations(): Migration[] {
         }
       },
     },
+    {
+      // ---- HR: employee attendance (clock in/out), leaves, deductions, incentives ----
+      version: 12,
+      statements: [
+        "CREATE TABLE IF NOT EXISTS employee_attendance (\n  id TEXT PRIMARY KEY,\n  employee_id TEXT NOT NULL REFERENCES employees(id) ON DELETE CASCADE,\n  date_key TEXT NOT NULL,\n  clock_in_at TEXT NOT NULL,\n  clock_out_at TEXT,\n  worked_minutes INTEGER NOT NULL DEFAULT 0 CHECK (worked_minutes >= 0),\n  is_late INTEGER NOT NULL DEFAULT 0 CHECK (is_late IN (0, 1)),\n  notes TEXT,\n  created_by TEXT REFERENCES users(id),\n  created_at TEXT NOT NULL,\n  updated_at TEXT NOT NULL,\n  UNIQUE (employee_id, date_key)\n)",
+        "CREATE INDEX IF NOT EXISTS idx_emp_att_emp_date ON employee_attendance(employee_id, date_key)",
+        "CREATE INDEX IF NOT EXISTS idx_emp_att_date ON employee_attendance(date_key)",
+        "CREATE TABLE IF NOT EXISTS employee_leaves (\n  id TEXT PRIMARY KEY,\n  employee_id TEXT NOT NULL REFERENCES employees(id) ON DELETE CASCADE,\n  leave_type TEXT NOT NULL CHECK (leave_type IN ('annual', 'sick', 'unpaid', 'emergency')),\n  start_date TEXT NOT NULL,\n  end_date TEXT NOT NULL,\n  reason TEXT,\n  status TEXT NOT NULL DEFAULT 'pending' CHECK (status IN ('pending', 'approved', 'rejected', 'cancelled')),\n  requested_by TEXT REFERENCES users(id),\n  approved_by TEXT REFERENCES users(id),\n  approved_at TEXT,\n  decision_note TEXT,\n  created_at TEXT NOT NULL,\n  updated_at TEXT NOT NULL,\n  CHECK (end_date >= start_date)\n)",
+        "CREATE INDEX IF NOT EXISTS idx_emp_leave_emp ON employee_leaves(employee_id)",
+        "CREATE INDEX IF NOT EXISTS idx_emp_leave_status ON employee_leaves(status)",
+        "CREATE TABLE IF NOT EXISTS employee_deductions (\n  id TEXT PRIMARY KEY,\n  employee_id TEXT NOT NULL REFERENCES employees(id) ON DELETE CASCADE,\n  amount_minor INTEGER NOT NULL CHECK (amount_minor > 0),\n  reason TEXT NOT NULL,\n  date_key TEXT NOT NULL,\n  created_by TEXT REFERENCES users(id),\n  created_at TEXT NOT NULL\n)",
+        "CREATE INDEX IF NOT EXISTS idx_emp_ded_emp_date ON employee_deductions(employee_id, date_key)",
+        "CREATE TABLE IF NOT EXISTS employee_incentives (\n  id TEXT PRIMARY KEY,\n  employee_id TEXT NOT NULL REFERENCES employees(id) ON DELETE CASCADE,\n  amount_minor INTEGER NOT NULL CHECK (amount_minor > 0),\n  reason TEXT NOT NULL,\n  date_key TEXT NOT NULL,\n  created_by TEXT REFERENCES users(id),\n  created_at TEXT NOT NULL\n)",
+        "CREATE INDEX IF NOT EXISTS idx_emp_inc_emp_date ON employee_incentives(employee_id, date_key)",
+      ],
+    },
   ];
 }
 

@@ -26,6 +26,7 @@ import * as backupService from "../src/core/services/backup.service";
 import * as storeService from "../src/core/services/store.service";
 import * as classesService from "../src/core/services/classes.service";
 import * as employeesService from "../src/core/services/employees.service";
+import * as employeesHrService from "../src/core/services/employees-hr.service";
 import * as inbodyService from "../src/core/services/inbody.service";
 import * as crmService from "../src/core/services/crm.service";
 import * as permissionsService from "../src/core/services/permissions.service";
@@ -309,6 +310,23 @@ export const REGISTRY: Record<string, Record<string, Exposed>> = {
     listSalaries: a(employeesService.listSalaries as Fn),
     recordSalary: a(employeesService.recordSalary as Fn),
     paySalary: a(employeesService.paySalary as Fn),
+  },
+  employeesHr: {
+    clockIn: a(employeesHrService.clockIn as Fn),
+    clockOut: a(employeesHrService.clockOut as Fn),
+    upsertAttendance: a(employeesHrService.upsertAttendance as Fn),
+    listAttendance: a(employeesHrService.listAttendance as Fn),
+    requestLeave: a(employeesHrService.requestLeave as Fn),
+    listLeaves: a(employeesHrService.listLeaves as Fn),
+    decideLeave: a(employeesHrService.decideLeave as Fn),
+    cancelLeave: a(employeesHrService.cancelLeave as Fn),
+    getLeaveBalance: a(employeesHrService.getLeaveBalance as Fn),
+    listDeductions: a(employeesHrService.listDeductions as Fn),
+    listIncentives: a(employeesHrService.listIncentives as Fn),
+    addDeduction: a(employeesHrService.addDeduction as Fn),
+    addIncentive: a(employeesHrService.addIncentive as Fn),
+    monthlySalarySummary: a(employeesHrService.monthlySalarySummary as Fn),
+    employeeDailyActivity: a(employeesHrService.employeeDailyActivity as Fn),
   },
   inbody: {
     createAssessment: a(inbodyService.createAssessment as Fn),

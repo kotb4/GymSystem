@@ -477,7 +477,115 @@ const employeesApi = {
   recordSalary: (input: { employeeId: string; periodMonth: string; bonusMinor?: number; deductionMinor?: number; methodCode?: string; notes?: string | null }) =>
     rpc<PublicSalary>("employees", "recordSalary", [input]),
   paySalary: (salaryId: string) => rpc<PublicSalary>("employees", "paySalary", [salaryId]),
-purge: (id: string) => rpc<void>("employees", "purgeEmployee", [id]),
+  purge: (id: string) => rpc<void>("employees", "purgeEmployee", [id]),
+};
+
+// --------------------------- employees HR (attendance/leaves/etc) ---------
+
+export type LeaveType = "annual" | "sick" | "unpaid" | "emergency";
+export type LeaveStatus = "pending" | "approved" | "rejected" | "cancelled";
+export interface PublicAttendance {
+  id: string;
+  employeeId: string;
+  employeeName: string;
+  dateKey: string;
+  clockInAt: string;
+  clockOutAt: string | null;
+  workedMinutes: number;
+  isLate: boolean;
+  notes: string | null;
+}
+export interface PublicLeave {
+  id: string;
+  employeeId: string;
+  employeeName: string;
+  leaveType: LeaveType;
+  startDate: string;
+  endDate: string;
+  days: number;
+  reason: string | null;
+  status: LeaveStatus;
+  requestedByName: string;
+  approvedByName: string | null;
+  approvedAt: string | null;
+  decisionNote: string | null;
+}
+export interface PublicHrAmount {
+  id: string;
+  employeeId: string;
+  employeeName: string;
+  amountMinor: number;
+  reason: string;
+  dateKey: string;
+}
+export interface PublicLeaveBalance {
+  entitlement: number;
+  used: number;
+  remaining: number;
+}
+export interface PublicSalarySummary {
+  employeeId: string;
+  employeeName: string;
+  periodMonth: string;
+  baseMinor: number;
+  incentivesMinor: number;
+  deductionsMinor: number;
+  unpaidLeaveDays: number;
+  unpaidLeaveImpactMinor: number;
+  attendedDays: number;
+  netMinor: number;
+  alreadyRecorded: boolean;
+}
+export interface PublicDailyActivity {
+  employeeId: string;
+  employeeName: string;
+  dateKey: string;
+  totals: {
+    attendanceIn: number;
+    attendanceOut: number;
+    subscriptionsSold: number;
+    subscriptionsTotalMinor: number;
+    storeSales: number;
+    storeSalesTotalMinor: number;
+    paymentsReceived: number;
+    paymentsTotalMinor: number;
+    expensesRecorded: number;
+    expensesTotalMinor: number;
+    auditedActions: number;
+  };
+  entries: Array<{ time: string; category: string; label: string; reference: string | null; amountMinor: number }>;
+}
+
+const employeesHrApi = {
+  clockIn: (input: { employeeId?: string | null; at?: string | null; dateKey?: string | null; notes?: string | null }) =>
+    rpc<PublicAttendance>("employeesHr", "clockIn", [input]),
+  clockOut: (input: { employeeId?: string | null; at?: string | null; dateKey?: string | null }) =>
+    rpc<PublicAttendance>("employeesHr", "clockOut", [input]),
+  upsertAttendance: (input: { employeeId: string; dateKey: string; clockInAt: string; clockOutAt?: string | null; notes?: string | null }) =>
+    rpc<PublicAttendance>("employeesHr", "upsertAttendance", [input]),
+  listAttendance: (query?: { month?: string; employeeId?: string | null }) =>
+    rpc<PublicAttendance[]>("employeesHr", "listAttendance", [query ?? {}]),
+  requestLeave: (input: { employeeId?: string | null; leaveType: LeaveType; startDate: string; endDate: string; reason?: string | null }) =>
+    rpc<PublicLeave>("employeesHr", "requestLeave", [input]),
+  listLeaves: (query?: { status?: LeaveStatus | "all"; employeeId?: string | null; month?: string | null }) =>
+    rpc<PublicLeave[]>("employeesHr", "listLeaves", [query ?? {}]),
+  decideLeave: (input: { leaveId: string; approve: boolean; decisionNote?: string | null }) =>
+    rpc<PublicLeave>("employeesHr", "decideLeave", [input]),
+  cancelLeave: (leaveId: string) => rpc<PublicLeave>("employeesHr", "cancelLeave", [leaveId]),
+  getLeaveBalance: (input: { employeeId?: string | null; year?: string | null }) =>
+    rpc<PublicLeaveBalance>("employeesHr", "getLeaveBalance", [input]),
+  listDeductions: (query?: { month?: string; employeeId?: string | null }) =>
+    rpc<PublicHrAmount[]>("employeesHr", "listDeductions", [query ?? {}]),
+  listIncentives: (query?: { month?: string; employeeId?: string | null }) =>
+    rpc<PublicHrAmount[]>("employeesHr", "listIncentives", [query ?? {}]),
+  addDeduction: (input: { employeeId: string; amountMinor: number; reason: string; dateKey?: string | null }) =>
+    rpc<PublicHrAmount>("employeesHr", "addDeduction", [input]),
+  addIncentive: (input: { employeeId: string; amountMinor: number; reason: string; dateKey?: string | null }) =>
+    rpc<PublicHrAmount>("employeesHr", "addIncentive", [input]),
+  monthlySalarySummary: (input: { employeeId: string; periodMonth: string }) =>
+    rpc<PublicSalarySummary>("employeesHr", "monthlySalarySummary", [input]),
+  employeeDailyActivity: (input: { employeeId: string; dateKey: string }) =>
+    rpc<PublicDailyActivity>("employeesHr", "employeeDailyActivity", [input]),
 };
 
 // ------------------------------ InBody -----------------------------------
@@ -612,6 +720,7 @@ export const api = {
   store: storeApi,
   classes: classesApi,
   employees: employeesApi,
+  employeesHr: employeesHrApi,
   inbody: inbodyApi,
   crm: crmApi,
   files: { upload: uploadFile, url: fileUrl },

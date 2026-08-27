@@ -152,7 +152,7 @@ describe("restore/import authorization (audit F-01)", () => {
 
     const reopened = (await import("../server/context")).getDbContext() as unknown as BootedContext;
     expect(countActiveOwners(reopened.db as never)).toBe(1);
-    expect(Number(reopened.db.scalar("SELECT MAX(version) FROM schema_migrations"))).toBe(11);
+    expect(Number(reopened.db.scalar("SELECT MAX(version) FROM schema_migrations"))).toBe(12);
     expect(report.schemaVersion).toBeLessThanOrEqual(5);
 
     cleanups.push(() => {
