@@ -394,7 +394,7 @@ export async function generateDueMessages(db: Db, actor: ServiceActor): Promise<
   const inactiveDays = getInactiveDays(db);
   const cutoffStamp = `${addDaysKey(today, -inactiveDays)} 23:59:59`;
   const inactive = db.all<Row>(
-    "SELECT m.id, m.full_name FROM members m\nWHERE m.deleted_at IS NULL AND m.status = 'active'\nAND EXISTS (SELECT 1 FROM member_subscriptions s WHERE s.member_id = m.id AND s.status = 'active' AND s.end_date >= ?)\nAND COALESCE((SELECT MAX(a.checkin_at) FROM attendance a WHERE a.member_id = m.id), '') <= ?",
+    "SELECT m.id, m.full_name FROM members m\nWHERE m.deleted_at IS NULL AND m.status = 'active'\nAND EXISTS (SELECT 1 FROM member_subscriptions s WHERE s.member_id = m.id AND s.status = 'active' AND s.end_date >= ?)\nAND COALESCE((SELECT MAX(a.checkin_at) FROM attendance a WHERE a.member_id = m.id AND a.deleted_at IS NULL), '') <= ?",
     [today, cutoffStamp],
   );
   for (const row of inactive) {
@@ -403,7 +403,7 @@ export async function generateDueMessages(db: Db, actor: ServiceActor): Promise<
 
   // 4) gym subscription debt (one reminder per member per month)
   const gymDebts = db.all<Row>(
-    "WITH paid AS (\n  SELECT subscription_id, SUM(paid_amount_minor) AS paid_minor FROM payments\n  WHERE subscription_id IS NOT NULL AND status IN ('partial','paid') GROUP BY subscription_id\n)\nSELECT DISTINCT s.member_id, m.full_name AS member_name,\n  SUM(MAX(CAST(ROUND(s.price * 100) AS INTEGER) - COALESCE(p.paid_minor,0), 0)) OVER (PARTITION BY s.member_id) AS remaining_minor\nFROM member_subscriptions s\nLEFT JOIN paid p ON p.subscription_id = s.id\nJOIN members m ON m.id = s.member_id\nWHERE s.status = 'active'",
+    "WITH paid AS (\n  SELECT subscription_id, SUM(paid_amount_minor) AS paid_minor, SUM(discount_amount_minor) AS discount_minor FROM payments\n  WHERE subscription_id IS NOT NULL AND status IN ('partial','paid') GROUP BY subscription_id\n)\nSELECT DISTINCT s.member_id, m.full_name AS member_name,\n  SUM(MAX(CAST(ROUND(s.price * 100) AS INTEGER) - COALESCE(p.paid_minor,0) - COALESCE(p.discount_minor,0), 0)) OVER (PARTITION BY s.member_id) AS remaining_minor\nFROM member_subscriptions s\nLEFT JOIN paid p ON p.subscription_id = s.id\nJOIN members m ON m.id = s.member_id\nWHERE s.status = 'active'",
   );
   for (const row of gymDebts) {
     const remaining = num(row.remaining_minor);

@@ -278,7 +278,7 @@ export async function seedDemoData(db: Db): Promise<void> {
     }
 
     const settingsRows: Array<[string, string]> = [
-      ["gym_name", "جيم برو"],
+      ["gym_name", "Yassen Mohamed Kotb | 01288536381"],
       ["currency_symbol", "ج.م"],
       ["checkin_duplicate_window_seconds", "45"],
       ["demo_seeded", "1"],

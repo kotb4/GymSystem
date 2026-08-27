@@ -252,6 +252,33 @@ export async function voidExpense(
   return getExpenseById(db, actor, expenseId);
 }
 
+export async function unvoidExpense(
+  db: Db,
+  actor: ServiceActor,
+  expenseId: string,
+): Promise<Expense> {
+  requirePermission(actor, "expenses.edit");
+  const existing = db.first<ExpenseRow>("SELECT * FROM expenses WHERE id = ?", [expenseId]);
+  if (!existing) throw errNotFound("errors.finance.expenseNotFound");
+  if (existing.status !== "voided") throw errConflict("errors.finance.notVoided");
+
+  const stamp = nowStamp();
+  await db.transaction(async () => {
+    db.run(
+      "UPDATE expenses SET status = 'active', void_reason = NULL, voided_by = NULL, voided_at = NULL, updated_by = ?, updated_at = ? WHERE id = ?",
+      [actor.userId, stamp, expenseId],
+    );
+    db.run(
+      "DELETE FROM financial_ledger WHERE ref_table = 'expenses' AND ref_id = ? AND entry_type = 'reversal_expense'",
+      [expenseId],
+    );
+    recordAudit(db, actor, "EXPENSE_RESTORED", "expense", expenseId, {
+      amountMinor: Number(existing.amount_minor),
+    });
+  });
+  return getExpenseById(db, actor, expenseId);
+}
+
 export function getExpenseById(db: Db, actor: ServiceActor, expenseId: string): Expense {
   requirePermission(actor, "expenses.view");
   const row = db.first<ExpenseRow & Record<string, unknown>>(`${EXPENSE_SELECT}\nWHERE e.id = ?`, [

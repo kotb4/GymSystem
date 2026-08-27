@@ -2,7 +2,7 @@
 description: Run project tests and analyze results honestly
 agent: tester
 ---
-Run and analyze GymSystem tests. Scope: $ARGUMENTS (a specific suite name, or empty = full suite).
+Run and analyze Yassen Mohamed Kotb | 01288536381 tests. Scope: $ARGUMENTS (a specific suite name, or empty = full suite).
 
 Use ONLY these verified commands from AGENTS.md §2:
 - Full unit suite: npm test

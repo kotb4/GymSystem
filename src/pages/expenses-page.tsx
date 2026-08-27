@@ -1,7 +1,9 @@
 ﻿import { useEffect, useState } from "react";
-import { Pencil, Plus, ReceiptText, Tags, Undo2 } from "lucide-react";
+import { Pencil, Plus, ReceiptText, RotateCcw, Tags, Undo2 } from "lucide-react";
 import { useAuth } from "@/contexts/auth-context";
 import { useT } from "@/i18n";
+import { useToast } from "@/components/ui/toast";
+import { describeError } from "@/utils/app-error";
 import { api, type Expense, type ExpenseCategory } from "@/api";
 import type { ExpenseStatus } from "@/core/services/expenses.service";
 import { formatMinor, minorToMajor } from "@/core/money";
@@ -16,11 +18,13 @@ import { Badge } from "@/components/ui/badge";
 import { DataTable, type Column } from "@/components/ui/table";
 import { EmptyState } from "@/components/ui/empty-state";
 import { Pagination } from "@/components/ui/pagination";
+import { ConfirmDialog } from "@/components/ui/confirm-dialog";
 import { ExpenseFormModal, ExpenseCategoriesModal, ExpenseVoidModal } from "@/components/finance/expense-form-modal";
 
 export function ExpensesPage() {
   const t = useT();
   const { actor, hasPermission } = useAuth();
+  const { toast } = useToast();
 
   const [search, setSearch] = useState("");
   const [debounced, setDebounced] = useState("");
@@ -37,6 +41,7 @@ export function ExpensesPage() {
   const [editTarget, setEditTarget] = useState<Expense | null>(null);
   const [catsOpen, setCatsOpen] = useState(false);
   const [voidTarget, setVoidTarget] = useState<Expense | null>(null);
+  const [unvoidTarget, setUnvoidTarget] = useState<Expense | null>(null);
   const [reloadTick, setReloadTick] = useState(0);
   const reload = () => setReloadTick((v) => v + 1);
 
@@ -172,6 +177,12 @@ export function ExpensesPage() {
               <Undo2 className="size-3.5" />
               {t("exp.actionVoid")}
             </Button>
+            {row.status === "voided" && (
+              <Button variant="ghost" size="sm" onClick={() => setUnvoidTarget(row.expense)}>
+                <RotateCcw className="size-3.5" />
+                {t("exp.actionRestore")}
+              </Button>
+            )}
           </div>
         ) : (
           <span className="text-[11px] text-faint">—</span>
@@ -287,6 +298,23 @@ export function ExpensesPage() {
         onClose={() => setVoidTarget(null)}
         onDone={reload}
         expense={voidTarget}
+      />
+      <ConfirmDialog
+        open={unvoidTarget !== null}
+        onClose={() => setUnvoidTarget(null)}
+        title={t("exp.restoreConfirmTitle")}
+        message={t("exp.restoreConfirmMsg")}
+        onConfirm={() => {
+          if (!unvoidTarget) return;
+          api.expenses
+            .unvoid(unvoidTarget.id)
+            .then(() => {
+              toast("success", t("exp.restoredToast"));
+              setUnvoidTarget(null);
+              reload();
+            })
+            .catch((err) => toast("error", describeError(err, t)));
+        }}
       />
     </div>
   );

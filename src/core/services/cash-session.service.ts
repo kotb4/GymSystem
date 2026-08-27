@@ -186,6 +186,24 @@ export async function closeCashSession(
   return { ...mapped, cashInMinor: totals.cashInMinor, cashOutMinor: totals.cashOutMinor };
 }
 
+/**
+ * Aborts/deletes a session (ADR-008). OPEN sessions may be purged (mistaken
+ * open) — ledger money truth is untouched. CLOSED sessions are permanent:
+ * their counted-vs-expected discrepancy record must never be hidden.
+ */
+export function deleteCashSession(db: Db, actor: ServiceActor, sessionId: string): void {
+  requirePermission(actor, "cash.purge");
+  const row = getSessionRow(db, sessionId);
+  if (!row) throw errNotFound("errors.finance.sessionNotFound");
+  if (row.status === "closed") throw errConflict("errors.finance.sessionClosedLocked");
+
+  db.run("DELETE FROM cash_sessions WHERE id = ? AND status = 'open'", [sessionId]);
+  recordAudit(db, actor, "CASH_SESSION_DELETED", "cash_session", sessionId, {
+    box: String(row.box ?? "gym"),
+    openedAt: row.opened_at,
+  });
+}
+
 export interface CashTotalsForOpen {
   openingMinor: number;
   cashInMinor: number;

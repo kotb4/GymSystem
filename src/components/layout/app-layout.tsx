@@ -6,6 +6,7 @@ import { useAuth } from "@/contexts/auth-context";
 import { useBootMaintenance } from "@/hooks/use-boot-maintenance";
 import { Sidebar } from "./sidebar";
 import { Header } from "./header";
+import { NewsTicker } from "./news-ticker";
 
 export function AppLayout() {
   const t = useT();
@@ -28,6 +29,7 @@ export function AppLayout() {
       <Sidebar />
       <div className="flex min-w-0 flex-1 flex-col">
         <Header />
+        <NewsTicker />
         <main className="flex-1 overflow-y-auto">
           <div key={location.pathname} className="mx-auto w-full max-w-[1440px] animate-fade-up px-6 py-6">
             <Outlet />

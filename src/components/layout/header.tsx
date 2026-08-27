@@ -1,8 +1,9 @@
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useLocation, useNavigate } from "react-router-dom";
 import {
   Bell,
   CalendarClock,
+  CalendarDays,
   ChevronsUpDown,
   CircleUser,
   HardDriveDownload,
@@ -11,6 +12,7 @@ import {
   Settings,
   ShieldAlert,
   Wallet,
+  X,
 } from "lucide-react";
 import { useAuth } from "@/contexts/auth-context";
 import { useT } from "@/i18n";
@@ -20,6 +22,7 @@ import { useToast } from "@/components/ui/toast";
 import {
   api,
 } from "@/api";
+import { todayKey, setDevOverrideDate } from "@/core/dates";
 import type {
   AppNotification,
   AppNotificationType,
@@ -49,12 +52,38 @@ export function Header() {
   const t = useT();
   const location = useLocation();
   const navigate = useNavigate();
-  const { actor, user } = useAuth();
+  const { actor, user, hasPermission } = useAuth();
   const { request: requestLogout, dialog: logoutDialog } = useLogoutFlow();
   const { toast } = useToast();
   const [notifs, setNotifs] = useState<AppNotification[]>([]);
   // read-state is pure UI preference kept in memory only (spec section 10)
   const [readIds, setReadIds] = useState<string[]>([]);
+
+  const today = todayKey();
+  const [devDate, setDevDate] = useState(today);
+  const [devOverride, setDevOverride] = useState<string | null>(null);
+  const devInputRef = useRef<HTMLInputElement>(null);
+
+  useEffect(() => {
+    if (!actor) return;
+    api.dev.getOverrideDate().then((d) => {
+      setDevOverride(d);
+      setDevOverrideDate(d);
+      if (d) setDevDate(d);
+      else setDevDate(today);
+    }).catch(() => {});
+  }, [actor, today]);
+
+  const applyDevDate = async (val: string | null) => {
+    try {
+      const res = await api.dev.setOverrideDate(val);
+      setDevOverride(res);
+      setDevOverrideDate(res);
+      window.location.reload();
+    } catch {
+      toast("error", "Failed");
+    }
+  };
 
   const persistReadIds = useCallback((next: string[]) => {
     setReadIds(next);
@@ -113,6 +142,31 @@ export function Header() {
         <span aria-hidden className="size-2 animate-pulse-dot rounded-full bg-neon" />
         {t("header.online")}
       </span>
+
+      {hasPermission("settings.edit") && (
+        <div className="hidden items-center gap-1.5 rounded-full border border-dashed border-amber/40 bg-amber/5 px-2.5 py-1 md:inline-flex">
+          <CalendarDays className="size-3.5 text-amber" />
+          <input
+            ref={devInputRef}
+            type="date"
+            value={devDate}
+            max="2099-12-31"
+            onChange={(e) => { setDevDate(e.target.value); void applyDevDate(e.target.value); }}
+            className="h-5 w-[110px] cursor-pointer bg-transparent text-[11px] font-bold tabnum text-amber outline-none [color-scheme:dark]"
+            title={t("header.devDateTitle")}
+          />
+          {devOverride && (
+            <button
+              type="button"
+              onClick={() => void applyDevDate(null)}
+              className="grid size-4 place-items-center rounded text-amber transition-colors hover:bg-amber/20"
+              title={t("header.devDateReset")}
+            >
+              <X className="size-3" />
+            </button>
+          )}
+        </div>
+      )}
 
       <Dropdown
         widthClass="w-[340px]"

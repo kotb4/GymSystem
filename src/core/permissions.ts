@@ -32,6 +32,7 @@ export const PERMS = [
   "checkin.create",
   "checkin.view_history",
   "checkin.checkout",
+  "checkin.delete",
   "assessments.view",
   "assessments.manage",
   "payments.view",
@@ -75,6 +76,10 @@ export const PERMS = [
   "audit.view",
   "settings.view",
   "settings.edit",
+  "subscriptions.purge",
+  "employees.purge",
+  "store.purge",
+  "cash.purge",
 ] as const;
 
 export type Permission = (typeof PERMS)[number];
@@ -105,6 +110,7 @@ const MANAGER_PERMS: readonly Permission[] = [
   "checkin.create",
   "checkin.view_history",
   "checkin.checkout",
+  "checkin.delete",
   "assessments.view",
   "assessments.manage",
   "payments.view",
@@ -146,6 +152,7 @@ const MANAGER_PERMS: readonly Permission[] = [
   "users.view",
   "audit.view",
   "settings.view",
+  "settings.edit",
 ];
 
 const RECEPTION_PERMS: readonly Permission[] = [

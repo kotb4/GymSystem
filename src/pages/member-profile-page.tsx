@@ -4,13 +4,19 @@ import {
   Archive,
   ArrowRight,
   CalendarPlus,
+  CalendarX2,
   Camera,
   CreditCard,
   Dumbbell,
+  Info,
+  PauseCircle,
   Pencil,
+  PlayCircle,
   Plus,
   ScanLine,
   Scale,
+  Snowflake,
+  Trash2,
   Undo2,
   X,
 } from "lucide-react";
@@ -19,6 +25,7 @@ import { useT } from "@/i18n";
 import { useToast } from "@/components/ui/toast";
 import { describeError } from "@/utils/app-error";
 import { api, rpc } from "@/api";
+import type { FreezeInfo } from "@/api";
 import type {
   PlanWithNames,
 } from "@/core/services/training-plans.service";
@@ -28,10 +35,10 @@ import type { CardWithMember } from "@/core/services/cards.service";
 import type { Subscription } from "@/core/services/subscriptions.service";
 import type { PublicAssessment, ProgressComparison } from "@/api";
 
-import { parseDateKey } from "@/core/dates";
+import { parseDateKey, diffDaysKeys, todayKey } from "@/core/dates";
 import { formatMinor, toMinor } from "@/core/money";
-
 import { formatDateShort, formatTime } from "@/services/format";
+
 import { cardStatusMeta, memberStatusMeta, subStatusMeta } from "@/utils/status-meta";
 import { Card, CardHeader } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
@@ -55,6 +62,66 @@ const TAB_ITEMS = [
   { value: "training", label: "" },
   { value: "inbody", label: "" },
 ];
+
+/** Live outstanding balances (gym subscriptions + store debts) for the profile header. */
+function OutstandingStrip({ memberId, version }: { memberId: string; version: number }) {
+  const t = useT();
+  const [data, setData] = useState<{ subscriptionsMinor: number; storeMinor: number; totalMinor: number } | null>(null);
+  const [failed, setFailed] = useState(false);
+  const [attempt, setAttempt] = useState(0);
+
+  useEffect(() => {
+    let alive = true;
+    setFailed(false);
+    api.finance
+      .outstandingForMember(memberId)
+      .then((r) => { if (alive) setData(r); })
+      .catch(() => { if (alive) { setData(null); setFailed(true); } });
+    return () => { alive = false; };
+  }, [memberId, version, attempt]);
+
+  if (failed) {
+    return (
+      <Card className="border-amber/30 bg-amber/[0.05]">
+        <div className="flex items-center justify-between px-5 py-3">
+          <span className="text-sm font-bold text-amber">{t("members.outstandingError")}</span>
+          <Button size="sm" variant="secondary" onClick={() => setAttempt((a) => a + 1)}>
+            {t("health.rerun")}
+          </Button>
+        </div>
+      </Card>
+    );
+  }
+
+  if (!data || data.totalMinor === 0) {
+    return (
+      <Card className="border-emerald/25 bg-emerald/[0.04]">
+        <div className="px-5 py-3 text-sm font-bold text-emerald">✓ {t("members.noOutstanding")}</div>
+      </Card>
+    );
+  }
+
+  return (
+    <Card>
+      <div className="grid gap-3 px-5 py-4 sm:grid-cols-3">
+        <Stat title={t("members.outstandingSubs")} minor={data.subscriptionsMinor} />
+        <Stat title={t("members.outstandingStore")} minor={data.storeMinor} />
+        <Stat title={t("members.outstandingTotal")} minor={data.totalMinor} highlight />
+      </div>
+    </Card>
+  );
+}
+
+function Stat({ title, minor, highlight }: { title: string; minor: number; highlight?: boolean }) {
+  return (
+    <div>
+      <p className="text-[11px] font-semibold text-faint">{title}</p>
+      <p dir="ltr" className={highlight ? "text-lg font-extrabold tabnum text-red" : "font-bold tabnum text-ink"}>
+        {formatMinor(minor)}
+      </p>
+    </div>
+  );
+}
 
 const TAB_LABEL_KEYS: Record<string, string> = {
   cards: "members.tabCards",
@@ -309,6 +376,8 @@ export function MemberProfilePage() {
         </div>
       </Card>
 
+      <OutstandingStrip memberId={member.id} version={tick} />
+
       <Tabs items={tabs} value={tab} onChange={setTab} />
 
       {tab === "cards" && <MemberCardsTab member={member} version={tick} onAssign={() => setCardModalOpen(true)} />}
@@ -452,8 +521,66 @@ function MemberSubsTab({
 }) {
   const t = useT();
   const { actor, hasPermission } = useAuth();
+  const { toast } = useToast();
   const [subs, setSubs] = useState<Subscription[]>([]);
   const [renewSub, setRenewSub] = useState<Subscription | null>(null);
+  const [purgeTarget, setPurgeTarget] = useState<Subscription | null>(null);
+  const [cancelTarget, setCancelTarget] = useState<Subscription | null>(null);
+  const [detailsTarget, setDetailsTarget] = useState<Subscription | null>(null);
+  const [freezeHistory, setFreezeHistory] = useState<FreezeInfo[]>([]);
+  const [busy, setBusy] = useState(false);
+  const [statusFilter, setStatusFilter] = useState("all");
+
+  const doPurge = async () => {
+    if (!purgeTarget) return;
+    setBusy(true);
+    try {
+      await api.subscriptions.purge(purgeTarget.id);
+      toast("success", t("subs.purgedToast"));
+      setPurgeTarget(null);
+      reload();
+    } catch (err) {
+      toast("error", describeError(err, t));
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const doCancel = async () => {
+    if (!cancelTarget) return;
+    setBusy(true);
+    try {
+      await api.subscriptions.setStatus(cancelTarget.id, "cancelled");
+      toast("success", t("subs.cancelledToast"));
+      setCancelTarget(null);
+      reload();
+    } catch (err) {
+      toast("error", describeError(err, t));
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const doSuspendToggle = async (sub: Subscription) => {
+    const next = sub.status === "suspended" ? "active" : "suspended";
+    try {
+      await api.subscriptions.setStatus(sub.id, next);
+      toast("success", next === "suspended" ? t("subs.suspendedToast") : t("subs.resumedToast"));
+      reload();
+    } catch (err) {
+      toast("error", describeError(err, t));
+    }
+  };
+
+  const doFreeze = async (sub: Subscription) => {
+    try {
+      await api.subscriptions.freeze(sub.id);
+      toast("success", t("subs.suspendedToast"));
+      reload();
+    } catch (err) {
+      toast("error", describeError(err, t));
+    }
+  };
 
   const reload = useCallback(() => {
     if (!actor) return;
@@ -474,15 +601,16 @@ function MemberSubsTab({
   }, [reload, version]);
 
   // balances via backend
-  const [balances, setBalances] = useState<Record<string, number>>({});
+  const [balances, setBalances] = useState<Record<string, { paidMinor: number; discountedMinor: number; remainingMinor: number }>>({});
   useEffect(() => {
     if (!actor || !hasPermission("payments.view") || subs.length === 0) return;
     let alive = true;
     void (async () => {
-      const next: Record<string, number> = {};
+      const next: Record<string, { paidMinor: number; discountedMinor: number; remainingMinor: number }> = {};
       for (const s of subs) {
         try {
-          next[s.id] = (await api.payments.subscriptionBalance(s.id)).remainingMinor;
+          const b = await api.payments.subscriptionBalance(s.id);
+          next[s.id] = { paidMinor: b.paidMinor, discountedMinor: b.discountedMinor, remainingMinor: b.remainingMinor };
         } catch {
           /* leave 0 */
         }
@@ -494,6 +622,13 @@ function MemberSubsTab({
     };
   }, [actor, hasPermission, subs]);
 
+  useEffect(() => {
+    if (!detailsTarget) { setFreezeHistory([]); return; }
+    let alive = true;
+    api.subscriptions.freezes(detailsTarget.id).then((rows) => { if (alive) setFreezeHistory(rows); }).catch(() => { if (alive) setFreezeHistory([]); });
+    return () => { alive = false; };
+  }, [detailsTarget]);
+
   interface Row {
     id: string;
     planName: string;
@@ -501,9 +636,15 @@ function MemberSubsTab({
     endDate: string;
     price: number;
     remainingMinor: number;
+    discountMinor: number;
+    paidMinor: number;
     effective: Parameters<typeof subStatusMeta>[1];
+    totalDays: number;
+    remainingDays: number;
+    frozenDays: number;
+    subscription: Subscription;
   }
-  const today = new Date().toISOString().slice(0, 10);
+  const today = todayKey();
   const rows: Row[] = subs.map((s) => {
     let eff: Row["effective"] = "expired";
     if (s.status === "suspended") eff = "suspended";
@@ -511,7 +652,9 @@ function MemberSubsTab({
     else if (today < s.startDate) eff = "upcoming";
     else if (today >= s.startDate && today <= s.endDate) eff = "active";
     let remainingMinor = 0;
-    remainingMinor = balances[s.id] ?? 0;
+    remainingMinor = balances[s.id]?.remainingMinor ?? 0;
+    const totalDays = diffDaysKeys(s.startDate, s.endDate) + 1;
+    const remainingDays = eff === "active" ? Math.max(0, diffDaysKeys(today, s.endDate) + 1) : eff === "expired" ? 0 : totalDays;
     return {
       id: s.id,
       planName: s.planName ?? "-",
@@ -519,9 +662,17 @@ function MemberSubsTab({
       endDate: s.endDate,
       price: s.price,
       remainingMinor,
+      discountMinor: balances[s.id]?.discountedMinor ?? 0,
+      paidMinor: balances[s.id]?.paidMinor ?? 0,
       effective: eff,
+      totalDays,
+      remainingDays,
+      frozenDays: s.frozenDays,
+      subscription: s,
     };
   });
+
+  const filteredRows = statusFilter === "all" ? rows : rows.filter((r) => r.effective === statusFilter);
 
   const columns: Column<Row>[] = [
     {
@@ -540,11 +691,46 @@ function MemberSubsTab({
     },
     {
       key: "price",
-      header: t("subs.pricePaid"),
+      header: t("subs.price"),
       render: (row) => <span className="font-bold tabnum">{row.price}</span>,
+    },
+    {
+      key: "totalDays",
+      header: t("subs.totalDays"),
+      render: (row) => <span className="tabnum text-subtle">{row.totalDays} {t("subs.daysUnit")}</span>,
+    },
+    {
+      key: "remainingDays",
+      header: t("subs.remainingDays"),
+      render: (row) => {
+        if (row.effective === "expired" || row.effective === "cancelled") {
+          return <span className="text-faint tabnum">—</span>;
+        }
+        const color = row.remainingDays <= 7 ? "text-red" : row.remainingDays <= 14 ? "text-amber" : "text-neon";
+        return <span className={`font-bold tabnum ${color}`}>{row.remainingDays} {t("subs.daysUnit")}</span>;
+      },
     },
     ...(hasPermission("payments.view")
       ? [
+          {
+            key: "discount" as const,
+            header: t("subs.discount"),
+            align: "end" as const,
+            render: (row: Row) =>
+              row.discountMinor > 0 ? (
+                <span className="font-bold tabnum text-amber">{formatMinor(row.discountMinor)}</span>
+              ) : (
+                <span className="text-faint tabnum">—</span>
+              ),
+          },
+          {
+            key: "paid" as const,
+            header: t("subs.paidAmount"),
+            align: "end" as const,
+            render: (row: Row) => (
+              <span className="tabnum text-subtle">{formatMinor(row.paidMinor)}</span>
+            ),
+          },
           {
             key: "balance" as const,
             header: t("subs.balanceDue"),
@@ -556,6 +742,20 @@ function MemberSubsTab({
                 <span className="text-faint tabnum">0</span>
               ),
           },
+          {
+            key: "frozenDays" as const,
+            header: t("subs.frozenDaysCount"),
+            align: "end" as const,
+            render: (row: Row) =>
+              row.frozenDays > 0 ? (
+                <span className="tabnum text-cyan flex items-center gap-1">
+                  <Snowflake className="size-3" />
+                  {row.frozenDays} {t("subs.daysUnit")}
+                </span>
+              ) : (
+                <span className="text-faint tabnum">—</span>
+              ),
+          },
         ]
       : []),
     {
@@ -563,17 +763,86 @@ function MemberSubsTab({
       header: t("common.status"),
       render: (row) => {
         const meta = subStatusMeta(t, row.effective);
+        const original = subs.find((s) => s.id === row.id);
         return (
           <div className="flex items-center gap-2">
             <Badge variant={meta.variant} dot>
               {meta.label}
             </Badge>
+            <button
+              type="button"
+              aria-label={t("subs.details")}
+              onClick={() => { if (original) setDetailsTarget(original); }}
+              className="grid size-7 place-items-center rounded-lg text-faint transition-colors hover:bg-white/5 hover:text-subtle"
+              title={t("subs.details")}
+            >
+              <Info className="size-3.5" />
+            </button>
+            {hasPermission("subscriptions.edit") && row.effective === "frozen" && (
+              <button
+                type="button"
+                aria-label={t("subs.unfreeze")}
+                onClick={() => { if (original) void api.subscriptions.unfreeze(original.id).then(() => { toast("success", t("subs.unfrozenToast")); reload(); }).catch((err) => toast("error", describeError(err, t))); }}
+                className="grid size-7 place-items-center rounded-lg text-faint transition-colors hover:bg-cyan/10 hover:text-cyan"
+                title={t("subs.unfreeze")}
+              >
+                <PlayCircle className="size-3.5" />
+              </button>
+            )}
+            {hasPermission("subscriptions.edit") && row.effective === "suspended" && (
+              <button
+                type="button"
+                aria-label={t("subs.resumeSub")}
+                onClick={() => { if (original) void doSuspendToggle(original); }}
+                className="grid size-7 place-items-center rounded-lg text-faint transition-colors hover:bg-white/5 hover:text-subtle"
+                title={t("subs.resumeSub")}
+              >
+                <PlayCircle className="size-3.5" />
+              </button>
+            )}
+            {hasPermission("subscriptions.edit") && row.effective === "active" && (
+              <button
+                type="button"
+                aria-label={t("subs.suspendSub")}
+                onClick={() => { if (original) void doSuspendToggle(original); }}
+                className="grid size-7 place-items-center rounded-lg text-faint transition-colors hover:bg-white/5 hover:text-subtle"
+                title={t("subs.suspendSub")}
+              >
+                <PauseCircle className="size-3.5" />
+              </button>
+            )}
+            {hasPermission("subscriptions.cancel") && row.effective === "active" && (
+              <button
+                type="button"
+                aria-label={t("subs.cancelSub")}
+                onClick={() => { if (original) setCancelTarget(original); }}
+                className="grid size-7 place-items-center rounded-lg text-faint transition-colors hover:bg-red/10 hover:text-red"
+                title={t("subs.cancelSub")}
+              >
+                <CalendarX2 className="size-3.5" />
+              </button>
+            )}
+            {hasPermission("subscriptions.freeze") && row.effective === "active" && (
+              <button
+                type="button"
+                aria-label={t("subs.suspendSub")}
+                onClick={() => { if (original) void doFreeze(original); }}
+                className="grid size-7 place-items-center rounded-lg text-faint transition-colors hover:bg-cyan/10 hover:text-cyan"
+                title={t("subs.suspendSub")}
+              >
+                <Snowflake className="size-3.5" />
+              </button>
+            )}
             {hasPermission("subscriptions.create") && (row.effective === "active" || row.effective === "expired") && (
-              <Button size="sm" variant="secondary" onClick={() => {
-                const original = subs.find((s) => s.id === row.id);
-                if (original) setRenewSub(original);
-              }}>
+              <Button size="sm" variant="secondary" onClick={() => { if (original) setRenewSub(original); }}>
                 {t("subs.renew")}
+              </Button>
+            )}
+            {hasPermission("subscriptions.purge") && (
+              <Button size="sm" variant="ghost" className="text-red hover:text-red"
+                title={t("subs.purgeAction")}
+                onClick={() => { if (original) setPurgeTarget(original); }}>
+                <Trash2 className="size-3.5" />
               </Button>
             )}
           </div>
@@ -583,22 +852,37 @@ function MemberSubsTab({
   ];
 
   return (
-    <Card>
+      <Card>
       <CardHeader
         title={t("members.tabSubs")}
         action={
-          hasPermission("subscriptions.create") && member.status !== "archived" ? (
-            <Button onClick={onAdd}>
-              <CalendarPlus className="size-4" />
-              {t("subs.addSubscription")}
-            </Button>
-          ) : undefined
+          <div className="flex items-center gap-2">
+            <Select
+              value={statusFilter}
+              onChange={(e) => setStatusFilter(e.target.value)}
+              options={[
+                { value: "all", label: t("subs.filterAll") },
+                { value: "active", label: t("subs.filterActive") },
+                { value: "upcoming", label: t("subs.filterUpcoming") },
+                { value: "expired", label: t("subs.filterExpired") },
+                { value: "suspended", label: t("subs.filterSuspended") },
+                { value: "frozen", label: t("status.frozen") },
+                { value: "cancelled", label: t("subs.filterCancelled") },
+              ]}
+            />
+            {hasPermission("subscriptions.create") && member.status !== "archived" && (
+              <Button onClick={onAdd}>
+                <CalendarPlus className="size-4" />
+                {t("subs.addSubscription")}
+              </Button>
+            )}
+          </div>
         }
       />
-      {rows.length === 0 ? (
+      {filteredRows.length === 0 ? (
         <EmptyState icon={<CalendarPlus />} title={t("members.noSubs")} />
       ) : (
-        <DataTable columns={columns} data={rows} rowKey={(r) => r.id} />
+        <DataTable columns={columns} data={filteredRows} rowKey={(r) => r.id} />
       )}
       {renewSub && (
         <RenewModal
@@ -611,6 +895,99 @@ function MemberSubsTab({
           }}
         />
       )}
+
+      <ConfirmDialog
+        open={purgeTarget !== null}
+        onClose={() => setPurgeTarget(null)}
+        title={t("subs.purgeConfirmTitle")}
+        message={purgeTarget ? `${purgeTarget.planName} · ${purgeTarget.startDate} → ${purgeTarget.endDate} — ${t("subs.purgeConfirmMsg")}` : ""}
+        confirmLabel={t("subs.purgeAction")}
+        onConfirm={() => void doPurge()}
+      />
+
+      <ConfirmDialog
+        open={cancelTarget !== null}
+        onClose={() => setCancelTarget(null)}
+        title={t("subs.cancelSub")}
+        message={t("subs.cancelMsg")}
+        loading={busy}
+        onConfirm={() => void doCancel()}
+      />
+
+      <Modal
+        open={detailsTarget !== null}
+        onClose={() => setDetailsTarget(null)}
+        title={t("subs.detailsTitle")}
+        widthClass="max-w-lg"
+      >
+        {detailsTarget && (() => {
+          const sub = detailsTarget;
+          const totalDays = diffDaysKeys(sub.startDate, sub.endDate) + 1;
+          const remainingDays = diffDaysKeys(today, sub.endDate) + 1;
+          let eff: "active" | "expired" | "upcoming" | "cancelled" | "suspended" = "expired";
+          if (sub.status === "suspended") eff = "suspended";
+          else if (sub.status === "cancelled") eff = "cancelled";
+          else if (today < sub.startDate) eff = "upcoming";
+          else if (today >= sub.startDate && today <= sub.endDate) eff = "active";
+          return (
+            <div className="space-y-4">
+              <div className="rounded-lg bg-white/5 p-3 text-sm space-y-2">
+                <div className="flex justify-between"><span className="text-subtle">{t("common.plan")}</span><span className="font-bold">{sub.planName}</span></div>
+                <div className="flex justify-between"><span className="text-subtle">{t("subs.period")}</span><span dir="ltr" className="tabnum">{sub.startDate} → {sub.endDate}</span></div>
+                <div className="flex justify-between"><span className="text-subtle">{t("subs.totalDays")}</span><span className="tabnum">{totalDays} {t("subs.daysUnit")}</span></div>
+                {eff === "active" && (
+                  <div className="flex justify-between">
+                    <span className="text-subtle">{t("subs.remainingDays")}</span>
+                    <span className={`font-bold tabnum ${remainingDays <= 7 ? "text-red" : remainingDays <= 14 ? "text-amber" : "text-neon"}`}>{remainingDays} {t("subs.daysUnit")}</span>
+                  </div>
+                )}
+                {sub.frozenDays > 0 && (
+                  <div className="flex justify-between"><span className="text-subtle">{t("subs.frozenDaysCount")}</span><span className="tabnum text-cyan flex items-center gap-1"><Snowflake className="size-3" />{sub.frozenDays} {t("subs.daysUnit")}</span></div>
+                )}
+                <div className="flex justify-between"><span className="text-subtle">{t("common.status")}</span><Badge variant={subStatusMeta(t, eff).variant} dot>{subStatusMeta(t, eff).label}</Badge></div>
+              </div>
+
+              <div>
+                <h4 className="text-sm font-bold mb-2 flex items-center gap-2"><Snowflake className="size-4 text-cyan" />{t("subs.freezeHistory")}</h4>
+                {freezeHistory.length === 0 ? (
+                  <p className="text-sm text-faint">{t("subs.freezeHistoryEmpty")}</p>
+                ) : (
+                  <div className="space-y-2">
+                    {freezeHistory.map((f) => {
+                      const isExpired = eff === "expired" || eff === "cancelled";
+                      const resumeDate = f.actualResumeDate ?? (isExpired ? sub.endDate : f.expectedResumeDate) ?? null;
+                      return (
+                      <div key={f.id} className="rounded-lg bg-white/5 p-3 text-sm space-y-1">
+                        <div className="flex justify-between">
+                          <span className="text-subtle">{t("subs.freezeFrom")}</span>
+                          <span className="tabnum">{f.frozenAt.slice(0, 10)}</span>
+                        </div>
+                        <div className="flex justify-between">
+                          <span className="text-subtle">{t("subs.freezeTo")}</span>
+                          <span className="tabnum">{resumeDate ?? t("subs.freezeNotResumed")}</span>
+                        </div>
+                        {resumeDate && (
+                          <div className="flex justify-between">
+                            <span className="text-subtle">{t("subs.freezeDuration")}</span>
+                            <span className="tabnum">{diffDaysKeys(f.frozenAt.slice(0, 10), resumeDate) + 1} {t("subs.daysUnit")}</span>
+                          </div>
+                        )}
+                        {f.reason && (
+                          <div className="flex justify-between">
+                            <span className="text-subtle">{t("subs.freezeReason")}</span>
+                            <span className="text-subtle text-xs">{f.reason}</span>
+                          </div>
+                        )}
+                      </div>
+                      );
+                    })}
+                  </div>
+                )}
+              </div>
+            </div>
+          );
+        })()}
+      </Modal>
     </Card>
   );
 }
@@ -723,8 +1100,10 @@ function RenewModal({
 function MemberAttendanceTab({ memberId, version }: { memberId: string; version: number }) {
   const t = useT();
   const { actor, hasPermission } = useAuth();
-  const [rows, setRows] = useState<{ checkin_at: string }[]>([]);
+  const { toast } = useToast();
+  const [rows, setRows] = useState<{ id: string; checkin_at: string }[]>([]);
   const canView = hasPermission("checkin.view_history");
+  const canDelete = hasPermission("checkin.delete");
 
   useEffect(() => {
     if (!actor || !canView) return;
@@ -734,7 +1113,7 @@ function MemberAttendanceTab({ memberId, version }: { memberId: string; version:
       .then((items) => {
         if (alive)
           setRows(
-            (items as Array<{ checkin_at: string }>).map((i) => ({ checkin_at: i.checkin_at })),
+            (items as Array<{ id: string; checkin_at: string }>).map((i) => ({ id: i.id, checkin_at: i.checkin_at })),
           );
       })
       .catch((err) => console.error(err));
@@ -742,6 +1121,16 @@ function MemberAttendanceTab({ memberId, version }: { memberId: string; version:
       alive = false;
     };
   }, [actor, memberId, canView, version]);
+
+  async function handleDelete(attendanceId: string) {
+    try {
+      await api.attendance.delete(attendanceId);
+      setRows((prev) => prev.filter((r) => r.id !== attendanceId));
+      toast("success", t("members.attendanceDeleted"));
+    } catch (e) {
+      toast("error", describeError(e, t));
+    }
+  }
 
   if (!canView) {
     return (
@@ -763,9 +1152,21 @@ function MemberAttendanceTab({ memberId, version }: { memberId: string; version:
               <span dir="ltr" className="font-semibold tabnum">
                 {formatDateShort(new Date(row.checkin_at))}
               </span>
-              <span dir="ltr" className="text-faint tabnum">
-                {formatTime(new Date(row.checkin_at))}
-              </span>
+              <div className="flex items-center gap-3">
+                <span dir="ltr" className="text-faint tabnum">
+                  {formatTime(new Date(row.checkin_at))}
+                </span>
+                {canDelete && (
+                  <button
+                    type="button"
+                    onClick={() => void handleDelete(row.id)}
+                    className="text-faint hover:text-red transition-colors"
+                    title={t("common.delete")}
+                  >
+                    <Trash2 size={14} />
+                  </button>
+                )}
+              </div>
             </li>
           ))}
         </ul>
@@ -898,7 +1299,7 @@ function MemberInBodyTab({
   const [assessments, setAssessments] = useState<PublicAssessment[]>([]);
   const [progress, setProgress] = useState<ProgressComparison | null>(null);
   const [showForm, setShowForm] = useState(false);
-  const today = new Date().toISOString().slice(0, 10);
+  const today = todayKey();
 
   const [assessmentDate, setAssessmentDate] = useState(today);
   const [heightCm, setHeightCm] = useState("");
@@ -1154,7 +1555,7 @@ function TrainingPlanFormModal({
   const t = useT();
   const { actor } = useAuth();
   const { toast } = useToast();
-  const today = new Date().toISOString().slice(0, 10);
+  const today = todayKey();
 
   const [trainerOptions, setTrainerOptions] = useState<Array<{ value: string; label: string }>>([]);
   const [trainerId, setTrainerId] = useState("");

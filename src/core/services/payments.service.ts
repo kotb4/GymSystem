@@ -59,15 +59,18 @@ export interface Payment extends Row {
   refundedAmountMinor: number;
   remainingAmountMinor: number;
   methodCode: string;
-  methodLabel: string;
-  status: PaymentStatus;
-  referenceNo: string | null;
+methodLabel: string;
+status: PaymentStatus;
+/** 1 when the linked subscription is cancelled (history row, not revenue). */
+subCancelled: 0 | 1;
+referenceNo: string | null;
   notes: string | null;
   paidAt: string;
   createdBy: string;
   createdByName: string;
   voidedAt: string | null;
   voidReason: string | null;
+  refundReason: string | null;
 }
 
 export interface RecordPaymentInput {
@@ -88,6 +91,7 @@ export interface SubscriptionBalance {
   subscriptionId: string;
   priceMinor: number;
   paidMinor: number;
+  discountedMinor: number;
   remainingMinor: number;
 }
 
@@ -115,12 +119,14 @@ function mapRow(row: PaymentRow & Record<string, unknown>): Payment {
     paidAt: row.paid_at,
     createdBy: row.created_by,
     createdByName: String(row.creator_name ?? ""),
+    subCancelled: Number(row.sub_cancelled) === 1 ? 1 : 0,
     voidedAt: row.voided_at == null ? null : String(row.voided_at),
     voidReason: row.void_reason == null ? null : String(row.void_reason),
+    refundReason: row.refund_reason == null ? null : String(row.refund_reason),
   };
 }
 
-const PAYMENT_SELECT = `SELECT p.*, m.member_code AS member_code, m.full_name AS full_name,\n  pm.label_ar AS method_label, u.full_name AS creator_name, pl.name AS plan_name\nFROM payments p\nJOIN members m ON m.id = p.member_id\nJOIN payment_methods pm ON pm.code = p.method_code\nJOIN users u ON u.id = p.created_by\nLEFT JOIN member_subscriptions s ON s.id = p.subscription_id\nLEFT JOIN membership_plans pl ON pl.id = s.plan_id`;
+    const PAYMENT_SELECT = `SELECT p.*, m.member_code AS member_code, m.full_name AS full_name,\n  pm.label_ar AS method_label, u.full_name AS creator_name, pl.name AS plan_name,\n  EXISTS(SELECT 1 FROM member_subscriptions cs WHERE cs.id = p.subscription_id AND cs.status = 'cancelled') AS sub_cancelled,\n  (SELECT pr.reason FROM payment_refunds pr WHERE pr.payment_id = p.id ORDER BY pr.created_at DESC LIMIT 1) AS refund_reason\nFROM payments p\nJOIN members m ON m.id = p.member_id\nJOIN payment_methods pm ON pm.code = p.method_code\nJOIN users u ON u.id = p.created_by\nLEFT JOIN member_subscriptions s ON s.id = p.subscription_id\nLEFT JOIN membership_plans pl ON pl.id = s.plan_id`;
 
 function getPaymentRow(db: Db, paymentId: string): (PaymentRow & Record<string, unknown>) | null {
   return db.first<PaymentRow & Record<string, unknown>>(`${PAYMENT_SELECT}\nWHERE p.id = ?`, [
@@ -169,6 +175,10 @@ export async function recordPayment(
     }
     if (sub.status === "cancelled") throw errValidation("errors.subscriptionCancelled");
     subscriptionId = sub.id;
+    const subBalance = getSubscriptionBalanceInternal(db, subscriptionId);
+    if (subBalance.remainingMinor === 0) {
+      throw errValidation("errors.finance.subscriptionFullyPaid");
+    }
   }
 
   const kind: DiscountKind = input.discountKind ?? "none";
@@ -421,6 +431,79 @@ export async function voidPayment(
   return getPaymentById(db, actor, paymentId);
 }
 
+export async function unvoidPayment(
+  db: Db,
+  actor: ServiceActor,
+  paymentId: string,
+): Promise<Payment> {
+  requirePermission(actor, "payments.void");
+  const row = db.first<PaymentRow>("SELECT * FROM payments WHERE id = ?", [paymentId]);
+  if (!row) throw errNotFound("errors.finance.paymentNotFound");
+  assertDepartmentAccess(actor, memberDepartmentById(db, String(row.member_id)));
+  if (row.status !== "voided") throw errConflict("errors.finance.notVoided");
+
+  const stamp = nowStamp();
+  await db.transaction(async () => {
+    const originalStatus = Number(row.paid_amount_minor) >= Number(row.net_amount_minor) ? "paid" : "partial";
+    db.run(
+      "UPDATE payments SET status = ?, voided_by = NULL, voided_at = NULL, void_reason = NULL, updated_at = ? WHERE id = ?",
+      [originalStatus, stamp, paymentId],
+    );
+    db.run(
+      "DELETE FROM financial_ledger WHERE ref_table = 'payments' AND ref_id = ? AND entry_type = 'reversal_payment'",
+      [paymentId],
+    );
+    recordAudit(db, actor, "PAYMENT_RESTORED", "payment", paymentId, {
+      paidMinor: Number(row.paid_amount_minor),
+    });
+  });
+
+  return getPaymentById(db, actor, paymentId);
+}
+
+export async function undoRefund(
+  db: Db,
+  actor: ServiceActor,
+  paymentId: string,
+): Promise<Payment> {
+  requirePermission(actor, "payments.refund");
+
+  const row = getPaymentRow(db, paymentId);
+  if (!row) throw errNotFound("errors.finance.paymentNotFound");
+  assertDepartmentAccess(actor, memberDepartmentById(db, String(row.member_id)));
+
+  const refund = db.first<{ id: string; amount_minor: number }>(
+    "SELECT id, amount_minor FROM payment_refunds WHERE payment_id = ? ORDER BY created_at DESC LIMIT 1",
+    [paymentId],
+  );
+  if (!refund) throw errNotFound("errors.finance.refundNotFound");
+
+  const stamp = nowStamp();
+  await db.transaction(async () => {
+    const newRefunded = Number(row.refunded_amount_minor) - Number(refund.amount_minor);
+    const nextStatus: PaymentStatus = newRefunded <= 0
+      ? (Number(row.paid_amount_minor) >= Number(row.net_amount_minor) ? "paid" : "partial")
+      : (row.status as PaymentStatus);
+    db.run("UPDATE payments SET refunded_amount_minor = ?, status = ?, updated_at = ? WHERE id = ?", [
+      Math.max(0, newRefunded),
+      nextStatus,
+      stamp,
+      paymentId,
+    ]);
+    db.run("DELETE FROM payment_refunds WHERE id = ?", [refund.id]);
+    db.run(
+      "DELETE FROM financial_ledger WHERE ref_table = 'payment_refunds' AND ref_id = ? AND entry_type = 'refund'",
+      [refund.id],
+    );
+    recordAudit(db, actor, "REFUND_UNDONE", "payment", paymentId, {
+      refundId: refund.id,
+      amountMinor: Number(refund.amount_minor),
+    });
+  });
+
+  return getPaymentById(db, actor, paymentId);
+}
+
 export function getSubscriptionBalance(
   db: Db,
   actor: ServiceActor,
@@ -436,17 +519,19 @@ function getSubscriptionBalanceInternal(db: Db, subscriptionId: string): Subscri
     [subscriptionId],
   );
   if (!sub) throw errNotFound("errors.finance.subscriptionNotFoundForPayment");
-  const agg = db.first<{ paid: number }>(
-    "SELECT COALESCE(SUM(paid_amount_minor), 0) AS paid FROM payments WHERE subscription_id = ? AND status IN ('partial', 'paid')",
+  const agg = db.first<{ paid: number; discounted: number }>(
+    "SELECT COALESCE(SUM(paid_amount_minor), 0) AS paid, COALESCE(SUM(discount_amount_minor), 0) AS discounted FROM payments WHERE subscription_id = ? AND status IN ('partial','paid')",
     [subscriptionId],
   );
   const priceMinor = Math.round(Number(sub.price) * 100);
   const paidMinor = Number(agg?.paid ?? 0);
+  const discountedMinor = Number(agg?.discounted ?? 0);
   return {
     subscriptionId,
     priceMinor,
     paidMinor,
-    remainingMinor: Math.max(0, priceMinor - paidMinor),
+    discountedMinor,
+    remainingMinor: Math.max(0, priceMinor - paidMinor - discountedMinor),
   };
 }
 

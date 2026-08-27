@@ -25,7 +25,7 @@ let reception: ReturnType<typeof buildActor>;
 beforeEach(async () => {
   db = createTestDb();
   const ownerUser = await setup(db, {
-    gymName: "جيم برو",
+    gymName: "Yassen Mohamed Kotb | 01288536381",
     ownerFullName: "المالك",
     username: "owner",
     password: "Owner@2026",
@@ -92,7 +92,7 @@ describe("message queue", () => {
     const res = await queueMessage(db, owner, {
       memberId: m.id,
       templateCode: "welcome",
-      vars: { name: m.fullName, gym: "جيم برو" },
+      vars: { name: m.fullName, gym: "Yassen Mohamed Kotb | 01288536381" },
     });
     expect(res.status).toBe("pending");
     expect(res.duplicate).toBe(false);
@@ -103,7 +103,7 @@ describe("message queue", () => {
     const first = await queueMessage(db, owner, {
       memberId: m.id,
       templateCode: "welcome",
-      vars: { name: m.fullName, gym: "جيم برو" },
+      vars: { name: m.fullName, gym: "Yassen Mohamed Kotb | 01288536381" },
       dedupeKey: "dup-test-1",
     });
     expect(first.duplicate).toBe(false);
@@ -111,7 +111,7 @@ describe("message queue", () => {
     const second = await queueMessage(db, owner, {
       memberId: m.id,
       templateCode: "welcome",
-      vars: { name: m.fullName, gym: "جيم برو" },
+      vars: { name: m.fullName, gym: "Yassen Mohamed Kotb | 01288536381" },
       dedupeKey: "dup-test-1",
     });
     expect(second.duplicate).toBe(true);

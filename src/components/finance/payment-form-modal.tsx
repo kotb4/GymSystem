@@ -77,6 +77,7 @@ export function PaymentFormModal({ open, onClose, onSaved, presetMember }: Payme
           label: `${(s as { planName?: string }).planName ?? "—"} · ${(s as { startDate: string }).startDate} → ${(s as { endDate: string }).endDate}`,
           remainingMinor: Math.max(0, Math.round((s as { price: number }).price * 100)),
           priceMinor: Math.round((s as { price: number }).price * 100),
+          effective: (s as { effectiveStatus?: string }).effectiveStatus ?? "",
         }));
         for (const item of mapped) {
           if (!alive) return;
@@ -88,7 +89,15 @@ export function PaymentFormModal({ open, onClose, onSaved, presetMember }: Payme
             return;
           }
         }
-        if (alive) setSubs(mapped);
+        if (alive) {
+          setSubs(mapped);
+          // default-target the most relevant subscription: owing first, then active
+          const preferred =
+            mapped.find((m) => m.remainingMinor > 0) ??
+            mapped.find((m) => m.effective === "active") ??
+            mapped[0];
+          if (preferred) setSubscriptionId(preferred.id);
+        }
       } catch {
         if (alive) setSubs([]);
       }
@@ -111,7 +120,10 @@ export function PaymentFormModal({ open, onClose, onSaved, presetMember }: Payme
     const baseMinor = toMinor(baseMajor || "0");
     if (!Number.isFinite(baseMinor)) return null;
     try {
-      const disc = computeDiscount(baseMinor, discountKind, discountValue === "" ? 0 : Number(discountValue));
+      const disc = computeDiscount(baseMinor, discountKind,
+        discountKind === "fixed"
+          ? toMinor(discountValue || "0")
+          : discountValue === "" ? 0 : Number(discountValue));
       const paidMinor = toMinor(paidMajor || "0");
       if (!Number.isFinite(paidMinor)) return null;
       return {
@@ -126,6 +138,18 @@ export function PaymentFormModal({ open, onClose, onSaved, presetMember }: Payme
     }
   }, [baseMajor, discountKind, discountValue, paidMajor]);
 
+  const [outstanding, setOutstanding] = useState<{ totalMinor: number; subscriptionsMinor: number; storeMinor: number } | null>(null);
+
+  useEffect(() => {
+    if (!selected) { setOutstanding(null); return; }
+    let alive = true;
+    api.finance
+      .outstandingForMember(selected.id)
+      .then((r) => { if (alive) setOutstanding(r); })
+      .catch(() => { if (alive) setOutstanding(null); });
+    return () => { alive = false; };
+  }, [selected?.id]);
+
   const onSubmit = async (e: FormEvent) => {
     e.preventDefault();
     if (!actor || !selected) return;
@@ -138,7 +162,11 @@ export function PaymentFormModal({ open, onClose, onSaved, presetMember }: Payme
         baseAmountMinor: toMinor(baseMajor),
         discountKind: canDiscount ? discountKind : "none",
         discountValue:
-          canDiscount && discountValue !== "" ? Number(discountValue) : undefined,
+          canDiscount && discountValue !== ""
+            ? discountKind === "fixed"
+              ? toMinor(discountValue)
+              : Number(discountValue)
+            : undefined,
         paidAmountMinor: toMinor(paidMajor),
         methodCode,
         referenceNo: referenceNo || null,
@@ -269,6 +297,15 @@ export function PaymentFormModal({ open, onClose, onSaved, presetMember }: Payme
 
             {summary && (
               <div className="rounded-xl border border-line bg-white/[0.03] px-4 py-3">
+                {outstanding && outstanding.totalMinor > 0 && (
+                  <p className="mb-2 rounded-lg border border-amber/30 bg-amber/10 px-3 py-1.5 text-[12px] font-bold text-amber">
+                    {t("pay.outstandingHint", {
+                      total: formatMinor(outstanding.totalMinor),
+                      subs: formatMinor(outstanding.subscriptionsMinor),
+                      store: formatMinor(outstanding.storeMinor),
+                    })}
+                  </p>
+                )}
                 <dl className="grid grid-cols-3 gap-2 text-center text-[12px]">
                   <div>
                     <dt className="text-faint">{t("pay.summaryNet")}</dt>

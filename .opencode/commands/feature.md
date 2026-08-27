@@ -1,7 +1,7 @@
 ---
-description: Implement a feature end-to-end following the GymSystem AI workflow
+description: Implement a feature end-to-end following the Yassen Mohamed Kotb | 01288536381 AI workflow
 ---
-Implement this feature in GymSystem: $ARGUMENTS
+Implement this feature in Yassen Mohamed Kotb | 01288536381: $ARGUMENTS
 
 Follow AGENTS.md strictly and execute the full workflow in order:
 

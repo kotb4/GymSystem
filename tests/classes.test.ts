@@ -28,7 +28,7 @@ let trainer: ReturnType<typeof buildActor>;
 beforeEach(async () => {
   db = createTestDb();
   const ownerUser = await setup(db, {
-    gymName: "جيم برو",
+    gymName: "Yassen Mohamed Kotb | 01288536381",
     ownerFullName: "المالك",
     username: "owner",
     password: "Owner@2026",

@@ -35,9 +35,40 @@
 - Decision: `GYMSYSTEM_SECURE_COOKIES=1` appends `Secure` to session cookies (set + clear). Default stays off until an HTTPS terminator exists.
 - Consequences: Deployment docs must mention the flag when introducing HTTPS/LAN support.
 
+## ADR-008: Hard-delete surfaces for previously non-deletable entities
+- Date: 2026-08-25
+- Status: accepted (product-owner request)
+- Context: "Delete anything" was untrue for employees, store products and cash sessions — they only had activate/deactivate or open/close toggles.
+- Decision: Three new permissions (`employees.purge`, `store.purge`, `cash.purge`; migration v8 registers the codes, unseeded for non-owner roles → grantable from the Permissions page):
+  1. **Employees** — hard delete cascades the employee's salaries and their treasury ledger rows (keyed by salary id); generated expense documents remain as historical paperwork (no structural link exists).
+  2. **Products** — hard delete removes the product, its stock-movement log, AND its lines inside historical sale documents (amended same day per owner request after the initial refuse-if-sold guard felt blocking). Sale headers/totals survive; only referenced line items are detached. The PRODUCT_PURGED audit entry records movementsRemoved / saleLinesRemoved / salesAffected.
+  3. **Cash sessions** — OPEN sessions may be deleted (mistaken open/abort; ledger money truth untouched). CLOSED sessions are permanently locked because their counted-vs-expected discrepancy record must never be hidden.
+  4. **Subscriptions** (`subscriptions.purge`, migration v9) — hard delete removes the subscription with its payments, refunds, their treasury ledger rows and freeze history; attendance rows and class bookings SURVIVE with the subscription reference detached to NULL so visit history is never lost. Department-scoped + audited `SUBSCRIPTION_PURGED` with paymentsRemoved count.
+- Consequences: Payroll purges alter historical cash totals by design (same semantics as member purge). Sold-product removal requires deactivation. Closed-session discrepancies remain permanently visible.
+
+## ADR-007: Anwar account as second owner; manager gains the permission editor
+- Date: 2026-08-25
+- Status: accepted (product-owner request)
+- Context: Owner wants an "Anwar" account that can literally do everything, including every destructive delete, with the ability to hand those capabilities to other accounts, and to delegate permission control over subordinate roles to the manager.
+- Decision:
+  1. The Anwar account is created through Users → role **owner**. Owner short-circuits every `roleHasPermission` check and cannot be locked out of the Permissions page, satisfying "anything, literally". Multiple owner accounts are supported; last-active-owner protections remain.
+  2. "Delete anything" maps to the existing destructive set (`members.delete/restore/purge`, `payments.refund/void`, `expenses` void, `store.void_sale`, `subscriptions.cancel`, `users.manage`) — all inherently held by owner and grantable per-role from the Permissions page. No new backend deletion surface was invented.
+  3. Migration v7 grants `settings.edit` to the manager role (idempotent, ON CONFLICT DO NOTHING) so a manager can open `/permissions` (already gated by `users.view`, which manager holds) and edit any non-owner role — i.e., control permissions for the people under them.
+- Consequences: An empowered manager can escalate any role except owner (owner row is immutable by service contract). Permissions are role-scoped; true per-user overrides would require a new table + migration and are explicitly deferred. Client-side `hasPermission` uses static defaults for cosmetics only — the server cache is authoritative after boot/commit refresh.
+
 ## ADR-006: Restore request size limits are route-scoped
 - Date: 2026-08-25
 - Status: accepted
 - Context: Every POST buffered up to 256 MB before validation (audit F-13).
 - Decision: `readBody(req, limit)` defaults to 8 MB; `/api/system/restore|import-legacy` explicitly opts into the 256 MB DB-transfer limit AFTER the `backup.restore` permission check; file uploads cap at 3 MB envelope around the 2 MB stored limit.
 - Consequences: Oversized bodies on ordinary routes fail fast with the standard validation error instead of consuming memory.
+
+## ADR-010: LAN bind on 0.0.0.0 (default) + value-level auto doc sync
+- Date: 2026-08-27
+- Status: accepted (product-owner request)
+- Context: The backend defaulted to loopback-only (`127.0.0.1`), so it was unreachable from other LAN devices / Tailscale IPs. Separately, the AI documentation (`AGENTS.md`, `.ai/*`, `docs/ai/*`) repeatedly drifted from the code (e.g. migrations "v1..v6" while code has v1..v11), because nothing kept counts/versions in sync after edits.
+- Decision:
+  1. `server/index.ts` default `HOST` changed from `127.0.0.1` to `0.0.0.0` (`GYMSYSTEM_HOST` override retained), enabling LAN/Tailscale reachability out of the box.
+  2. New `scripts/sync-docs.mjs` recomputes machine-checkable facts from source every run (PERMS count, AUDIT_ACTIONS count, migration max version, host default, service/page/test counts) and refreshes only those value patterns in `AGENTS.md`, `.ai/project.md`, `docs/ai/architecture.md`, `docs/ai/database.md`. It never rewrites narrative/business rules — those remain the `/docs` agent's job.
+  3. Auto-run: npm `sync:docs` script for manual/agent use, plus a `.git/hooks/pre-commit` (sh, LF) that re-syncs before every commit.
+- Consequences: The app is now reachable on the LAN by default (bind 0.0.0.0) — a security-relevant change; operators should keep the network trusted or re-set `GYMSYSTEM_HOST` to loopback. Document counts/versions update automatically on commit; narrative/rule drift still needs `/docs` or a human. Secure-cookie note (ADR-005) becomes more relevant now that LAN exposure is on.

@@ -1,6 +1,6 @@
 @echo off
 rem ============================================================
-rem  GymSystem - one-click launcher
+rem  Yassen Mohamed Kotb ^| 01288536381 - one-click launcher
 rem  Starts the local backend (which owns the SQLite database in
 rem  %LOCALAPPDATA%\GymSystem) and opens the app window.
 rem  No internet required. Data survives restarts.
@@ -11,7 +11,7 @@ cd /d "%~dp0.."
 set GYMSYSTEM_PORT=8890
 
 rem start backend minimized; it serves the UI on http://127.0.0.1:8890
-start "GymSystem Backend" /min node dist-server\index.cjs
+start "Backend" /min node dist-server\index.cjs
 
 rem wait for the local API to come up (max ~15s)
 set /a tries=0

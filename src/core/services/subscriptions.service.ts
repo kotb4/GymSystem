@@ -19,7 +19,7 @@ import { getPlanRow } from "./plans.service";
 import { insertLedgerEntry } from "./payments.service";
 
 export type SubscriptionRowStatus = "active" | "suspended" | "cancelled";
-export type EffectiveSubscriptionStatus = "active" | "upcoming" | "expired" | "suspended" | "cancelled";
+export type EffectiveSubscriptionStatus = "active" | "upcoming" | "expired" | "suspended" | "cancelled" | "frozen";
 
 export interface SubscriptionRow extends Row {
   id: string;
@@ -74,13 +74,14 @@ export interface EffectiveStatusInput {
   status: SubscriptionRowStatus;
   startDate: string;
   endDate: string;
+  frozenAt?: string | null;
 }
 
 export function effectiveStatus(
   input: EffectiveStatusInput,
   today: string,
 ): EffectiveSubscriptionStatus {
-  if (input.status === "suspended") return "suspended";
+  if (input.status === "suspended") return input.frozenAt ? "frozen" : "suspended";
   if (input.status === "cancelled") return "cancelled";
   if (today < input.startDate) return "upcoming";
   if (today > input.endDate) return "expired";
@@ -103,7 +104,7 @@ function toSubscription(
     price: Number(row.price),
     status: row.status,
     effectiveStatus: effectiveStatus(
-      { status: row.status, startDate: row.start_date, endDate: row.end_date },
+      { status: row.status, startDate: row.start_date, endDate: row.end_date, frozenAt: row.frozen_at },
       today,
     ),
     kind,
@@ -332,6 +333,39 @@ export async function setSubscriptionStatus(
       subscriptionId,
       { to: status },
     );
+  });
+
+  const fresh = getSubscriptionRow(db, subscriptionId)!;
+  return withPlanInfo(db, fresh, todayKey());
+}
+
+export async function undoCancelSubscription(
+  db: Db,
+  actor: ServiceActor,
+  subscriptionId: string,
+): Promise<Subscription> {
+  requirePermission(actor, "subscriptions.cancel");
+  const row = getSubscriptionRow(db, subscriptionId);
+  if (!row) throw errNotFound("errors.subscriptionNotFound");
+  if (row.status !== "cancelled") throw errConflict("errors.subscriptionNotCancelled");
+  assertSubMemberAccess(db, actor, row.member_id);
+
+  await db.transaction(async () => {
+    db.run(
+      "UPDATE member_subscriptions SET status = 'active', updated_at = ? WHERE id = ?",
+      [nowStamp(), subscriptionId],
+    );
+    const payments = db.all<{ id: string }>(
+      "SELECT id FROM payments WHERE subscription_id = ? AND status IN ('partial', 'paid')",
+      [subscriptionId],
+    );
+    for (const pay of payments) {
+      db.run(
+        "DELETE FROM financial_ledger WHERE ref_table = 'payments' AND ref_id = ? AND entry_type = 'reversal_payment'",
+        [pay.id],
+      );
+    }
+    recordAudit(db, actor, "SUBSCRIPTION_UNCANCELLED", "subscription", subscriptionId, {});
   });
 
   const fresh = getSubscriptionRow(db, subscriptionId)!;
@@ -640,4 +674,56 @@ export async function renewSubscription(
     next,
     startedToday: startDate === today,
   };
+}
+
+/**
+ * Hard-deletes a subscription (ADR-008, owner request). Removes its payments,
+ * refunds and their treasury ledger rows, its freeze history — while keeping
+ * attendance and class bookings alive with the subscription reference
+ * detached (NULL) so visit history is never lost.
+ */
+export async function purgeSubscription(
+  db: Db,
+  actor: ServiceActor,
+  subscriptionId: string,
+): Promise<void> {
+  requirePermission(actor, "subscriptions.purge");
+  const row = getSubscriptionRow(db, subscriptionId);
+  if (!row) throw errNotFound("errors.subscriptionNotFound");
+  assertSubMemberAccess(db, actor, row.member_id);
+
+  const memberCode =
+    db.first<{ member_code: string }>(
+      "SELECT member_code FROM members WHERE id = ?",
+      [row.member_id],
+    )?.member_code ?? null;
+
+  await db.transaction(async () => {
+    db.run(
+      "UPDATE class_bookings SET consumed_subscription_id = NULL WHERE consumed_subscription_id = ?",
+      [subscriptionId],
+    );
+    db.run("UPDATE attendance SET subscription_id = NULL WHERE subscription_id = ?", [subscriptionId]);
+
+    const payIds = db
+      .all<{ id: string }>("SELECT id FROM payments WHERE subscription_id = ?", [subscriptionId])
+      .map((p) => p.id);
+    if (payIds.length > 0) {
+      const ph = payIds.map(() => "?").join(",");
+      db.run(
+        `DELETE FROM financial_ledger WHERE (ref_table = 'payments' AND ref_id IN (${ph})) OR (ref_table = 'payment_refunds' AND ref_id IN (SELECT id FROM payment_refunds WHERE payment_id IN (${ph})))`,
+        [...payIds, ...payIds],
+      );
+      db.run(`DELETE FROM payment_refunds WHERE payment_id IN (${ph})`, payIds);
+      db.run(`DELETE FROM payments WHERE id IN (${ph})`, payIds);
+    }
+
+    db.run("DELETE FROM subscription_freezes WHERE subscription_id = ?", [subscriptionId]);
+    db.run("DELETE FROM member_subscriptions WHERE id = ?", [subscriptionId]);
+    recordAudit(db, actor, "SUBSCRIPTION_PURGED", "subscription", subscriptionId, {
+      memberCode,
+      planName: row.plan_id,
+      paymentsRemoved: payIds.length,
+    });
+  });
 }

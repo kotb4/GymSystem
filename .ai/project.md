@@ -1,10 +1,10 @@
-# GymSystem (gympro) — Project Profile
+# Yassen Mohamed Kotb | 01288536381 — Project Profile
 
 Verified against the repository on 2026-08-25. If code changes, run `/docs` to re-sync.
 
 ## Identity
 
-- **Name:** GymSystem / جيم برو (`gympro` v0.1.0)
+- **Name:** Yassen Mohamed Kotb | 01288536381
 - **Purpose:** Fully Arabic, RTL-first, offline gym-management application for a single Windows machine.
 - **Status:** Feature-complete for single-club operation; actively developed; all work happens on `master` (repo has no remote and no commits yet — everything untracked at inspection time).
 
@@ -22,7 +22,7 @@ Verified against the repository on 2026-08-25. If code changes, run `/docs` to r
 ## Runtime
 
 - No Electron/Tauri. Desktop experience = local Node backend + browser window in Edge App Mode launched by `scripts/windows/start-gymsystem.bat`.
-- Backend listens on `127.0.0.1:8890` only (override: `GYMSYSTEM_HOST`/`GYMSYSTEM_PORT`; LAN exposure intentionally out of scope).
+- Backend listens on `0.0.0.0:8890` by default (override: `GYMSYSTEM_HOST`/`GYMSYSTEM_PORT`; LAN exposure enabled — binds all interfaces).
 - Data under `%LOCALAPPDATA%\GymSystem\`: `Database\gym.db`, `Files\`, `Backups\`, `Logs\server.log`. Override root with `GYMSYSTEM_DATA_DIR`.
 
 ## Important Commands

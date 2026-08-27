@@ -31,7 +31,7 @@ beforeEach(async () => {
   db = createTestDb();
   owner = buildActor(
     await setup(db, {
-      gymName: "جيم برو",
+      gymName: "Yassen Mohamed Kotb | 01288536381",
       ownerFullName: "المالك",
       username: "owner",
       password: "Owner@2026",
@@ -65,7 +65,7 @@ async function buildRealDbFile(): Promise<string> {
   const realDb = new Db(driver);
   runMigrations(realDb);
   await setup(realDb, {
-    gymName: "جيم الملف",
+    gymName: "Yassen Mohamed Kotb | 01288536381",
     ownerFullName: "مالك الملف",
     username: "fileowner",
     password: "Owner@2026",
@@ -166,7 +166,7 @@ describe("validateRestoreFile", () => {
     const path = await buildRealDbFile();
     const bytes = readFileSync(path);
     const metadata = await validateRestoreFile(new Uint8Array(bytes), openFromBytesNode);
-    expect(metadata.migrationVersion).toBe(6);
+    expect(metadata.migrationVersion).toBe(11);
     expect(metadata.users).toBe(1);
     expect(metadata.members).toBe(0);
     expect(metadata.settings).toBeGreaterThan(0);
@@ -190,7 +190,7 @@ describe("collectDiagnostics", () => {
 
     const report = collectDiagnostics(db, owner);
     expect(report.integrity).toBe("ok");
-    expect(report.gymName).toBe("جيم برو");
+    expect(report.gymName).toBe("Yassen Mohamed Kotb | 01288536381");
     expect(report.userCount).toBeGreaterThanOrEqual(2);
     expect(report.lastBackupAt).toBeNull();
     expect(report.autoBackupHours).toBe(24);

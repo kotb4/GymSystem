@@ -49,7 +49,7 @@ async function boot(): Promise<BootedContext> {
 async function setupOwner(ctx: BootedContext): Promise<ServiceActor> {
   const { setup, buildActor } = await import("@/core/services/auth.service");
   const user = await setup(ctx.db as never, {
-    gymName: "جيم التدقيق",
+    gymName: "Yassen Mohamed Kotb | 01288536381",
     ownerFullName: "المالك",
     username: "owner",
     password: "Owner@2026",

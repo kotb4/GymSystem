@@ -117,10 +117,42 @@ function mapProduct(r: Row): ProductPublic {
 }
 
 export function getProduct(db: Db, actor: ServiceActor, productId: string): ProductPublic {
-  requirePermission(actor, "store.view");
-  const row = db.first<Row>(`${PRODUCT_SELECT} WHERE p.id = ?`, [productId]);
+requirePermission(actor, "store.view");
+const row = db.first<Row>(`${PRODUCT_SELECT} WHERE p.id = ?`, [productId]);
+if (!row) throw errNotFound("errors.store.productNotFound");
+return mapProduct(row);
+}
+
+/**
+ * Hard-deletes a product (ADR-008, amended per owner request): cascades its
+ * stock-movement log AND its lines inside historical sale documents — sale
+ * headers/totals remain intact, only the referenced line items are removed.
+ * The audit entry records how many sale lines were detached.
+ */
+export async function purgeProduct(
+  db: Db,
+  actor: ServiceActor,
+  productId: string,
+): Promise<void> {
+  requirePermission(actor, "store.purge");
+  const row = db.first<Row>("SELECT id, name FROM products WHERE id = ?", [productId]);
   if (!row) throw errNotFound("errors.store.productNotFound");
-  return mapProduct(row);
+
+  await db.transaction(() => {
+    const lines = db.all<{ sale_id: string }>(
+      "SELECT DISTINCT sale_id FROM store_sale_items WHERE product_id = ?",
+      [productId],
+    );
+    const moved = db.run("DELETE FROM store_sale_items WHERE product_id = ?", [productId]);
+    db.run("DELETE FROM stock_movements WHERE product_id = ?", [productId]);
+    db.run("DELETE FROM products WHERE id = ?", [productId]);
+    recordAudit(db, actor, "PRODUCT_PURGED", "product", productId, {
+      name: str(row.name),
+      movementsRemoved: Number(moved.changes),
+      saleLinesRemoved: Number(moved.changes),
+      salesAffected: lines.length,
+    });
+  });
 }
 
 export interface ProductListQuery {
@@ -624,6 +656,40 @@ export async function voidStoreSale(db: Db, actor: ServiceActor, saleId: string,
       db.run("DELETE FROM store_debts WHERE sale_id = ? AND status = 'open'", [saleId]);
     }
     recordAudit(db, actor, "SALE_VOIDED", "store_sale", saleId, { reason: trimmed });
+  });
+}
+
+export async function unvoidStoreSale(db: Db, actor: ServiceActor, saleId: string): Promise<void> {
+  requirePermission(actor, "store.void_sale");
+  const sale = db.first<Row>("SELECT * FROM store_sales WHERE id = ? AND status = 'voided'", [saleId]);
+  if (!sale) throw errNotFound("errors.store.saleNotFound");
+  const items = db.all<Row>("SELECT * FROM store_sale_items WHERE sale_id = ?", [saleId]);
+
+  await db.transaction(async () => {
+    for (const it of items) {
+      const pid = str(it.product_id);
+      const qty = Number(it.qty);
+      const newQty = guardAndApply(db, pid, -qty);
+      insertMovement(db, {
+        productId: pid,
+        movementType: "count_correction",
+        delta: -qty,
+        resultQty: newQty,
+        saleRefId: saleId,
+        notes: `unvoid ${str(sale.sale_no)}`,
+      });
+    }
+    db.run(
+      "UPDATE store_sales SET status = 'completed', void_reason = NULL, voided_by = NULL, voided_at = NULL WHERE id = ?",
+      [saleId],
+    );
+    if (num(sale.is_credit) !== 1 && num(sale.total_minor) > 0) {
+      db.run(
+        "DELETE FROM financial_ledger WHERE ref_table = 'store_sales' AND ref_id = ? AND entry_type = 'reversal_payment'",
+        [saleId],
+      );
+    }
+    recordAudit(db, actor, "SALE_RESTORED", "store_sale", saleId, {});
   });
 }
 // --------------------- store debts (separate from gym debts) --------------

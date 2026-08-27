@@ -269,6 +269,17 @@ export async function cancelClassSession(db: Db, actor: ServiceActor, sessionId:
   });
 }
 
+export async function uncancelClassSession(db: Db, actor: ServiceActor, sessionId: string): Promise<void> {
+  requirePermission(actor, "classes.manage");
+  const row = getSessionRow(db, sessionId);
+  if (str(row.status) !== "cancelled") throw errConflict("errors.classSessionCancelled");
+  await db.transaction(async () => {
+    db.run("UPDATE class_sessions SET status = 'scheduled', notes = NULL WHERE id = ?", [sessionId]);
+    db.run("UPDATE class_bookings SET status = 'booked' WHERE session_id = ? AND status = 'cancelled'", [sessionId]);
+    recordAudit(db, actor, "CLASS_SESSION_REACTIVATED", "class_session", sessionId, {});
+  });
+}
+
 export async function completeClassSession(db: Db, actor: ServiceActor, sessionId: string): Promise<ClassSession> {
   requirePermission(actor, "classes.manage");
   getSessionRow(db, sessionId);

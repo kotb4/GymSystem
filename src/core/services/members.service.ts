@@ -459,7 +459,7 @@ export function listMembers(
       const days = Math.max(1, query.inactiveDays ?? 7);
       const threshold = `${addDaysKey(today, -days)} 23:59:59`;
       conditions.push(
-        "COALESCE((SELECT MAX(a.checkin_at) FROM attendance a WHERE a.member_id = m.id), '') <= ?",
+        "COALESCE((SELECT MAX(a.checkin_at) FROM attendance a WHERE a.member_id = m.id AND a.deleted_at IS NULL), '') <= ?",
       );
       params.push(threshold);
       conditions.push(
@@ -476,7 +476,7 @@ export function listMembers(
     }
     case "outstanding": {
       conditions.push(
-        "EXISTS (WITH paid AS (\nSELECT subscription_id, SUM(paid_amount_minor) AS paid_minor FROM payments\nWHERE subscription_id IS NOT NULL AND status IN ('partial', 'paid') GROUP BY subscription_id\n)\nSELECT 1 FROM member_subscriptions s LEFT JOIN paid p ON p.subscription_id = s.id\nWHERE s.member_id = m.id AND s.status = 'active'\nGROUP BY s.member_id HAVING SUM(MAX(CAST(ROUND(s.price * 100) AS INTEGER) - COALESCE(p.paid_minor, 0), 0)) > 0)",
+        "EXISTS (WITH paid AS (\nSELECT subscription_id, SUM(paid_amount_minor) AS paid_minor, SUM(discount_amount_minor) AS discount_minor FROM payments\nWHERE subscription_id IS NOT NULL AND status IN ('partial', 'paid') GROUP BY subscription_id\n)\nSELECT 1 FROM member_subscriptions s LEFT JOIN paid p ON p.subscription_id = s.id\nWHERE s.member_id = m.id AND s.status = 'active'\nGROUP BY s.member_id HAVING SUM(MAX(CAST(ROUND(s.price * 100) AS INTEGER) - COALESCE(p.paid_minor, 0) - COALESCE(p.discount_minor, 0), 0)) > 0)",
       );
       break;
     }

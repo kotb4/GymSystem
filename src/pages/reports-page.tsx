@@ -1,5 +1,5 @@
 ﻿import { useEffect, useMemo, useState } from "react";
-import { BarChart3, CalendarCheck, Clock3, ReceiptText, ScrollText, TrendingDown, TrendingUp, Users } from "lucide-react";
+import { BarChart3, CalendarCheck, Clock3, ReceiptText, ScrollText, TrendingDown, TrendingUp, Users, Banknote } from "lucide-react";
 import { useAuth } from "@/contexts/auth-context";
 import { useT } from "@/i18n";
 import { api } from "@/api";
@@ -189,6 +189,43 @@ export function ReportsPage() {
     },
   ];
 
+  const detailedPaymentColumns: Column<NonNullable<PeriodReport["detailedPayments"][number]>>[] = [
+    { key: "date", header: t("rpt.colDate"), render: (row) => <span dir="ltr" className="tabnum text-subtle">{row.paidAt.slice(0, 16)}</span> },
+    { key: "member", header: t("pay.colMember"), render: (row) => <span className="font-bold">{row.memberName} · {row.memberCode}</span> },
+    { key: "plan", header: t("pay.colPlan"), render: (row) => <span className="text-subtle">{row.planName}</span> },
+    { key: "net", header: t("pay.colNet"), render: (row) => <span dir="ltr" className="font-extrabold tabnum">{formatMinor(row.netMinor)}</span> },
+    { key: "paid", header: t("pay.colPaid"), render: (row) => <span dir="ltr" className="font-bold tabnum text-emerald">{formatMinor(row.paidMinor)}</span> },
+    { key: "remaining", header: t("pay.colRemaining"), render: (row) => row.status === "voided" ? <span className="text-faint">—</span> : row.remainingMinor > 0 ? <span dir="ltr" className="font-bold tabnum text-red">{formatMinor(row.remainingMinor)}</span> : <span className="text-faint">0.00</span> },
+    { key: "method", header: t("pay.colMethod"), render: (row) => <span className="text-subtle">{row.methodLabel}</span> },
+    { key: "status", header: t("pay.colStatus"), render: (row) => <span className="text-subtle">{t(`payStatus.${row.status}`)}</span> },
+    { key: "reason", header: t("pay.colReason"), render: (row) => row.voidReason ? <span className="text-[12px] text-subtle max-w-32 truncate block" title={row.voidReason}>{row.voidReason}</span> : row.refundReason ? <span className="text-[12px] text-subtle max-w-32 truncate block" title={row.refundReason}>{row.refundReason}</span> : <span className="text-faint">—</span> },
+  ];
+
+  const detailedExpenseColumns: Column<NonNullable<PeriodReport["detailedExpenses"][number]>>[] = [
+    { key: "date", header: t("rpt.colDate"), render: (row) => <span dir="ltr" className="tabnum text-subtle">{row.date}</span> },
+    { key: "category", header: t("exp.filterCategory"), render: (row) => <span className="font-bold">{row.categoryName}</span> },
+    { key: "amount", header: t("exp.colAmount"), render: (row) => <span dir="ltr" className="font-extrabold tabnum text-red">{formatMinor(row.amountMinor)}</span> },
+    { key: "desc", header: t("rpt.colDescription"), render: (row) => <span className="text-subtle max-w-40 truncate block" title={row.description}>{row.description}</span> },
+    { key: "method", header: t("pay.colMethod"), render: (row) => <span className="text-subtle">{row.methodLabel}</span> },
+    { key: "voidReason", header: t("rpt.colVoidReason"), render: (row) => row.voidReason ? <span className="text-[12px] text-subtle max-w-32 truncate block" title={row.voidReason}>{row.voidReason}</span> : <span className="text-faint">—</span> },
+  ];
+
+  const detailedRefundColumns: Column<NonNullable<PeriodReport["detailedRefunds"][number]>>[] = [
+    { key: "date", header: t("rpt.colDate"), render: (row) => <span dir="ltr" className="tabnum text-subtle">{row.createdAt.slice(0, 16)}</span> },
+    { key: "member", header: t("pay.colMember"), render: (row) => <span className="font-bold">{row.memberName}</span> },
+    { key: "amount", header: t("exp.colAmount"), render: (row) => <span dir="ltr" className="font-extrabold tabnum text-amber">{formatMinor(row.amountMinor)}</span> },
+    { key: "reason", header: t("rpt.colRefundReason"), render: (row) => <span className="text-[12px] text-subtle max-w-40 truncate block" title={row.reason}>{row.reason}</span> },
+    { key: "method", header: t("pay.colMethod"), render: (row) => <span className="text-subtle">{row.methodLabel}</span> },
+  ];
+
+  const detailedVoidColumns: Column<NonNullable<PeriodReport["detailedVoids"][number]>>[] = [
+    { key: "date", header: t("rpt.colDate"), render: (row) => <span dir="ltr" className="tabnum text-subtle">{row.voidedAt.slice(0, 16)}</span> },
+    { key: "member", header: t("pay.colMember"), render: (row) => <span className="font-bold">{row.memberName}</span> },
+    { key: "amount", header: t("pay.colPaid"), render: (row) => <span dir="ltr" className="font-extrabold tabnum text-red">{formatMinor(row.amountMinor)}</span> },
+    { key: "reason", header: t("rpt.colVoidReason"), render: (row) => <span className="text-[12px] text-subtle max-w-40 truncate block" title={row.voidReason}>{row.voidReason}</span> },
+    { key: "method", header: t("pay.colMethod"), render: (row) => <span className="text-subtle">{row.methodLabel}</span> },
+  ];
+
   if (!hasPermission("reports.view")) {
     return <EmptyState icon={<BarChart3 />} title={t("errors.forbidden")} />;
   }
@@ -308,6 +345,38 @@ export function ReportsPage() {
               <DataTable columns={categoryColumns} data={categoryRows} rowKey={(r) => r.categoryId} />
             )}
           </Card>
+
+          <Card>
+            <CardHeader title={t("rpt.detailPayments")} description={`${report.detailedPayments.length} عملية`} />
+            {report.detailedPayments.length === 0 ? (
+              <EmptyState icon={<Banknote />} title={t("rpt.emptyRange")} />
+            ) : (
+              <DataTable columns={detailedPaymentColumns} data={report.detailedPayments} rowKey={(r) => r.id} />
+            )}
+          </Card>
+
+          <Card>
+            <CardHeader title={t("rpt.detailExpenses")} description={`${report.detailedExpenses.length} مصروف`} />
+            {report.detailedExpenses.length === 0 ? (
+              <EmptyState icon={<TrendingDown />} title={t("rpt.emptyRange")} />
+            ) : (
+              <DataTable columns={detailedExpenseColumns} data={report.detailedExpenses} rowKey={(r) => r.id} />
+            )}
+          </Card>
+
+          {report.detailedRefunds.length > 0 && (
+            <Card>
+              <CardHeader title={t("rpt.detailRefunds")} description={`${report.detailedRefunds.length} استرداد`} />
+              <DataTable columns={detailedRefundColumns} data={report.detailedRefunds} rowKey={(r) => r.id} />
+            </Card>
+          )}
+
+          {report.detailedVoids.length > 0 && (
+            <Card>
+              <CardHeader title={t("rpt.detailVoids")} description={`${report.detailedVoids.length} إلغاء`} />
+              <DataTable columns={detailedVoidColumns} data={report.detailedVoids} rowKey={(r) => r.id} />
+            </Card>
+          )}
         </>
       ))}
 

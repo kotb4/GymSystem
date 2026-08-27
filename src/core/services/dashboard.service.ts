@@ -67,10 +67,10 @@ export function getDashboardOperational(
 ): DashboardOperationalStats {
   requirePermission(actor, "payments.view");
   const balanceRow = db.first<OutstandingRow>(
-    "WITH paid AS (\n  SELECT subscription_id, SUM(paid_amount_minor) AS paid_minor\n  FROM payments\n  WHERE subscription_id IS NOT NULL AND status IN ('partial', 'paid')\n  GROUP BY subscription_id\n)\nSELECT COUNT(*) AS cnt,\n  COALESCE(SUM(MAX(CAST(ROUND(s.price * 100) AS INTEGER) - COALESCE(p.paid_minor, 0), 0)), 0) AS total_minor\nFROM member_subscriptions s\nLEFT JOIN paid p ON p.subscription_id = s.id\nWHERE s.status = 'active'",
+    "WITH paid AS (\n  SELECT subscription_id, SUM(paid_amount_minor) AS paid_minor, SUM(discount_amount_minor) AS discount_minor\n  FROM payments\n  WHERE subscription_id IS NOT NULL AND status IN ('partial', 'paid')\n  GROUP BY subscription_id\n)\nSELECT COUNT(*) AS cnt,\n  COALESCE(SUM(MAX(CAST(ROUND(s.price * 100) AS INTEGER) - COALESCE(p.paid_minor, 0) - COALESCE(p.discount_minor, 0), 0)), 0) AS total_minor\nFROM member_subscriptions s\nLEFT JOIN paid p ON p.subscription_id = s.id\nWHERE s.status = 'active'",
   );
   const hourRows = db.all<{ hour: number; total: number }>(
-    "SELECT CAST(substr(checkin_at, 12, 2) AS INTEGER) AS hour, COUNT(*) AS total\nFROM attendance WHERE substr(checkin_at, 1, 10) = ?\nGROUP BY hour ORDER BY total DESC LIMIT 5",
+    "SELECT CAST(substr(checkin_at, 12, 2) AS INTEGER) AS hour, COUNT(*) AS total\nFROM attendance WHERE deleted_at IS NULL AND substr(checkin_at, 1, 10) = ?\nGROUP BY hour ORDER BY total DESC LIMIT 5",
     [todayKey()],
   );
   return {

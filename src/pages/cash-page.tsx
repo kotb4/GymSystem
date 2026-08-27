@@ -20,6 +20,7 @@ import { Badge } from "@/components/ui/badge";
 import { DataTable, type Column } from "@/components/ui/table";
 import { EmptyState } from "@/components/ui/empty-state";
 import { Pagination } from "@/components/ui/pagination";
+import { ConfirmDialog } from "@/components/ui/confirm-dialog";
 
 export function CashSessionsPage() {
   const t = useT();
@@ -36,6 +37,7 @@ export function CashSessionsPage() {
   const [items, setItems] = useState<CashSession[]>([]);
   const [total, setTotal] = useState(0);
   const [reloadTick, setReloadTick] = useState(0);
+  const [confirmAbort, setConfirmAbort] = useState(false);
   const reload = () => setReloadTick((v) => v + 1);
 
   const canView = hasPermission("payments.view");
@@ -84,6 +86,22 @@ export function CashSessionsPage() {
       await api.cash.open({ openingBalanceMinor: toMinor(openingMajor || "0") });
       toast("success", t("cashPage.openedToast"));
       setOpeningMajor("");
+      reload();
+    } catch (err) {
+      setError(describeError(err, t));
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const onDeleteOpenSession = async () => {
+    if (!openTotals) return;
+    setBusy(true);
+    setError(null);
+    try {
+      await api.cash.removeSession(openTotals.session.id);
+      toast("success", t("cashPage.sessionDeletedToast"));
+      setConfirmAbort(false);
       reload();
     } catch (err) {
       setError(describeError(err, t));
@@ -301,10 +319,18 @@ export function CashSessionsPage() {
                   </p>
                 )}
 
-                <Button type="submit" loading={busy} disabled={busy || countedMajor === ""}>
-                  <LockKeyhole className="size-4" />
-                  {t("cashPage.closeBtn")}
-                </Button>
+                <div className="flex items-center gap-2">
+                  <Button type="submit" loading={busy} disabled={busy || countedMajor === ""}>
+                    <LockKeyhole className="size-4" />
+                    {t("cashPage.closeBtn")}
+                  </Button>
+                  {hasPermission("cash.purge") && (
+                    <Button type="button" variant="ghost" className="text-red hover:text-red" disabled={busy}
+                      onClick={() => setConfirmAbort(true)}>
+                      {t("cashPage.deleteSessionBtn")}
+                    </Button>
+                  )}
+                </div>
               </form>
             </Card>
           )}
@@ -353,6 +379,15 @@ export function CashSessionsPage() {
           </>
         )}
       </Card>
+
+      <ConfirmDialog
+        open={confirmAbort}
+        onClose={() => setConfirmAbort(false)}
+        title={t("cashPage.deleteSessionBtn")}
+        message={t("cashPage.deleteSessionConfirm")}
+        confirmLabel={t("common.confirm")}
+        onConfirm={() => void onDeleteOpenSession()}
+      />
     </div>
   );
 }

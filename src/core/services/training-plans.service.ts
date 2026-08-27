@@ -244,6 +244,30 @@ export function cancelTrainingPlan(
   return transitionPlan(db, actor, planId, "cancelled");
 }
 
+export function reactivateTrainingPlan(
+  db: Db,
+  actor: ServiceActor,
+  planId: string,
+): PublicTrainingPlan {
+  requirePermission(actor, "training.manage");
+  const plan = getPlanRow(db, planId);
+  if (!plan) throw errNotFound("errors.trainingPlanNotFound");
+  if (plan.status === "active") throw errValidation("errors.trainingPlanNotEditable");
+  const tp = db.first<{ member_id: string }>(
+    "SELECT member_id FROM training_plans WHERE id = ?",
+    [planId],
+  );
+  if (tp) assertDepartmentAccess(actor, memberDepartmentById(db, tp.member_id));
+
+  const today = todayKey();
+  if (plan.end_date < today) throw errValidation("errors.trainingPlanNotEditable");
+  db.transaction(() => {
+    db.run("UPDATE training_plans SET status = 'active', updated_at = ? WHERE id = ?", [nowStamp(), planId]);
+    recordAudit(db, actor, "TRAINING_PLAN_REACTIVATED", "training_plan", planId, {});
+  });
+  return toPlan(getPlanRow(db, planId)!);
+}
+
 export interface PlanWithNames extends PublicTrainingPlan {
   memberCode: string;
   memberName: string;

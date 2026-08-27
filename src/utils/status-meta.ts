@@ -10,6 +10,7 @@ const SUB_VARIANT: Record<EffectiveSubscriptionStatus, BadgeVariant> = {
   expired: "danger",
   suspended: "warning",
   cancelled: "violet",
+  frozen: "info",
 };
 
 const CARD_VARIANT: Record<CardStatus, BadgeVariant> = {

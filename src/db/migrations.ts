@@ -5,6 +5,7 @@ import type { Db } from "./engine";
 export interface Migration {
   version: number;
   statements: string[];
+  callback?: (db: Db) => void;
 }
 
 const BASE_TS = "2026-01-01 00:00:00";
@@ -238,6 +239,47 @@ function buildMigrations(): Migration[] {
         `INSERT INTO settings (key, value) VALUES\n  ('allow_negative_stock', '0')\nON CONFLICT(key) DO NOTHING`,
       ],
     },
+    {
+      version: 7,
+      statements: [
+        // ---- manager gains permission-editor control over subordinate roles (ADR-007) ----
+        "INSERT INTO role_permissions (role_id, permission_code) VALUES ('manager', 'settings.edit')\nON CONFLICT(role_id, permission_code) DO NOTHING",
+      ],
+    },
+    {
+      version: 8,
+      statements: [
+        // ---- hard-delete capabilities for entities that only had soft toggles (ADR-008) ----
+        "INSERT OR IGNORE INTO permissions (code) VALUES ('employees.purge')",
+        "INSERT OR IGNORE INTO permissions (code) VALUES ('store.purge')",
+        "INSERT OR IGNORE INTO permissions (code) VALUES ('cash.purge')",
+      ],
+    },
+    {
+      version: 9,
+      statements: [
+        // ---- hard-delete for subscriptions (detaches history, removes its money rows) ----
+        "INSERT OR IGNORE INTO permissions (code) VALUES ('subscriptions.purge')",
+      ],
+    },
+    {
+      version: 10,
+      statements: [
+        "INSERT OR IGNORE INTO permissions (code) VALUES ('checkin.delete')",
+      ],
+    },
+    {
+      version: 11,
+      statements: [],
+      callback: (db) => {
+        const hasCol = db.first<{ cnt: number }>(
+          "SELECT COUNT(*) AS cnt FROM pragma_table_info('attendance') WHERE name = 'deleted_at'",
+        );
+        if (!hasCol || Number(hasCol.cnt) === 0) {
+          db.exec("ALTER TABLE attendance ADD COLUMN deleted_at TEXT");
+        }
+      },
+    },
   ];
 }
 
@@ -258,6 +300,7 @@ export function runMigrations(db: Db): void {
 function applyMigration(db: Db, migration: Migration): void {
   db.transaction(() => {
     for (const statement of migration.statements) db.exec(statement);
+    if (migration.callback) migration.callback(db);
     db.run("INSERT INTO schema_migrations (version, applied_at) VALUES (?, ?)", [
       migration.version,
       nowStamp(),

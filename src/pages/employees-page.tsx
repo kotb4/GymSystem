@@ -1,11 +1,12 @@
 import { useCallback, useEffect, useState, type ChangeEvent } from "react";
-import { BanknoteCheck, UserPlus } from "lucide-react";
+import { BanknoteCheck, Trash2, UserPlus } from "lucide-react";
 import { useAuth } from "@/contexts/auth-context";
 import { useT } from "@/i18n";
 import { useToast } from "@/components/ui/toast";
 import { describeError } from "@/utils/app-error";
 import { api, type PublicEmployee, type PublicSalary, type SalaryType } from "@/api";
 import { formatMinor } from "@/core/money";
+import { todayKey } from "@/core/dates";
 import { Card, CardHeader } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -55,6 +56,20 @@ function EmployeesTab() {
   }, []);
   useEffect(() => { reload(); }, [reload]);
 
+  const { toast } = useToast();
+  const [purgeTarget, setPurgeTarget] = useState<PublicEmployee | null>(null);
+  const doPurge = async () => {
+    if (!purgeTarget) return;
+    try {
+      await api.employees.purge(purgeTarget.id);
+      toast("success", t("emp.purgedToast"));
+      setPurgeTarget(null);
+      reload();
+    } catch (err) {
+      toast("error", describeError(err, t));
+    }
+  };
+
   const columns: Column<PublicEmployee>[] = [
     { key: "name", header: t("emp.fullName"), render: (r) => (
       <span><span className="block font-bold">{r.fullName}</span>{r.roleTitle && <span className="block text-[11px] text-faint">{r.roleTitle}</span>}</span>
@@ -64,6 +79,14 @@ function EmployeesTab() {
     { key: "salary", header: t("emp.salaryBase"), render: (r) => hasPermission("salaries.view") && r.salaryBaseMinor != null
       ? <span dir="ltr" className="tabnum">{formatMinor(r.salaryBaseMinor)}</span> : <span>—</span> },
     { key: "status", header: t("common.status"), render: (r) => <Badge variant={r.isActive ? "success" : "neutral"} dot>{r.isActive ? t("status.active") : t("status.inactive")}</Badge> },
+    ...(hasPermission("employees.purge") ? [{
+      key: "purge", header: "", align: "end" as const,
+      render: (r: PublicEmployee) => (
+        <Button size="sm" variant="ghost" className="text-red hover:text-red" onClick={() => setPurgeTarget(r)}>
+          <Trash2 className="size-3.5" />{t("emp.purgeAction")}
+        </Button>
+      ),
+    }] : []),
   ];
 
   return (
@@ -85,6 +108,14 @@ function EmployeesTab() {
           onSaved={() => { setModal({ open: false, target: null }); reload(); }}
         />
       )}
+      <ConfirmDialog
+        open={purgeTarget !== null}
+        onClose={() => setPurgeTarget(null)}
+        title={t("emp.purgeConfirmTitle")}
+        message={purgeTarget ? t("emp.purgeConfirmMsg", { name: purgeTarget.fullName }) : ""}
+        confirmLabel={t("emp.purgeAction")}
+        onConfirm={() => void doPurge()}
+      />
     </>
   );
 }
@@ -180,7 +211,7 @@ function SalariesTab() {
   const { actor, hasPermission } = useAuth();
   const { toast } = useToast();
   const [rows, setRows] = useState<PublicSalary[]>([]);
-  const [periodMonth, setPeriodMonth] = useState(new Date().toISOString().slice(0, 7));
+  const [periodMonth, setPeriodMonth] = useState(todayKey().slice(0, 7));
   const [recordFor, setRecordFor] = useState<PublicEmployee | null>(null);
   const [payTarget, setPayTarget] = useState<PublicSalary | null>(null);
 

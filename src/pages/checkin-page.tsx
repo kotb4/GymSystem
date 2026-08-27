@@ -1,5 +1,5 @@
 ﻿import { useCallback, useEffect, useRef, useState } from "react";
-import { CheckCircle2, ScanLine, ShieldAlert, XCircle } from "lucide-react";
+import { CheckCircle2, ScanLine, ShieldAlert, Trash2, XCircle } from "lucide-react";
 import { useAuth } from "@/contexts/auth-context";
 import { useT } from "@/i18n";
 import { useToast } from "@/components/ui/toast";
@@ -7,6 +7,7 @@ import { describeError } from "@/utils/app-error";
 import { api, type CardWithMember } from "@/api";
 import type { CheckInResult, RecentCheckIn } from "@/core/services/attendance.service";
 import { diffDaysKeys, todayKey } from "@/core/dates";
+import { formatMinor } from "@/core/money";
 
 import { useConfiguredScanner } from "@/hooks/use-configured-scanner";
 
@@ -143,6 +144,33 @@ export function CheckInPage() {
         </span>
       ),
     },
+    ...(hasPermission("checkin.delete")
+      ? [
+          {
+            key: "delete" as const,
+            header: "",
+            align: "end" as const,
+            render: (row: RecentRow) => (
+              <button
+                type="button"
+                onClick={async () => {
+                  try {
+                    await api.attendance.delete(row.id);
+                    setRecent((prev) => prev.filter((r) => r.id !== row.id));
+                    toast("success", t("members.attendanceDeleted"));
+                  } catch (e) {
+                    toast("error", describeError(e, t));
+                  }
+                }}
+                className="grid size-8 place-items-center rounded-lg text-faint transition-colors hover:bg-red/10 hover:text-red"
+                title={t("common.delete")}
+              >
+                <Trash2 className="size-4" />
+              </button>
+            ),
+          },
+        ]
+      : []),
   ];
 
   return (
@@ -263,9 +291,18 @@ function SuccessPanel({ result }: { result: Extract<CheckInResult, { kind: "succ
       </div>
       <dl className="mt-4 grid grid-cols-2 gap-x-6 gap-y-2.5 border-t border-neon/20 pt-4 text-[13px] sm:grid-cols-4">
         <Info label={t("members.code")} value={result.memberCode} ltr />
-        <Info label={t("common.plan")} value={result.planName ?? "—"} />
+        <Info label={t("common.plan")} value={result.planName ?? "-"} />
         <Info label={t("checkin.fieldExpiry")} value={result.subscriptionEndsAt} ltr />
         <Info label={t("checkin.fieldRemaining")} value={`${left}`} ltr />
+        {result.sessionsRemaining != null && (
+          <Info label={t("checkin.sessionsLeft")} value={`${result.sessionsRemaining}`} ltr />
+        )}
+        <Info
+          label={t("checkin.outstanding")}
+          value={formatMinor(result.outstandingMinor)}
+          ltr
+          tone={result.outstandingMinor > 0 ? "red" : undefined}
+        />
       </dl>
     </div>
   );
@@ -296,11 +333,27 @@ function DeniedPanel({ result }: { result: Extract<CheckInResult, { kind: "denie
   );
 }
 
-function Info({ label, value, ltr }: { label: string; value: string; ltr?: boolean }) {
+function Info({
+  label,
+  value,
+  ltr,
+  tone,
+}: {
+  label: string;
+  value: string;
+  ltr?: boolean;
+  tone?: "red";
+}) {
   return (
     <div className="min-w-0">
       <dt className="text-[11px] font-semibold text-faint">{label}</dt>
-      <dd dir={ltr ? "ltr" : undefined} className={cn("mt-0.5 truncate font-bold tabnum")}>
+      <dd
+        dir={ltr ? "ltr" : undefined}
+        className={cn(
+          "mt-0.5 truncate font-bold tabnum",
+          tone === "red" && "text-red",
+        )}
+      >
         {value}
       </dd>
     </div>

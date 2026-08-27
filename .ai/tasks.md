@@ -1,5 +1,25 @@
 # Current AI Development Tasks
 
+## TASK-008: Automatic documentation sync (value-level) + 0.0.0.0 LAN bind
+- Status: done (2026-08-27)
+- Implementation: `scripts/sync-docs.mjs` recalculates machine-checkable facts live from source (PERMS count, AUDIT_ACTIONS count, migration max version, HTTP HOST default, service/page/test file counts) and refreshes them in `AGENTS.md`, `.ai/project.md`, `docs/ai/architecture.md`, `docs/ai/database.md`. Guards against narrative drift by touching value-only patterns. Hooks: npm `sync:docs` script + `.git/hooks/pre-commit` (sh, LF-only, runs before each commit). Host default changed to `0.0.0.0` (`server/index.ts`) enabling LAN exposure.
+- Tests: verified `node scripts/sync-docs.mjs` and the sh hook run to exit 0; typecheck clean.
+
+## TASK-007: Subscription hard-delete
+- Status: done (2026-08-25)
+- Implementation: `subscriptions.purge` permission (migration v9) + `purgeSubscription` cascade (payments→refunds→ledger→freezes removed; attendance/bookings detached not destroyed) + RPC/API/UI in member-profile subs tab with confirm dialog; dept-scoped; ADR-008 item 4.
+- Tests: tests/subscriptions-purge.test.ts (4 cases).
+
+## TASK-006: Hard-delete surfaces for employees/products/cash sessions
+- Status: done (2026-08-25)
+- Implementation: permissions `employees.purge`/`store.purge`/`cash.purge` (migration v8) + services `purgeEmployee`/`purgeProduct`/`deleteCashSession` + RPC/API/UI wiring with confirm dialogs; boundaries per ADR-008.
+- Tests: tests/purge-others.test.ts (5 cases incl. permission denials and sold-product/closed-session refusals).
+
+## TASK-005: Anwar owner account + manager permission control
+- Status: done (2026-08-25)
+- Implementation: manager granted `settings.edit` via idempotent migration v7 + code default; Anwar to be created as role=owner from Users page (no code change needed); ADR-007 records scope decisions incl. explicit deferral of per-user permission overrides.
+- Tests: tests/manager-permissions.test.ts (v7 idempotency, owner absolutism, manager edit persistence, owner-row immutability, denial without settings.edit).
+
 ## TASK-001: Full-project review remediation batch
 - Status: done (2026-08-25)
 - Priority: high

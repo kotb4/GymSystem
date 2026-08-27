@@ -1,7 +1,7 @@
 ---
 description: Comprehensive read-only project audit; writes report to .ai/audits/latest.md
 ---
-Perform a comprehensive audit of GymSystem. Focus area (optional): $ARGUMENTS
+Perform a comprehensive audit of Yassen Mohamed Kotb | 01288536381. Focus area (optional): $ARGUMENTS
 
 Scope — inspect the actual code for each area and rate findings CRITICAL/HIGH/MEDIUM/LOW:
 1. Architecture consistency (AGENTS.md §3 vs reality; fetch boundaries, service layer purity)

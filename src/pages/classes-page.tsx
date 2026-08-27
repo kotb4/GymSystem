@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useState, type ChangeEvent } from "react";
-import { CalendarDays, CalendarPlus, CheckCircle2, XCircle } from "lucide-react";
+import { CalendarDays, CalendarPlus, CheckCircle2, RotateCcw, XCircle } from "lucide-react";
 import { useAuth } from "@/contexts/auth-context";
 import { useT } from "@/i18n";
 import { useToast } from "@/components/ui/toast";
@@ -29,6 +29,7 @@ export function ClassesPage() {
   const [sessionModalFor, setSessionModalFor] = useState<GymClass | null>(null);
   const [details, setDetails] = useState<ClassSession | null>(null);
   const [cancelTarget, setCancelTarget] = useState<ClassSession | null>(null);
+  const [uncancelTarget, setUncancelTarget] = useState<ClassSession | null>(null);
   const canManage = hasPermission("classes.manage");
 
   const reload = useCallback(() => {
@@ -55,8 +56,15 @@ export function ClassesPage() {
       key: "actions", header: "", align: "end" as const,
       render: (r: ClassSession) => (
         <div className="flex justify-end gap-1.5">
-          <Button size="sm" variant="secondary" onClick={() => void doComplete(r)}>{t("cls.completeSession")}</Button>
-          <Button size="sm" variant="ghost" onClick={() => setCancelTarget(r)}>{t("cls.cancelSession")}</Button>
+          {r.status !== "cancelled" && <Button size="sm" variant="secondary" onClick={() => void doComplete(r)}>{t("cls.completeSession")}</Button>}
+          {r.status === "cancelled" ? (
+            <Button size="sm" variant="ghost" onClick={() => setUncancelTarget(r)}>
+              <RotateCcw className="size-3.5" />
+              {t("cls.uncancelSession")}
+            </Button>
+          ) : (
+            <Button size="sm" variant="ghost" onClick={() => setCancelTarget(r)}>{t("cls.cancelSession")}</Button>
+          )}
         </div>
       ),
     }] : []),
@@ -144,6 +152,22 @@ export function ClassesPage() {
           api.classes.cancelSession(cancelTarget.id, "-").then(() => {
             toast("success", t("toast.saved"));
             setCancelTarget(null);
+            reload();
+          }).catch((err) => toast("error", describeError(err, t)));
+        }}
+      />
+      <ConfirmDialog
+        open={uncancelTarget !== null}
+        onClose={() => setUncancelTarget(null)}
+        title={t("cls.uncancelSession")}
+        message={t("cls.uncancelSessionConfirmMsg")}
+        confirmLabel={t("common.confirm")}
+        loading={false}
+        onConfirm={() => {
+          if (!uncancelTarget) return;
+          api.classes.uncancelSession(uncancelTarget.id).then(() => {
+            toast("success", t("cls.sessionUncancelledToast"));
+            setUncancelTarget(null);
             reload();
           }).catch((err) => toast("error", describeError(err, t)));
         }}

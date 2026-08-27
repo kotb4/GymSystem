@@ -1,12 +1,12 @@
 ﻿import { useCallback, useEffect, useState } from "react";
-import { Dumbbell, MoreHorizontal, Pencil, Plus, Power } from "lucide-react";
+import { Dumbbell, MoreHorizontal, Pencil, Plus, Power, RotateCcw } from "lucide-react";
 import { useAuth } from "@/contexts/auth-context";
 import { useT } from "@/i18n";
 import { useToast } from "@/components/ui/toast";
 import { describeError } from "@/utils/app-error";
 import { api, type PlanWithNames, type PublicTrainer } from "@/api";
 import { formatDateShort } from "@/services/format";
-import { parseDateKey } from "@/core/dates";
+import { parseDateKey, todayKey } from "@/core/dates";
 import { Card, CardHeader } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { Avatar } from "@/components/ui/avatar";
@@ -45,6 +45,7 @@ export function TrainersPage() {
   const [editTarget, setEditTarget] = useState<PublicTrainer | null>(null);
   const [toggleTarget, setToggleTarget] = useState<PublicTrainer | null>(null);
   const [planAction, setPlanAction] = useState<{ plan: PlanWithNames; kind: "end" | "cancel" } | null>(null);
+  const [reactivateTarget, setReactivateTarget] = useState<PlanWithNames | null>(null);
   const [busy, setBusy] = useState(false);
 
   const reload = useCallback(() => {
@@ -282,6 +283,15 @@ export function TrainersPage() {
               onClick={() => setPlanAction({ plan: row, kind: "cancel" })}
             />
           </Dropdown>
+        ) : (row.status === "cancelled" || row.status === "ended") && row.endDate >= todayKey() ? (
+          <button
+            type="button"
+            aria-label={t("trainers.planReactivate")}
+            onClick={() => setReactivateTarget(row)}
+            className="grid size-8 place-items-center rounded-lg text-faint transition-colors hover:bg-white/5 hover:text-subtle"
+          >
+            <RotateCcw className="size-4" />
+          </button>
         ) : null,
     });
   }
@@ -399,6 +409,29 @@ export function TrainersPage() {
         loading={busy}
         tone={planAction?.kind === "cancel" ? "danger" : "primary"}
       />
+
+      <ConfirmDialog
+        open={reactivateTarget !== null}
+        onClose={() => setReactivateTarget(null)}
+        onConfirm={async () => {
+          if (!actor || !reactivateTarget) return;
+          setBusy(true);
+          try {
+            await api.trainingPlans.reactivate(reactivateTarget.id);
+            toast("success", t("trainers.planReactivatedToast"));
+            setReactivateTarget(null);
+            reload();
+          } catch (err) {
+            toast("error", describeError(err, t));
+          } finally {
+            setBusy(false);
+          }
+        }}
+        title={t("trainers.planReactivate")}
+        message={t("trainers.planReactivateConfirmMsg")}
+        confirmLabel={t("trainers.planReactivate")}
+        loading={busy}
+      />
     </div>
   );
 }
@@ -429,7 +462,7 @@ function TrainerFormModal(props: {
     setPhone(props.target?.phone ?? "");
     setEmail(props.target?.email ?? "");
     setSpecialization(props.target?.specialization ?? "");
-    setJoinedDate(props.target?.joinedDate ?? new Date().toISOString().slice(0, 10));
+    setJoinedDate(props.target?.joinedDate ?? todayKey());
     setNotes(props.target?.notes ?? "");
   }, [props.open, props.target]);
 

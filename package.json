@@ -13,6 +13,7 @@
     "typecheck:server": "tsc -p tsconfig.server.json --noEmit",
     "test": "vitest run",
     "test:watch": "vitest",
+    "sync:docs": "node scripts/sync-docs.mjs",
     "e2e": "powershell -NoProfile -ExecutionPolicy Bypass -File scripts/e2e-smoke.ps1"
   },
   "dependencies": {

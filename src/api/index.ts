@@ -81,6 +81,8 @@ const subscriptionsApi = {
     rpc<Subscription>("subscriptions", "updateSubscription", [id, patch]),
   setStatus: (id: string, status: SubscriptionRowStatus) =>
     rpc<Subscription>("subscriptions", "setSubscriptionStatus", [id, status]),
+  purge: (id: string) => rpc<void>("subscriptions", "purgeSubscription", [id]),
+  undoCancel: (id: string) => rpc<Subscription>("subscriptions", "undoCancelSubscription", [id]),
   listForMember: (memberId: string) =>
     rpc<Subscription[]>("subscriptions", "listMemberSubscriptions", [memberId]),
   list: (query: SubscriptionListQuery = {}) =>
@@ -128,6 +130,8 @@ const attendanceApi = {
   series: (days: number) => rpc<AttendanceDayPoint[]>("attendance", "attendanceSeries", [days]),
   forMember: (memberId: string, limit?: number) =>
     rpc<unknown[]>("attendance", "listAttendanceForMember", [memberId, limit]),
+  delete: (attendanceId: string) => rpc<void>("attendance", "deleteAttendance", [attendanceId]),
+  restore: (attendanceId: string) => rpc<void>("attendance", "restoreAttendance", [attendanceId]),
 };
 
 const settingsApi = {
@@ -162,6 +166,8 @@ const paymentsApi = {
   refund: (paymentId: string, amountMinor: number, reason: string, methodCode?: string) =>
     rpc<Payment>("payments", "refundPayment", [paymentId, amountMinor, reason, methodCode]),
   void: (paymentId: string, reason: string) => rpc<Payment>("payments", "voidPayment", [paymentId, reason]),
+  unvoid: (paymentId: string) => rpc<Payment>("payments", "unvoidPayment", [paymentId]),
+  undoRefund: (paymentId: string) => rpc<Payment>("payments", "undoRefund", [paymentId]),
   subscriptionBalance: (subscriptionId: string) =>
     rpc<SubscriptionBalance>("payments", "getSubscriptionBalance", [subscriptionId]),
   list: (query: PaymentListQuery = {}) =>
@@ -173,6 +179,7 @@ const expensesApi = {
   create: (input: unknown) => rpc<Expense>("expenses", "createExpense", [input]),
   update: (expenseId: string, patch: unknown) => rpc<Expense>("expenses", "updateExpense", [expenseId, patch]),
   void: (expenseId: string, reason: string) => rpc<Expense>("expenses", "voidExpense", [expenseId, reason]),
+  unvoid: (expenseId: string) => rpc<Expense>("expenses", "unvoidExpense", [expenseId]),
   get: (expenseId: string) => rpc<Expense>("expenses", "getExpenseById", [expenseId]),
   list: (query: ExpenseListQuery = {}) =>
     rpc<{ items: Expense[]; total: number }>("expenses", "listExpenses", [query]),
@@ -194,6 +201,7 @@ const cashApi = {
       input.closeNote ?? null,
     ]),
   openTotals: () => rpc<unknown>("cash", "getOpenSessionTotals", []),
+  removeSession: (sessionId: string) => rpc<void>("cash", "deleteCashSession", [sessionId]),
   list: (query: { page?: number; pageSize?: number; status?: CashSessionStatus | "all" } = {}) =>
     rpc<{ items: CashSession[]; total: number }>("cash", "listCashSessions", [query]),
 };
@@ -209,6 +217,12 @@ const dashboardApi = {
 const financeApi = {
   overview: (todayKeyStr: string, monthStartKey: string) =>
     rpc<FinanceOverview>("finance", "getFinanceOverview", [todayKeyStr, monthStartKey]),
+  outstandingForMember: (memberId: string) =>
+    rpc<{ subscriptionsMinor: number; storeMinor: number; totalMinor: number }>(
+      "finance",
+      "getMemberOutstanding",
+      [memberId],
+    ),
 };
 
 const reportsApi = {
@@ -236,6 +250,7 @@ const trainingPlansApi = {
     rpc<PublicTrainingPlan>("trainingPlans", "updateTrainingPlan", [planId, patch]),
   end: (planId: string) => rpc<PublicTrainingPlan>("trainingPlans", "endTrainingPlan", [planId]),
   cancel: (planId: string) => rpc<PublicTrainingPlan>("trainingPlans", "cancelTrainingPlan", [planId]),
+  reactivate: (planId: string) => rpc<PublicTrainingPlan>("trainingPlans", "reactivateTrainingPlan", [planId]),
   list: (query: TrainingPlanListQuery = {}) =>
     rpc<{ items: PublicTrainingPlan[]; total: number }>("trainingPlans", "listTrainingPlans", [query]),
 };
@@ -335,6 +350,7 @@ const storeApi = {
   listProducts: (query: Record<string, unknown> = {}) =>
     rpc<{ items: ProductPublic[]; total: number }>("store", "listProducts", [query]),
   getProduct: (id: string) => rpc<ProductPublic>("store", "getProduct", [id]),
+purgeProduct: (id: string) => rpc<void>("store", "purgeProduct", [id]),
   createProduct: (input: Partial<ProductPublic>) => rpc<ProductPublic>("store", "createProduct", [input]),
   updateProduct: (id: string, patch: Partial<ProductPublic>) => rpc<ProductPublic>("store", "updateProduct", [id, patch]),
   adjustStock: (input: { productId: string; movementType: string; delta: number; unitCostMinor?: number | null; notes?: string | null }) =>
@@ -347,6 +363,7 @@ const storeApi = {
   listSales: (query: Record<string, unknown> = {}) =>
     rpc<{ items: StoreSale[]; total: number }>("store", "listSales", [query]),
   voidStoreSale: (id: string, reason: string) => rpc<void>("store", "voidStoreSale", [id, reason]),
+  unvoidStoreSale: (id: string) => rpc<void>("store", "unvoidStoreSale", [id]),
   listDebts: (query: Record<string, unknown> = {}) =>
     rpc<{ items: StoreDebtRow[]; total: number }>("store", "listStoreDebts", [query]),
   repayDebt: (input: { debtId: string; amountMinor: number; methodCode: string }) =>
@@ -405,6 +422,7 @@ const classesApi = {
   listSessions: (query?: { fromDate?: string; toDate?: string; classId?: string; status?: string; limit?: number }) =>
     rpc<ClassSession[]>("classes", "listSessions", [query ?? {}]),
   cancelSession: (sessionId: string, reason: string) => rpc<void>("classes", "cancelClassSession", [sessionId, reason]),
+  uncancelSession: (sessionId: string) => rpc<void>("classes", "uncancelClassSession", [sessionId]),
   completeSession: (sessionId: string) => rpc<ClassSession>("classes", "completeClassSession", [sessionId]),
   listBookings: (sessionId: string) => rpc<BookingRow[]>("classes", "listBookings", [sessionId]),
   listMemberBookings: (memberId: string, limit?: number) =>
@@ -459,6 +477,7 @@ const employeesApi = {
   recordSalary: (input: { employeeId: string; periodMonth: string; bonusMinor?: number; deductionMinor?: number; methodCode?: string; notes?: string | null }) =>
     rpc<PublicSalary>("employees", "recordSalary", [input]),
   paySalary: (salaryId: string) => rpc<PublicSalary>("employees", "paySalary", [salaryId]),
+purge: (id: string) => rpc<void>("employees", "purgeEmployee", [id]),
 };
 
 // ------------------------------ InBody -----------------------------------
@@ -608,6 +627,12 @@ export const api = {
     setRolePermissions: (roleId: string, perms: string[]) =>
       rpc<void>("permissions", "setRolePermissions", [roleId, perms]),
   },
+  dev: {
+    getOverrideDate: () =>
+      rpc<string | null>("dev", "getOverrideDate", []),
+    setOverrideDate: (date: string | null) =>
+      rpc<string | null>("dev", "setOverrideDate", [date]),
+  },
 };
 
 export default api;
@@ -632,6 +657,7 @@ export type {
   Subscription,
   SubscriptionWithMember,
   SubscriptionRowStatus,
+  FreezeInfo,
 } from "@/core/services/subscriptions.service";
 export type { Payment, PaymentListQuery, RecordPaymentInput } from "@/core/services/payments.service";
 export type { ExpenseListQuery } from "@/core/services/expenses.service";

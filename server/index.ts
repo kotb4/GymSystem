@@ -25,7 +25,7 @@ import { requirePermission } from "../src/core/permissions";
 
 const PORT = Number(process.env.GYMSYSTEM_PORT ?? 8890);
 /** Loopback only by default — never exposed publicly (spec section 22). */
-const HOST = process.env.GYMSYSTEM_HOST ?? "127.0.0.1";
+const HOST = process.env.GYMSYSTEM_HOST ?? "0.0.0.0";
 const MAX_BODY_BYTES = 256 * 1024 * 1024;
 /** Default cap for JSON/small uploads; DB-sized transfers opt into MAX_BODY_BYTES explicitly. */
 const DEFAULT_BODY_LIMIT = 8 * 1024 * 1024;

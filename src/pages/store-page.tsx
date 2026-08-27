@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useState, type ChangeEvent } from "react";
-import { Barcode, Minus, Package, Plus, Trash2, Undo2 } from "lucide-react";
+import { Barcode, Minus, Package, Plus, RotateCcw, Trash2, Undo2 } from "lucide-react";
 import { useAuth } from "@/contexts/auth-context";
 import { useT } from "@/i18n";
 import { useToast } from "@/components/ui/toast";
@@ -15,6 +15,7 @@ import { Badge } from "@/components/ui/badge";
 import { Modal } from "@/components/ui/modal";
 import { DataTable, type Column } from "@/components/ui/table";
 import { EmptyState } from "@/components/ui/empty-state";
+import { ConfirmDialog } from "@/components/ui/confirm-dialog";
 import { MemberPickerModal } from "@/components/members/member-picker-modal";
 
 type CartLine = { productId: string; name: string; unitPriceMinor: number; qty: number };
@@ -235,6 +236,8 @@ function ProductsTab() {
   const [editOpen, setEditOpen] = useState(false);
   const [editing, setEditing] = useState<ProductPublic | null>(null);
   const [stockTarget, setStockTarget] = useState<ProductPublic | null>(null);
+  const [purgeTarget, setPurgeTarget] = useState<ProductPublic | null>(null);
+  const { toast } = useToast();
 
   const reload = useCallback(() => {
     api.store.listProducts({ includeInactive: true }).then((r) => setItems(r.items)).catch(console.error);
@@ -243,13 +246,25 @@ function ProductsTab() {
     reload();
   }, [reload]);
 
+  const doPurge = async () => {
+    if (!purgeTarget) return;
+    try {
+      await api.store.purgeProduct(purgeTarget.id);
+      toast("success", t("store.productPurgedToast"));
+      setPurgeTarget(null);
+      reload();
+    } catch (err) {
+      toast("error", describeError(err, t));
+    }
+  };
+
   const columns: Column<ProductPublic>[] = [
     { key: "name", header: t("store.name"), render: (r) => <span className="font-bold">{r.name}</span> },
     { key: "cat", header: t("store.category"), render: (r) => r.categoryName ?? "—" },
     { key: "price", header: t("store.price"), render: (r) => <span dir="ltr" className="tabnum">{formatMinor(r.priceMinor)}</span> },
     { key: "stock", header: t("store.stock"), render: (r) => <Badge variant={r.lowStock ? "warning" : "success"} dot>{r.stockQty}</Badge> },
     { key: "active", header: t("common.status"), render: (r) => (r.isActive ? t("plans.active") : t("plans.inactive")) },
-    ...(hasPermission("store.products") || hasPermission("store.inventory")
+    ...(hasPermission("store.products") || hasPermission("store.inventory") || hasPermission("store.purge")
       ? [{
           key: "actions",
           header: t("common.actions"),
@@ -261,6 +276,11 @@ function ProductsTab() {
               )}
               {hasPermission("store.inventory") && (
                 <Button size="sm" variant="ghost" onClick={() => setStockTarget(r)}>{t("store.restock")}</Button>
+              )}
+              {hasPermission("store.purge") && (
+                <Button size="sm" variant="ghost" className="text-red hover:text-red" title={t("store.purgeProductAction")} onClick={() => setPurgeTarget(r)}>
+                  <Trash2 className="size-3.5" />
+                </Button>
               )}
             </div>
           ),
@@ -295,6 +315,14 @@ function ProductsTab() {
           onSaved={() => { setStockTarget(null); reload(); }}
         />
       )}
+      <ConfirmDialog
+        open={purgeTarget !== null}
+        onClose={() => setPurgeTarget(null)}
+        title={t("store.purgeProductAction")}
+        message={purgeTarget ? `${purgeTarget.name} — ${t("store.purgeProductConfirm")}` : ""}
+        confirmLabel={t("common.delete")}
+        onConfirm={() => void doPurge()}
+      />
     </>
   );
 }
@@ -405,6 +433,7 @@ function SalesTab() {
   const [items, setItems] = useState<StoreSale[]>([]);
   const [viewing, setViewing] = useState<StoreSale | null>(null);
   const [voidTarget, setVoidTarget] = useState<StoreSale | null>(null);
+  const [unvoidSaleTarget, setUnvoidSaleTarget] = useState<StoreSale | null>(null);
   const [reason, setReason] = useState("");
 
   const reload = useCallback(() => {
@@ -448,6 +477,8 @@ function SalesTab() {
           render: (r: StoreSale) =>
             r.status === "completed" ? (
               <button type="button" aria-label={t("store.voidSale")} onClick={() => setVoidTarget(r)} className="text-faint hover:text-red"><Undo2 className="size-4" /></button>
+            ) : r.status === "voided" ? (
+              <button type="button" aria-label={t("store.actionRestore")} onClick={() => setUnvoidSaleTarget(r)} className="text-faint hover:text-subtle"><RotateCcw className="size-4" /></button>
             ) : null,
         }]
       : []),
@@ -466,6 +497,23 @@ function SalesTab() {
           <Input label={t("store.voidReason")} value={reason} onChange={(e: ChangeEvent<HTMLInputElement>) => setReason(e.target.value)} autoFocus />
         </form>
       </Modal>
+      <ConfirmDialog
+        open={unvoidSaleTarget !== null}
+        onClose={() => setUnvoidSaleTarget(null)}
+        title={t("store.restoreConfirmTitle")}
+        message={t("store.restoreConfirmMsg")}
+        onConfirm={() => {
+          if (!unvoidSaleTarget) return;
+          api.store
+            .unvoidStoreSale(unvoidSaleTarget.id)
+            .then(() => {
+              toast("success", t("store.restoredToast"));
+              setUnvoidSaleTarget(null);
+              reload();
+            })
+            .catch((err) => toast("error", describeError(err, t)));
+        }}
+      />
       {viewing && (
         <Modal open onClose={() => setViewing(null)} title={viewing.saleNo} widthClass="max-w-md">
           <ul className="divide-y divide-line text-sm">

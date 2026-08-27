@@ -193,7 +193,7 @@ export function DashboardPage() {
         <section className="grid gap-4 sm:grid-cols-2 xl:grid-cols-4">
           <StatCard
             title={t("dashboard.finTodayRevenue")}
-            value={formatMinor(finance.todayInMinor)}
+            value={formatMinor(finance.todayInMinor - finance.todayRefundsMinor)}
             icon={<Banknote className="size-5" />}
             accent="neon"
           />
@@ -205,7 +205,7 @@ export function DashboardPage() {
           />
           <StatCard
             title={t("dashboard.finMonthRevenue")}
-            value={formatMinor(finance.monthInMinor)}
+            value={formatMinor(finance.monthInMinor - finance.monthRefundsMinor)}
             icon={<CreditCard className="size-5" />}
             accent="violet"
           />

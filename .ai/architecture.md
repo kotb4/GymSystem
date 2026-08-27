@@ -1,4 +1,4 @@
-# GymSystem Architecture (verified)
+# Yassen Mohamed Kotb | 01288536381 Architecture (verified)
 
 Last synced 2026-08-25. Diagrams reflect the real implementation, not plans.
 
@@ -37,7 +37,7 @@ One process owns the database. The browser stores no business data.
 
 27 domain services: auth, users, members, plans, subscriptions, cards, attendance, attendance-analytics, payments, expenses, cash-session, finance, financial-report, dashboard, notifications, trainers, training-plans, classes, employees, store, inbody, crm, settings, backup, audit, staff-activity, permissions.
 
-Shared kernel (`src/core/`): `permissions.ts` (68 perms, 4 roles, DB-grant cache), `errors.ts` (AppError + i18n keys), `dates.ts` (YYYY-MM-DD keys), `money.ts` (minor units), `audit-actions.ts`.
+Shared kernel (`src/core/`): `permissions.ts` (73 perms, 4 roles, DB-grant cache), `errors.ts` (AppError + i18n keys), `dates.ts` (YYYY-MM-DD keys), `money.ts` (minor units), `audit-actions.ts`.
 
 ## Database (`src/db/`)
 

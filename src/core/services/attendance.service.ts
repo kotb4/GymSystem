@@ -1,4 +1,5 @@
-﻿import { addDaysKey, nowStamp, secondsBetweenStamps, todayKey } from "@/core/dates";
+﻿import { addDaysKey, diffDaysKeys, nowStamp, secondsBetweenStamps, todayKey, calcSubscriptionEndDate } from "@/core/dates";
+import { errNotFound } from "@/core/errors";
 import { requirePermission, type ServiceActor } from "@/core/permissions";
 import type { Db, Row } from "@/db/engine";
 import { recordAudit } from "./audit.service";
@@ -25,6 +26,8 @@ export type CheckInResult =
       planName: string | null;
       subscriptionEndsAt: string;
       sessionsRemaining?: number | null;
+      /** Money still owed (subscription balance + open store debts). */
+      outstandingMinor: number;
     }
   | { kind: "denied"; reason: CheckInDenialReason; barcode: string; memberName?: string }
   | { kind: "duplicate"; secondsAgo: number; memberName: string; memberCode: string };
@@ -138,7 +141,56 @@ export async function recordCheckIn(
   }
 
   const today = todayKey();
-  const subscription = findActiveSubscription(db, member.id, today);
+
+  // Auto-unfreeze: if no active subscription, check for a suspended (frozen) one in-date-window
+  let subscription = findActiveSubscription(db, member.id, today);
+  if (!subscription) {
+    const frozenSub = db.first<{ id: string; end_date: string; frozen_at: string | null }>(
+      "SELECT id, end_date, frozen_at FROM member_subscriptions WHERE member_id = ? AND status = 'suspended' AND start_date <= ? AND end_date >= ? LIMIT 1",
+      [member.id, today, today],
+    );
+    if (frozenSub) {
+      const openFreeze = db.first<{ id: string; frozen_at: string }>(
+        "SELECT id, frozen_at FROM subscription_freezes WHERE subscription_id = ? AND actual_resume_date IS NULL ORDER BY created_at DESC LIMIT 1",
+        [frozenSub.id],
+      );
+      let endDate = frozenSub.end_date;
+      const extendsExpirySetting = readSetting(db, SETTING_KEYS.freezeExtendsExpiry);
+      const extendsExpiry = extendsExpirySetting == null || extendsExpirySetting === "1";
+      if (openFreeze && extendsExpiry) {
+        const frozenDays = Math.max(0, diffDaysKeys(openFreeze.frozen_at.slice(0, 10), today));
+        if (frozenDays > 0) {
+          endDate = calcSubscriptionEndDate(endDate, frozenDays);
+        }
+      }
+      await db.transaction(async () => {
+        if (openFreeze) {
+          db.run(
+            "UPDATE subscription_freezes SET actual_resume_date = ? WHERE id = ?",
+            [today, openFreeze.id],
+          );
+        }
+        db.run(
+          "UPDATE member_subscriptions SET status = 'active', end_date = ?, frozen_at = NULL, resume_date = NULL, updated_at = ? WHERE id = ?",
+          [endDate, nowStamp(), frozenSub.id],
+        );
+        if (openFreeze && extendsExpiry) {
+          const frozenDays = Math.max(0, diffDaysKeys(openFreeze.frozen_at.slice(0, 10), today));
+          if (frozenDays > 0) {
+            db.run(
+              "UPDATE member_subscriptions SET frozen_days = frozen_days + ? WHERE id = ?",
+              [frozenDays, frozenSub.id],
+            );
+          }
+        }
+        recordAudit(db, actor, "SUBSCRIPTION_UNFROZEN", "subscription", frozenSub.id, {
+          reason: "auto-unfreeze on check-in",
+          autoResumeDate: today,
+        });
+      });
+      subscription = findActiveSubscription(db, member.id, today);
+    }
+  }
   if (!subscription) {
     return {
       kind: "denied",
@@ -164,7 +216,7 @@ export async function recordCheckIn(
   const stampNow = nowStamp();
   const windowSeconds = duplicateWindowSeconds(db);
   const lastVisit = db.first<AttendanceRow>(
-    "SELECT * FROM attendance WHERE member_id = ? ORDER BY checkin_at DESC LIMIT 1",
+    "SELECT * FROM attendance WHERE deleted_at IS NULL AND member_id = ? ORDER BY checkin_at DESC LIMIT 1",
     [member.id],
   );
   if (lastVisit) {
@@ -209,7 +261,34 @@ export async function recordCheckIn(
     subscriptionEndsAt: subscription.end_date,
     sessionsRemaining:
       planKind === "sessions" ? (sessionsRemaining ?? 0) - 1 : null,
+    outstandingMinor: memberOutstandingMinor(db, member.id),
   };
+}
+
+/** Money still owed by this member (active-subscription balance + open store debts). */
+function memberOutstandingMinor(db: Db, memberId: string): number {
+  const subs = Number(
+    db.scalar(
+      `WITH paid AS (
+        SELECT subscription_id, SUM(paid_amount_minor) AS p, SUM(discount_amount_minor) AS d
+        FROM payments
+        WHERE status IN ('partial', 'paid')
+        GROUP BY subscription_id
+      )
+      SELECT COALESCE(SUM(MAX(CAST(ROUND(s.price * 100) AS INTEGER) - COALESCE(paid.p, 0) - COALESCE(paid.d, 0), 0)), 0)
+      FROM member_subscriptions s
+      LEFT JOIN paid ON paid.subscription_id = s.id
+      WHERE s.member_id = ? AND s.status = 'active'`,
+      [memberId],
+    ) ?? 0,
+  );
+  const store = Number(
+    db.scalar(
+      "SELECT COALESCE(SUM(original_minor - paid_minor), 0) FROM store_debts WHERE member_id = ? AND status = 'open'",
+      [memberId],
+    ) ?? 0,
+  );
+  return subs + store;
 }
 
 /** Optional check-out; enabled via attendance_checkout_enabled setting. */
@@ -221,7 +300,7 @@ export async function recordCheckOut(
   requirePermission(actor, "checkin.create");
   const today = todayKey();
   const open = db.first<{ id: string; checkin_at: string }>(
-    "SELECT id, checkin_at FROM attendance\nWHERE member_id = ? AND substr(checkin_at, 1, 10) = ? AND checkout_at IS NULL\nORDER BY checkin_at DESC LIMIT 1",
+    "SELECT id, checkin_at FROM attendance\nWHERE deleted_at IS NULL AND member_id = ? AND substr(checkin_at, 1, 10) = ? AND checkout_at IS NULL\nORDER BY checkin_at DESC LIMIT 1",
     [memberId, today],
   );
   if (!open) return { kind: "denied", reason: "NOT_IN_OR_DONE" };
@@ -256,7 +335,7 @@ export function listRecentCheckIns(
   requirePermission(actor, "checkin.view_history");
   return db
     .all<RecentCheckInRow>(
-      "SELECT a.*, m.full_name, m.member_code\nFROM attendance a JOIN members m ON m.id = a.member_id\nORDER BY a.checkin_at DESC LIMIT ?",
+      "SELECT a.*, m.full_name, m.member_code\nFROM attendance a JOIN members m ON m.id = a.member_id\nWHERE a.deleted_at IS NULL\nORDER BY a.checkin_at DESC LIMIT ?",
       [limit],
     )
     .map(toRecent);
@@ -264,7 +343,7 @@ export function listRecentCheckIns(
 
 export function countCheckInsOnDate(db: Db, dateKey: string): number {
   return db.count(
-    "SELECT COUNT(*) FROM attendance WHERE substr(checkin_at, 1, 10) = ?",
+    "SELECT COUNT(*) FROM attendance WHERE deleted_at IS NULL AND substr(checkin_at, 1, 10) = ?",
     [dateKey],
   );
 }
@@ -277,9 +356,49 @@ export function listAttendanceForMember(
 ): AttendanceRow[] {
   requirePermission(actor, "checkin.view_history");
   return db.all<AttendanceRow>(
-    "SELECT * FROM attendance WHERE member_id = ? ORDER BY checkin_at DESC LIMIT ?",
+    "SELECT * FROM attendance WHERE deleted_at IS NULL AND member_id = ? ORDER BY checkin_at DESC LIMIT ?",
     [memberId, limit],
   );
+}
+
+export function deleteAttendance(
+  db: Db,
+  actor: ServiceActor,
+  attendanceId: string,
+): void {
+  requirePermission(actor, "checkin.delete");
+  const row = db.first<AttendanceRow>(
+    "SELECT * FROM attendance WHERE id = ?",
+    [attendanceId],
+  );
+  if (!row) throw errNotFound("errors.attendanceNotFound");
+  db.transaction(() => {
+    db.run("UPDATE attendance SET deleted_at = ? WHERE id = ?", [nowStamp(), attendanceId]);
+    recordAudit(db, actor, "ATTENDANCE_DELETED", "attendance", attendanceId, {
+      memberId: row.member_id,
+      checkinAt: row.checkin_at,
+    });
+  });
+}
+
+export function restoreAttendance(
+  db: Db,
+  actor: ServiceActor,
+  attendanceId: string,
+): void {
+  requirePermission(actor, "checkin.delete");
+  const row = db.first<AttendanceRow>(
+    "SELECT * FROM attendance WHERE id = ?",
+    [attendanceId],
+  );
+  if (!row) throw errNotFound("errors.attendanceNotFound");
+  db.transaction(() => {
+    db.run("UPDATE attendance SET deleted_at = NULL WHERE id = ?", [attendanceId]);
+    recordAudit(db, actor, "ATTENDANCE_RESTORED", "attendance", attendanceId, {
+      memberId: row.member_id,
+      checkinAt: row.checkin_at,
+    });
+  });
 }
 
 export interface AttendanceDayPoint {
@@ -297,7 +416,7 @@ export function attendanceSeries(db: Db, days: number): AttendanceDayPoint[] {
   const startDate = addDaysKey(today, -(days - 1));
   const counts = new Map<string, number>();
   const rows = db.all<DayCountRow>(
-    "SELECT substr(checkin_at, 1, 10) AS day, COUNT(*) AS total\nFROM attendance WHERE substr(checkin_at, 1, 10) >= ? AND substr(checkin_at, 1, 10) <= ?\nGROUP BY day",
+    "SELECT substr(checkin_at, 1, 10) AS day, COUNT(*) AS total\nFROM attendance WHERE deleted_at IS NULL AND substr(checkin_at, 1, 10) >= ? AND substr(checkin_at, 1, 10) <= ?\nGROUP BY day",
     [startDate, today],
   );
   for (const row of rows) counts.set(row.day, Number(row.total));

@@ -5,6 +5,40 @@ import type { Db, Row } from "@/db/engine";
 import { nowStamp } from "@/core/dates";
 import { insertLedgerEntry } from "./payments.service";
 import { recordAudit } from "./audit.service";
+import { assertDepartmentAccess } from "./department";
+
+/**
+ * Hard-deletes an employee and their payroll history (ADR-008). Paid salaries'
+ * treasury movements (ledger rows keyed by the salary id) are removed with
+ * them; the generated expense documents remain as historical paperwork since
+ * they carry no structural link back to the salary row.
+ */
+export async function purgeEmployee(
+  db: Db,
+  actor: ServiceActor,
+  employeeId: string,
+): Promise<void> {
+  requirePermission(actor, "employees.purge");
+  const row = db.first<Row>("SELECT * FROM employees WHERE id = ?", [employeeId]);
+  if (!row) throw errNotFound("errors.employeeNotFound");
+  if (row.department) assertDepartmentAccess(actor, String(row.department));
+
+  await db.transaction(() => {
+    const salaryIds = db
+      .all<{ id: string }>("SELECT id FROM salaries WHERE employee_id = ?", [employeeId])
+      .map((s) => s.id);
+    if (salaryIds.length > 0) {
+      const placeholders = salaryIds.map(() => "?").join(",");
+      db.run(`DELETE FROM financial_ledger WHERE ref_table = 'salaries' AND ref_id IN (${placeholders})`, salaryIds);
+    }
+    db.run("DELETE FROM salaries WHERE employee_id = ?", [employeeId]);
+    db.run("DELETE FROM employees WHERE id = ?", [employeeId]);
+    recordAudit(db, actor, "EMPLOYEE_PURGED", "employee", employeeId, {
+      fullName: str(row.full_name),
+      salariesRemoved: salaryIds.length,
+    });
+  });
+}
 
 type Num = string | number;
 function num(v: unknown, fallback = 0): number {

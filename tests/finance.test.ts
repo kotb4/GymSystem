@@ -27,7 +27,7 @@ import {
   listCashSessions,
   openCashSession,
 } from "@/core/services/cash-session.service";
-import { getFinanceOverview, listLedgerEntries } from "@/core/services/finance.service";
+import { getFinanceOverview, getMemberOutstanding, listLedgerEntries } from "@/core/services/finance.service";
 import { getPeriodReport } from "@/core/services/financial-report.service";
 import { createUser } from "@/core/services/users.service";
 import { AppError } from "@/core/errors";
@@ -54,7 +54,7 @@ let trainer: ReturnType<typeof buildActor>;
 beforeEach(async () => {
   db = createTestDb();
   const ownerUser = await setup(db, {
-    gymName: "جيم برو",
+    gymName: "Yassen Mohamed Kotb | 01288536381",
     ownerFullName: "المالك",
     username: "owner",
     password: "Owner@2026",
@@ -943,6 +943,116 @@ describe("reports and dashboard", () => {
 
     const afterOverview = getFinanceOverview(db, owner, todayKey(), todayKey());
     expect(afterOverview.todayInMinor).toBe(0);
+  });
+
+  it("full refund zeroes revenue in both dashboard overview and period report", async () => {
+    const { member, sub } = await newSubscription(500);
+    await recordPayment(db, owner, {
+      memberId: member.id,
+      subscriptionId: sub.id,
+      baseAmountMinor: 50_000,
+      paidAmountMinor: 25_000,
+      methodCode: "cash",
+    });
+
+    const beforeRep = getPeriodReport(db, owner, todayKey(), todayKey());
+    expect(beforeRep.revenueMinor).toBe(25_000);
+
+    const beforeOv = getFinanceOverview(db, owner, todayKey(), todayKey());
+    expect(beforeOv.todayInMinor).toBe(25_000);
+
+    const payment = listPayments(db, owner, { subscriptionId: sub.id }).items[0];
+    await refundPayment(db, owner, payment.id, 25_000, "استرداد كامل");
+
+    const afterRep = getPeriodReport(db, owner, todayKey(), todayKey());
+    expect(afterRep.revenueMinor).toBe(25_000);
+    expect(afterRep.refundsMinor).toBe(25_000);
+    expect(afterRep.netResultMinor + afterRep.expensesMinor).toBe(0);
+
+    const afterOv = getFinanceOverview(db, owner, todayKey(), todayKey());
+    expect(afterOv.todayInMinor - afterOv.todayRefundsMinor).toBe(0);
+    expect(afterOv.todayNetMinor + afterOv.todayOutMinor).toBe(0);
+  });
+
+  it("reports 100 EGP outstanding for a 500 subscription with a single 400 payment", async () => {
+    const { member, sub } = await newSubscription(500);
+    await recordPayment(db, owner, {
+      memberId: member.id,
+      subscriptionId: sub.id,
+      baseAmountMinor: 50_000,
+      paidAmountMinor: 40_000,
+      methodCode: "cash",
+    });
+
+    const out = getMemberOutstanding(db, owner, member.id);
+    expect(out.subscriptionsMinor).toBe(10_000);
+    expect(out.storeMinor).toBe(0);
+    expect(out.totalMinor).toBe(10_000);
+
+    const payment = listPayments(db, owner, { subscriptionId: sub.id }).items[0];
+    expect(payment.status).toBe("partial");
+    expect(payment.remainingAmountMinor).toBe(10_000);
+  });
+
+  it("a fresh ACTIVE subscription with one 250 payment shows in list sums, overview today-in and period revenue", async () => {
+    const { member, sub } = await newSubscription(500, "نشط-500");
+    await recordPayment(db, owner, {
+      memberId: member.id,
+      subscriptionId: sub.id,
+      baseAmountMinor: 50_000,
+      paidAmountMinor: 25_000,
+      methodCode: "cash",
+    });
+
+    // what the revenue card on the payments page sums from:
+    const listed = listPayments(db, owner, {}).items.filter(
+      (p) => p.subscriptionId === sub.id,
+    );
+    expect(listed).toHaveLength(1);
+    expect(listed[0].status).toBe("partial");
+    expect(listed[0].subCancelled).toBe(0);
+    const collected = listed.reduce(
+      (s, p) => s + (p.status === "paid" || p.status === "partial" ? p.paidAmountMinor : 0),
+      0,
+    );
+    expect(collected).toBe(25_000);
+
+    // dashboard finance overview (ledger-based):
+    const monthStart = `${todayKey().slice(0, 7)}-01`;
+    const ov = getFinanceOverview(db, owner, todayKey(), monthStart);
+    expect(ov.todayInMinor).toBe(25_000);
+
+    // reports page period revenue:
+    const rep = getPeriodReport(db, owner, todayKey(), todayKey());
+    expect(rep.revenueMinor).toBe(25_000);
+  });
+
+  it("flags cancelled-subscription payments in lists and reports zero outstanding after cancel", async () => {
+    const { member, sub } = await newSubscription(800);
+    const payment = await recordPayment(db, owner, {
+      memberId: member.id,
+      subscriptionId: sub.id,
+      baseAmountMinor: 80_000,
+      paidAmountMinor: 30_000,
+      methodCode: "cash",
+    });
+
+    const listed = listPayments(db, owner, { subscriptionId: sub.id }).items[0];
+    expect(listed.subCancelled).toBe(0);
+
+    const before = getMemberOutstanding(db, owner, member.id);
+    expect(before.subscriptionsMinor).toBe(50_000);
+
+    const { setSubscriptionStatus } = await import("@/core/services/subscriptions.service");
+    await setSubscriptionStatus(db, owner, sub.id, "cancelled");
+
+    const listedAfter = listPayments(db, owner, { subscriptionId: sub.id }).items[0];
+    expect(listedAfter.subCancelled).toBe(1);
+
+    const after = getMemberOutstanding(db, owner, member.id);
+    expect(after.subscriptionsMinor).toBe(0);
+    expect(after.totalMinor).toBe(0);
+    void payment;
   });
 
   it("does not double-reverse when voiding a payment whose subscription was already cancelled", async () => {

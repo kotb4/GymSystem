@@ -27,7 +27,7 @@ let menReception: ServiceActor;
 beforeEach(async () => {
   db = createTestDb();
   const ownerUser = await setup(db, {
-    gymName: "جيم الأقسام",
+    gymName: "Yassen Mohamed Kotb | 01288536381",
     ownerFullName: "المالك",
     username: "owner",
     password: "Owner@2026",
@@ -128,7 +128,8 @@ describe("department scoping beyond members service (audit F-04 / ADR-004)", () 
 
     const { createClass, createClassSession } = await import("@/core/services/classes.service");
     const cls = await createClass(db, owner, { name: "كروس فيت", capacity: 10 });
-    const session = await createClassSession(db, owner, cls.id, { sessionDate: new Date().toISOString().slice(0, 10), startTime: "18:00" });
+    const { todayKey: localToday } = await import("@/core/dates");
+    const session = await createClassSession(db, owner, cls.id, { sessionDate: localToday(), startTime: "18:00" });
 
     await expect(
       bookMember(db, menReception, { sessionId: session.id, memberId: women.id }),

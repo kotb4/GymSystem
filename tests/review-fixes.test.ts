@@ -35,7 +35,7 @@ let reception: ServiceActor;
 beforeEach(async () => {
   db = createTestDb();
   const ownerUser = await setup(db, {
-    gymName: "جيم المراجعة",
+    gymName: "Yassen Mohamed Kotb | 01288536381",
     ownerFullName: "المالك",
     username: "owner",
     password: "Owner@2026",
@@ -150,7 +150,7 @@ describe("review fixes regression", () => {
     expect(() => readAllSettings(db, reception)).toThrow(
       expect.objectContaining({ code: "FORBIDDEN" }),
     );
-    expect(readAllSettings(db, owner)["gym_name"]).toBe("جيم المراجعة");
+    expect(readAllSettings(db, owner)["gym_name"]).toBe("Yassen Mohamed Kotb | 01288536381");
 
     expect(() => getBackupConfig(db, reception)).toThrow(
       expect.objectContaining({ code: "FORBIDDEN" }),

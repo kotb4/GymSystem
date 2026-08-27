@@ -28,7 +28,7 @@ beforeEach(async () => {
   db = createTestDb();
   owner = buildActor(
     await setup(db, {
-      gymName: "جيم برو",
+      gymName: "Yassen Mohamed Kotb | 01288536381",
       ownerFullName: "المالك",
       username: "owner",
       password: "Owner@2026",
@@ -139,16 +139,45 @@ describe("cards service", () => {
 });
 
 describe("check-in service", () => {
-  it("records a happy-path check-in", async () => {
-    const member = await activeMemberWithSub("دخول سعيد");
-    await assignCardByBarcode(db, reception, { barcodeValue: "GYM-100001", memberId: member.id });
-    const result = await recordCheckIn(db, reception, { barcode: "GYM-100001" });
-    expect(result.kind).toBe("success");
-    if (result.kind === "success") {
-      expect(result.memberCode).toBe(member.memberCode);
-      expect(result.planName).toContain("باقة");
-    }
+it("records a happy-path check-in", async () => {
+const member = await activeMemberWithSub("عضو حاضر");
+await assignCardByBarcode(db, reception, { barcodeValue: "GYM-100001", memberId: member.id });
+const result = await recordCheckIn(db, reception, { barcode: "GYM-100001" });
+expect(result.kind).toBe("success");
+if (result.kind === "success") {
+expect(result.memberCode).toBe(member.memberCode);
+expect(result.planName).toContain("باقة");
+}
+});
+
+it("surfaces outstanding money at check-in", async () => {
+  const member = await createMember(db, owner, { fullName: "عضو مستحق" });
+  const { createPlan } = await import("@/core/services/plans.service");
+  const { createSubscription } = await import("@/core/services/subscriptions.service");
+  const { recordPayment } = await import("@/core/services/payments.service");
+  const plan = await createPlan(db, owner, { name: "باقة 500", durationDays: 30, price: 500 });
+  const sub = await createSubscription(db, owner, { memberId: member.id, planId: plan.id });
+  await recordPayment(db, owner, {
+    memberId: member.id,
+    subscriptionId: sub.id,
+    baseAmountMinor: 50_000,
+    paidAmountMinor: 40_000,
+    methodCode: "cash",
   });
+
+  const assigned = await assignCardByBarcode(db, owner, {
+    barcodeValue: "GYM-100010",
+    memberId: member.id,
+  });
+  const result = await recordCheckIn(db, reception, {
+    barcode: assigned.card.barcodeValue,
+  });
+  expect(result.kind).toBe("success");
+  if (result.kind === "success") {
+    expect(result.outstandingMinor).toBe(10_000);
+    expect(result.sessionsRemaining ?? null).toBeNull();
+  }
+});
 
   it("denies unknown, lost, blocked and unlinked cards", async () => {
     const unknown = await recordCheckIn(db, reception, { barcode: "GYM-NOPE-01" });

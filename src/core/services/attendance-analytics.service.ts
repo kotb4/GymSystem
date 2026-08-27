@@ -37,16 +37,16 @@ export function getAttendanceAnalytics(
   const { fromKey, toKey } = range;
 
   const visits = db.count(
-    "SELECT COUNT(*) FROM attendance WHERE substr(checkin_at, 1, 10) >= ? AND substr(checkin_at, 1, 10) <= ?",
+    "SELECT COUNT(*) FROM attendance WHERE deleted_at IS NULL AND substr(checkin_at, 1, 10) >= ? AND substr(checkin_at, 1, 10) <= ?",
     [fromKey, toKey],
   );
   const uniqueMembers = db.count(
-    "SELECT COUNT(DISTINCT member_id) FROM attendance WHERE substr(checkin_at, 1, 10) >= ? AND substr(checkin_at, 1, 10) <= ?",
+    "SELECT COUNT(DISTINCT member_id) FROM attendance WHERE deleted_at IS NULL AND substr(checkin_at, 1, 10) >= ? AND substr(checkin_at, 1, 10) <= ?",
     [fromKey, toKey],
   );
 
   const dayRows = db.all<{ day: string; total: number }>(
-    "SELECT substr(checkin_at, 1, 10) AS day, COUNT(*) AS total\nFROM attendance WHERE substr(checkin_at, 1, 10) >= ? AND substr(checkin_at, 1, 10) <= ?\nGROUP BY day ORDER BY day",
+    "SELECT substr(checkin_at, 1, 10) AS day, COUNT(*) AS total\nFROM attendance WHERE deleted_at IS NULL AND substr(checkin_at, 1, 10) >= ? AND substr(checkin_at, 1, 10) <= ?\nGROUP BY day ORDER BY day",
     [fromKey, toKey],
   );
   const byDay = new Map(dayRows.map((r) => [r.day, Number(r.total)]));
@@ -58,7 +58,7 @@ export function getAttendanceAnalytics(
   }
 
   const hourRows = db.all<{ hour: number; total: number }>(
-    "SELECT CAST(substr(checkin_at, 12, 2) AS INTEGER) AS hour, COUNT(*) AS total\nFROM attendance WHERE substr(checkin_at, 1, 10) >= ? AND substr(checkin_at, 1, 10) <= ?\nGROUP BY hour ORDER BY hour",
+    "SELECT CAST(substr(checkin_at, 12, 2) AS INTEGER) AS hour, COUNT(*) AS total\nFROM attendance WHERE deleted_at IS NULL AND substr(checkin_at, 1, 10) >= ? AND substr(checkin_at, 1, 10) <= ?\nGROUP BY hour ORDER BY hour",
     [fromKey, toKey],
   );
   const peakHours = hourRows.map((row) => ({ hour: Number(row.hour), count: Number(row.total) }));

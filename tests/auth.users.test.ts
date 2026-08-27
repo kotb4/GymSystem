@@ -24,7 +24,7 @@ let ownerActor: ReturnType<typeof buildActor>;
 
 async function seedOwner(): Promise<ReturnType<typeof buildActor>> {
   const owner = await setup(db, {
-    gymName: "Ø¬ÙŠÙ… Ø¨Ø±Ùˆ",
+    gymName: "Yassen Mohamed Kotb | 01288536381",
     ownerFullName: "Ø§Ù„Ù…Ø§Ù„Ùƒ Ø§Ù„Ø£ÙˆÙ„",
     username: "owner",
     password: "Owner@2026",
@@ -40,7 +40,7 @@ beforeEach(async () => {
 describe("setup", () => {
   it("creates the first owner and gym settings", () => {
     expect(needsSetup(db)).toBe(false);
-    expect(readAllSettings(db, ownerActor)["gym_name"]).toBe("Ø¬ÙŠÙ… Ø¨Ø±Ùˆ");
+    expect(readAllSettings(db, ownerActor)["gym_name"]).toBe("Yassen Mohamed Kotb | 01288536381");
     const audit = listAuditLogs(db, ownerActor, {});
     expect(audit.items.some((i) => i.action === "SETUP_COMPLETED")).toBe(true);
   });
@@ -180,8 +180,8 @@ describe("change own password", () => {
 
 describe("settings service", () => {
   it("updates editable settings with permission and audits them", async () => {
-    await updateSetting(db, ownerActor, "gym_name", "Ø¬ÙŠÙ… Ø¬Ø¯ÙŠØ¯");
-    expect(readAllSettings(db, ownerActor)["gym_name"]).toBe("Ø¬ÙŠÙ… Ø¬Ø¯ÙŠØ¯");
+    await updateSetting(db, ownerActor, "gym_name", "Updated Gym Name");
+    expect(readAllSettings(db, ownerActor)["gym_name"]).toBe("Updated Gym Name");
     const audits = listAuditLogs(db, ownerActor, {}).items.filter((i) => i.action === "SETTINGS_UPDATED");
     expect(audits.length).toBe(1);
   });

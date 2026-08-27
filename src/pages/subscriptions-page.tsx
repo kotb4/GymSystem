@@ -1,13 +1,13 @@
 ﻿import { useCallback, useEffect, useState } from "react";
 import { useNavigate, useSearchParams } from "react-router-dom";
-import { CalendarPlus, CalendarX2, CreditCard, PauseCircle, PlayCircle } from "lucide-react";
+import { CalendarPlus, CalendarX2, CreditCard, Info, PauseCircle, PlayCircle, RotateCcw, Snowflake, Trash2 } from "lucide-react";
 import { useAuth } from "@/contexts/auth-context";
 import { useT } from "@/i18n";
 import { useToast } from "@/components/ui/toast";
 import { describeError } from "@/utils/app-error";
 import { appConfig } from "@/config/app.config";
-import { api, type Plan, type SubscriptionWithMember } from "@/api";
-import { parseDateKey } from "@/core/dates";
+import { api, type Plan, type SubscriptionWithMember, type FreezeInfo } from "@/api";
+import { parseDateKey, diffDaysKeys, todayKey } from "@/core/dates";
 import { formatMinor } from "@/core/money";
 
 import { formatDateShort, formatNumber } from "@/services/format";
@@ -21,11 +21,12 @@ import { DataTable, type Column } from "@/components/ui/table";
 import { EmptyState } from "@/components/ui/empty-state";
 import { Pagination } from "@/components/ui/pagination";
 import { Button } from "@/components/ui/button";
+import { Modal } from "@/components/ui/modal";
 import { ConfirmDialog } from "@/components/ui/confirm-dialog";
 import { SubscriptionFormModal } from "@/components/subscriptions/subscription-form-modal";
 import { PlanFormModal } from "@/components/subscriptions/plan-form-modal";
 
-const EFFECTIVE_OPTIONS = ["all", "active", "upcoming", "expired", "suspended", "cancelled"] as const;
+const EFFECTIVE_OPTIONS = ["all", "active", "upcoming", "expired", "suspended", "frozen", "cancelled"] as const;
 
 export function SubscriptionsPage() {
   const t = useT();
@@ -43,6 +44,10 @@ export function SubscriptionsPage() {
   const [planModalOpen, setPlanModalOpen] = useState(false);
   const [editPlan, setEditPlan] = useState<Plan | null>(null);
   const [cancelTarget, setCancelTarget] = useState<SubscriptionWithMember | null>(null);
+  const [undoCancelTarget, setUndoCancelTarget] = useState<SubscriptionWithMember | null>(null);
+  const [purgeTarget, setPurgeTarget] = useState<SubscriptionWithMember | null>(null);
+  const [detailsTarget, setDetailsTarget] = useState<SubscriptionWithMember | null>(null);
+  const [freezeHistory, setFreezeHistory] = useState<FreezeInfo[]>([]);
   const [busy, setBusy] = useState(false);
   const [reloadTick, setReloadTick] = useState(0);
   const reload = () => setReloadTick((v) => v + 1);
@@ -100,12 +105,39 @@ export function SubscriptionsPage() {
     }
   };
 
+  const onPurgeConfirm = async () => {
+    if (!actor || !purgeTarget) return;
+    setBusy(true);
+    try {
+      await api.subscriptions.purge(purgeTarget.id);
+      toast("success", t("subs.purgedToast"));
+      setPurgeTarget(null);
+      reload();
+      setPage(1);
+    } catch (err) {
+      toast("error", describeError(err, t));
+    } finally {
+      setBusy(false);
+    }
+  };
+
   const onSuspendToggle = async (sub: SubscriptionWithMember) => {
     if (!actor) return;
     const next = sub.status === "suspended" ? "active" : "suspended";
     try {
       await api.subscriptions.setStatus(sub.id, next);
       toast("success", next === "suspended" ? t("subs.suspendedToast") : t("subs.resumedToast"));
+      reload();
+      setPage(1);
+    } catch (err) {
+      toast("error", describeError(err, t));
+    }
+  };
+
+  const doFreeze = async (sub: SubscriptionWithMember) => {
+    try {
+      await api.subscriptions.freeze(sub.id);
+      toast("success", t("subs.suspendedToast"));
       reload();
       setPage(1);
     } catch (err) {
@@ -123,20 +155,26 @@ export function SubscriptionsPage() {
     endDate: string;
     price: number;
     remainingMinor: number;
+    discountMinor: number;
+    paidMinor: number;
     effective: Parameters<typeof subStatusMeta>[1];
     status: SubscriptionWithMember["status"];
+    totalDays: number;
+    remainingDays: number;
+    frozenDays: number;
+    subscription: SubscriptionWithMember;
   }
 
-  // outstanding balances are fetched per subscription through the backend
-  const [balances, setBalances] = useState<Record<string, number>>({});
+  const [balances, setBalances] = useState<Record<string, { paidMinor: number; discountedMinor: number; remainingMinor: number }>>({});
   useEffect(() => {
     if (!actor || !hasPermission("payments.view") || data.items.length === 0) return;
     let alive = true;
     void (async () => {
-      const next: Record<string, number> = {};
+      const next: Record<string, { paidMinor: number; discountedMinor: number; remainingMinor: number }> = {};
       for (const s of data.items) {
         try {
-          next[s.id] = (await api.payments.subscriptionBalance(s.id)).remainingMinor;
+          const b = await api.payments.subscriptionBalance(s.id);
+          next[s.id] = { paidMinor: b.paidMinor, discountedMinor: b.discountedMinor, remainingMinor: b.remainingMinor };
         } catch {
           /* leave 0 */
         }
@@ -148,19 +186,38 @@ export function SubscriptionsPage() {
     };
   }, [actor, data.items, hasPermission]);
 
-  const rows: Row[] = data.items.map((s) => ({
-    id: s.id,
-    memberId: s.memberId,
-    memberName: s.memberName,
-    memberCode: s.memberCode,
-    planName: s.planName ?? "—",
-    startDate: s.startDate,
-    endDate: s.endDate,
-    price: s.price,
-    remainingMinor: balances[s.id] ?? 0,
-    effective: s.effectiveStatus,
-    status: s.status,
-  }));
+  useEffect(() => {
+    if (!detailsTarget) { setFreezeHistory([]); return; }
+    let alive = true;
+    api.subscriptions.freezes(detailsTarget.id).then((rows) => { if (alive) setFreezeHistory(rows); }).catch(() => { if (alive) setFreezeHistory([]); });
+    return () => { alive = false; };
+  }, [detailsTarget]);
+
+  const today = todayKey();
+  const rows: Row[] = data.items.map((s) => {
+    const totalDays = diffDaysKeys(s.startDate, s.endDate) + 1;
+    const eff = s.effectiveStatus;
+    const remainingDays = eff === "active" ? Math.max(0, diffDaysKeys(today, s.endDate) + 1) : eff === "expired" ? 0 : totalDays;
+    return {
+      id: s.id,
+      memberId: s.memberId,
+      memberName: s.memberName,
+      memberCode: s.memberCode,
+      planName: s.planName ?? "—",
+      startDate: s.startDate,
+      endDate: s.endDate,
+      price: s.price,
+      remainingMinor: balances[s.id]?.remainingMinor ?? 0,
+      discountMinor: balances[s.id]?.discountedMinor ?? 0,
+      paidMinor: balances[s.id]?.paidMinor ?? 0,
+      effective: eff,
+      status: s.status,
+      totalDays,
+      remainingDays,
+      frozenDays: s.frozenDays,
+      subscription: s,
+    };
+  });
 
   const columns: Column<Row>[] = [
     {
@@ -201,8 +258,43 @@ export function SubscriptionsPage() {
       header: t("subs.pricePaid"),
       render: (row) => <span className="font-extrabold tabnum text-neon">{formatNumber(row.price)}</span>,
     },
+    {
+      key: "totalDays",
+      header: t("subs.totalDays"),
+      render: (row) => <span className="tabnum text-subtle">{row.totalDays} {t("subs.daysUnit")}</span>,
+    },
+    {
+      key: "remainingDays",
+      header: t("subs.remainingDays"),
+      render: (row) => {
+        if (row.effective === "expired" || row.effective === "cancelled") {
+          return <span className="text-faint tabnum">—</span>;
+        }
+        const color = row.remainingDays <= 7 ? "text-red" : row.remainingDays <= 14 ? "text-amber" : "text-neon";
+        return <span className={`font-bold tabnum ${color}`}>{row.remainingDays} {t("subs.daysUnit")}</span>;
+      },
+    },
     ...(hasPermission("payments.view")
       ? [
+          {
+            key: "discount" as const,
+            header: t("subs.discount"),
+            align: "end" as const,
+            render: (row: Row) =>
+              row.discountMinor > 0 ? (
+                <span className="font-bold tabnum text-amber">{formatMinor(row.discountMinor)}</span>
+              ) : (
+                <span className="text-faint tabnum">—</span>
+              ),
+          },
+          {
+            key: "paid" as const,
+            header: t("subs.paidAmount"),
+            align: "end" as const,
+            render: (row: Row) => (
+              <span className="tabnum text-subtle">{formatMinor(row.paidMinor)}</span>
+            ),
+          },
           {
             key: "balance",
             header: t("subs.balanceDue"),
@@ -212,6 +304,20 @@ export function SubscriptionsPage() {
                 <span className="font-bold tabnum text-amber">{formatMinor(row.remainingMinor)}</span>
               ) : (
                 <span className="text-faint tabnum">0</span>
+              ),
+          },
+          {
+            key: "frozenDays" as const,
+            header: t("subs.frozenDaysCount"),
+            align: "end" as const,
+            render: (row: Row) =>
+              row.frozenDays > 0 ? (
+                <span className="tabnum text-cyan flex items-center gap-1 justify-end">
+                  {row.frozenDays} {t("subs.daysUnit")}
+                  <Snowflake className="size-3" />
+                </span>
+              ) : (
+                <span className="text-faint tabnum">—</span>
               ),
           },
         ]
@@ -230,40 +336,105 @@ export function SubscriptionsPage() {
     },
   ];
 
-  if (hasPermission("subscriptions.cancel") || hasPermission("subscriptions.edit")) {
-    columns.push({
-      key: "actions",
-      header: t("common.actions"),
-      align: "end",
-      render: (row) => (
-        <div className="flex items-center justify-end gap-1">
-          {hasPermission("subscriptions.edit") && row.status !== "cancelled" && (
+  columns.push({
+    key: "actions",
+    header: t("common.actions"),
+    align: "end",
+    render: (row) => (
+      <div className="flex items-center justify-end gap-1">
+        <button
+          type="button"
+          aria-label={t("subs.details")}
+          onClick={() => setDetailsTarget(findSub(row.id))}
+          className="grid size-8 place-items-center rounded-lg text-faint transition-colors hover:bg-white/5 hover:text-subtle"
+          title={t("subs.details")}
+        >
+          <Info className="size-4" />
+        </button>
+        {hasPermission("subscriptions.edit") && row.effective === "frozen" && (
+          <button
+            type="button"
+            aria-label={t("subs.unfreeze")}
+            onClick={() => {
+              const sub = data.items.find((s) => s.id === row.id);
+              if (sub) void api.subscriptions.unfreeze(sub.id).then(() => { toast("success", t("subs.unfrozenToast")); reload(); setPage(1); }).catch((err) => toast("error", describeError(err, t)));
+            }}
+            className="grid size-8 place-items-center rounded-lg text-faint transition-colors hover:bg-cyan/10 hover:text-cyan"
+            title={t("subs.unfreeze")}
+          >
+            <PlayCircle className="size-4" />
+          </button>
+        )}
+        {hasPermission("subscriptions.edit") && row.effective === "suspended" && (
+          <button
+            type="button"
+            aria-label={t("subs.resumeSub")}
+            onClick={() => {
+              const sub = data.items.find((s) => s.id === row.id);
+              if (sub) void onSuspendToggle(sub);
+            }}
+            className="grid size-8 place-items-center rounded-lg text-faint transition-colors hover:bg-white/5 hover:text-subtle"
+          >
+            <PlayCircle className="size-4" />
+          </button>
+        )}
+        {hasPermission("subscriptions.edit") && row.effective === "active" && (
+          <button
+            type="button"
+            aria-label={t("subs.suspendSub")}
+            onClick={() => {
+              const sub = data.items.find((s) => s.id === row.id);
+              if (sub) void onSuspendToggle(sub);
+            }}
+            className="grid size-8 place-items-center rounded-lg text-faint transition-colors hover:bg-white/5 hover:text-subtle"
+          >
+            <PauseCircle className="size-4" />
+          </button>
+        )}
+        {hasPermission("subscriptions.cancel") && row.status === "active" && (
+          <button
+            type="button"
+            aria-label={t("subs.cancelSub")}
+            onClick={() => setCancelTarget(findSub(row.id))}
+            className="grid size-8 place-items-center rounded-lg text-faint transition-colors hover:bg-red/10 hover:text-red"
+          >
+            <CalendarX2 className="size-4" />
+          </button>
+        )}
+        {hasPermission("subscriptions.freeze") && row.status === "active" && (
+          <button
+            type="button"
+            aria-label={t("subs.freeze")}
+            onClick={() => { const sub = findSub(row.id); if (sub) void doFreeze(sub); }}
+            className="grid size-8 place-items-center rounded-lg text-faint transition-colors hover:bg-cyan/10 hover:text-cyan"
+            title={t("subs.freeze")}
+          >
+            <Snowflake className="size-4" />
+          </button>
+        )}
+          {hasPermission("subscriptions.purge") && (
             <button
               type="button"
-              aria-label={row.status === "suspended" ? t("subs.resumeSub") : t("subs.suspendSub")}
-              onClick={() => {
-                const sub = data.items.find((s) => s.id === row.id);
-                if (sub) void onSuspendToggle(sub);
-              }}
-              className="grid size-8 place-items-center rounded-lg text-faint transition-colors hover:bg-white/5 hover:text-subtle"
-            >
-              {row.status === "suspended" ? <PlayCircle className="size-4" /> : <PauseCircle className="size-4" />}
-            </button>
-          )}
-          {hasPermission("subscriptions.cancel") && row.status === "active" && (
-            <button
-              type="button"
-              aria-label={t("subs.cancelSub")}
-              onClick={() => setCancelTarget(findSub(row.id))}
+              aria-label={t("subs.purgeAction")}
+              onClick={() => setPurgeTarget(findSub(row.id))}
               className="grid size-8 place-items-center rounded-lg text-faint transition-colors hover:bg-red/10 hover:text-red"
             >
-              <CalendarX2 className="size-4" />
+              <Trash2 className="size-4" />
+            </button>
+          )}
+          {hasPermission("subscriptions.cancel") && row.status === "cancelled" && (
+            <button
+              type="button"
+              aria-label={t("subs.undoCancel")}
+              onClick={() => setUndoCancelTarget(findSub(row.id))}
+              className="grid size-8 place-items-center rounded-lg text-faint transition-colors hover:bg-white/5 hover:text-subtle"
+            >
+              <RotateCcw className="size-4" />
             </button>
           )}
         </div>
       ),
     });
-  }
 
   const findSub = (id: string): SubscriptionWithMember | null =>
     data.items.find((s) => s.id === id) ?? null;
@@ -354,6 +525,109 @@ export function SubscriptionsPage() {
         loading={busy}
         onConfirm={onCancelConfirm}
       />
+
+      <ConfirmDialog
+        open={Boolean(purgeTarget)}
+        onClose={() => setPurgeTarget(null)}
+        title={t("subs.purgeConfirmTitle")}
+        message={t("subs.purgeConfirmMsg")}
+        loading={busy}
+        onConfirm={onPurgeConfirm}
+      />
+
+      <ConfirmDialog
+        open={Boolean(undoCancelTarget)}
+        onClose={() => setUndoCancelTarget(null)}
+        title={t("subs.cancelSub")}
+        message={t("subs.undoCancelMsg")}
+        loading={busy}
+        onConfirm={async () => {
+          if (!actor || !undoCancelTarget) return;
+          setBusy(true);
+          try {
+            await api.subscriptions.undoCancel(undoCancelTarget.id);
+            toast("success", t("subs.undoCancelledToast"));
+            setUndoCancelTarget(null);
+            reload();
+          } catch (err) {
+            toast("error", describeError(err, t));
+          } finally {
+            setBusy(false);
+          }
+        }}
+      />
+
+      <Modal
+        open={detailsTarget !== null}
+        onClose={() => setDetailsTarget(null)}
+        title={t("subs.detailsTitle")}
+        widthClass="max-w-lg"
+      >
+        {detailsTarget && (() => {
+          const sub = detailsTarget;
+          const totalDays = diffDaysKeys(sub.startDate, sub.endDate) + 1;
+          const remainingDays = diffDaysKeys(today, sub.endDate) + 1;
+          const eff = sub.effectiveStatus;
+          return (
+            <div className="space-y-4">
+              <div className="rounded-lg bg-white/5 p-3 text-sm space-y-2">
+                <div className="flex justify-between"><span className="text-subtle">{t("common.member")}</span><span className="font-bold">{sub.memberName}</span></div>
+                <div className="flex justify-between"><span className="text-subtle">{t("common.plan")}</span><span className="font-bold">{sub.planName}</span></div>
+                <div className="flex justify-between"><span className="text-subtle">{t("subs.period")}</span><span dir="ltr" className="tabnum">{sub.startDate} → {sub.endDate}</span></div>
+                <div className="flex justify-between"><span className="text-subtle">{t("subs.totalDays")}</span><span className="tabnum">{totalDays} {t("subs.daysUnit")}</span></div>
+                {eff === "active" && (
+                  <div className="flex justify-between">
+                    <span className="text-subtle">{t("subs.remainingDays")}</span>
+                    <span className={`font-bold tabnum ${remainingDays <= 7 ? "text-red" : remainingDays <= 14 ? "text-amber" : "text-neon"}`}>{remainingDays} {t("subs.daysUnit")}</span>
+                  </div>
+                )}
+                {sub.frozenDays > 0 && (
+                  <div className="flex justify-between"><span className="text-subtle">{t("subs.frozenDaysCount")}</span><span className="tabnum text-cyan flex items-center gap-1"><Snowflake className="size-3" />{sub.frozenDays} {t("subs.daysUnit")}</span></div>
+                )}
+                <div className="flex justify-between"><span className="text-subtle">{t("common.status")}</span><Badge variant={subStatusMeta(t, eff).variant} dot>{subStatusMeta(t, eff).label}</Badge></div>
+              </div>
+
+              <div>
+                <h4 className="text-sm font-bold mb-2 flex items-center gap-2"><Snowflake className="size-4 text-cyan" />{t("subs.freezeHistory")}</h4>
+                {freezeHistory.length === 0 ? (
+                  <p className="text-sm text-faint">{t("subs.freezeHistoryEmpty")}</p>
+                ) : (
+                  <div className="space-y-2">
+                    {freezeHistory.map((f) => {
+                      const isExpired = eff === "expired" || eff === "cancelled";
+                      const resumeDate = f.actualResumeDate ?? (isExpired ? sub.endDate : f.expectedResumeDate) ?? null;
+                      return (
+                      <div key={f.id} className="rounded-lg bg-white/5 p-3 text-sm space-y-1">
+                        <div className="flex justify-between">
+                          <span className="text-subtle">{t("subs.freezeFrom")}</span>
+                          <span className="tabnum">{f.frozenAt.slice(0, 10)}</span>
+                        </div>
+                        <div className="flex justify-between">
+                          <span className="text-subtle">{t("subs.freezeTo")}</span>
+                          <span className="tabnum">{resumeDate ?? t("subs.freezeNotResumed")}</span>
+                        </div>
+                        {resumeDate && (
+                          <div className="flex justify-between">
+                            <span className="text-subtle">{t("subs.freezeDuration")}</span>
+                            <span className="tabnum">{diffDaysKeys(f.frozenAt.slice(0, 10), resumeDate) + 1} {t("subs.daysUnit")}</span>
+                          </div>
+                        )}
+                        {f.reason && (
+                          <div className="flex justify-between">
+                            <span className="text-subtle">{t("subs.freezeReason")}</span>
+                            <span className="text-subtle text-xs">{f.reason}</span>
+                          </div>
+                        )}
+                      </div>
+                      );
+                    })}
+                  </div>
+                )}
+              </div>
+            </div>
+          );
+        })()}
+      </Modal>
     </div>
   );
 }

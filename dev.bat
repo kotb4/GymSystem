@@ -1,6 +1,6 @@
 @echo off
 >nul chcp 65001
-title GymSystem - Dev
+title Yassen Mohamed Kotb ^| 01288536381 - Dev
 cd /d "%~dp0"
 
 where npm >nul 2>nul
@@ -21,14 +21,14 @@ if not exist "node_modules\" (
 )
 
 echo ================================================
-echo   GymSystem - بيئة التطوير
+echo   Yassen Mohamed Kotb ^| 01288536381 - بيئة التطوير
 echo   الواجهة : http://localhost:5173
 echo   الـ API  : http://127.0.0.1:8890/api/ping
 echo   للإيقاف : أغلق نافذتي الباك-اند والفرونت-اند
 echo ================================================
 
 rem 1) build + run the local backend (owns SQLite in %LOCALAPPDATA%\GymSystem)
-start "GymSystem Backend" cmd /k "npm run dev:server"
+start "Backend" cmd /k "npm run dev:server"
 
 rem 2) wait a bit for the API, then run vite with proxy /api -> backend
 timeout /t 4 /nobreak >nul

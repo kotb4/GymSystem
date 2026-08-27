@@ -47,7 +47,7 @@ beforeEach(async () => {
   db = createTestDb();
   owner = buildActor(
     await setup(db, {
-      gymName: "جيم برو",
+      gymName: "Yassen Mohamed Kotb | 01288536381",
       ownerFullName: "المالك",
       username: "owner",
       password: "Owner@2026",

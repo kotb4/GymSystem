@@ -2,6 +2,8 @@
 import { Banknote, RotateCcw, Undo2 } from "lucide-react";
 import { useAuth } from "@/contexts/auth-context";
 import { useT } from "@/i18n";
+import { useToast } from "@/components/ui/toast";
+import { describeError } from "@/utils/app-error";
 import { api, type Payment } from "@/api";
 import type { PaymentStatus } from "@/core/services/payments.service";
 import { formatMinor, minorToMajor } from "@/core/money";
@@ -16,6 +18,7 @@ import { Badge, type BadgeVariant } from "@/components/ui/badge";
 import { DataTable, type Column } from "@/components/ui/table";
 import { EmptyState } from "@/components/ui/empty-state";
 import { Pagination } from "@/components/ui/pagination";
+import { ConfirmDialog } from "@/components/ui/confirm-dialog";
 import { PaymentFormModal } from "@/components/finance/payment-form-modal";
 import { PaymentRefundModal, PaymentVoidModal } from "@/components/finance/payment-actions";
 
@@ -50,8 +53,11 @@ export function PaymentsPage() {
   const [formOpen, setFormOpen] = useState(false);
   const [refundTarget, setRefundTarget] = useState<Payment | null>(null);
   const [voidTarget, setVoidTarget] = useState<Payment | null>(null);
+  const [unvoidTarget, setUnvoidTarget] = useState<Payment | null>(null);
+  const [undoRefundTarget, setUndoRefundTarget] = useState<Payment | null>(null);
   const [reloadTick, setReloadTick] = useState(0);
   const reload = () => setReloadTick((v) => v + 1);
+  const { toast } = useToast();
 
   useEffect(() => {
     const timer = window.setTimeout(() => {
@@ -103,6 +109,8 @@ export function PaymentsPage() {
     let collectedMinor = 0;
     let remainingMinor = 0;
     for (const p of items) {
+      // payments tied to a CANCELLED subscription are history, not revenue
+      if (p.subCancelled) continue;
       if (p.status === "paid" || p.status === "partial") collectedMinor += p.paidAmountMinor;
       if (p.status === "partial") remainingMinor += p.remainingAmountMinor;
     }
@@ -121,6 +129,7 @@ export function PaymentsPage() {
     methodLabel: string;
     status: PaymentStatus;
     createdByName: string;
+    reason: string | null;
     payment: Payment;
   }
 
@@ -136,6 +145,7 @@ export function PaymentsPage() {
     methodLabel: p.methodLabel,
     status: p.status,
     createdByName: p.createdByName,
+    reason: p.voidReason ?? p.refundReason ?? null,
     payment: p,
   }));
 
@@ -201,18 +211,49 @@ export function PaymentsPage() {
     {
       key: "status",
       header: t("pay.colStatus"),
-      render: (row) => (
-        <Badge variant={statusVariant(row.status)} dot>
-          {t(`payStatus.${row.status}`)}
-        </Badge>
-      ),
+      render: (row) =>
+        row.payment.subCancelled ? (
+          <Badge variant="neutral" dot>{t("payStatus.subCancelled")}</Badge>
+        ) : (
+          <Badge variant={statusVariant(row.status)} dot>
+            {t(`payStatus.${row.status}`)}
+          </Badge>
+        ),
     },
     { key: "by", header: t("pay.colBy"), render: (row) => <span className="text-faint">{row.createdByName}</span> },
     {
+      key: "reason",
+      header: t("pay.colReason"),
+      render: (row) =>
+        row.reason ? (
+          <span className="text-[12px] text-subtle max-w-40 truncate block" title={row.reason}>
+            {row.reason}
+          </span>
+        ) : (
+          <span className="text-faint">—</span>
+        ),
+    },
+    {
       key: "actions",
       header: t("common.actions"),
-      render: (row) =>
-        row.payment.status !== "voided" && row.payment.status !== "refunded" ? (
+      render: (row) => {
+        if (row.payment.status === "voided" && hasPermission("payments.void")) {
+          return (
+            <Button variant="ghost" size="sm" onClick={() => setUnvoidTarget(row.payment)}>
+              <RotateCcw className="size-3.5" />
+              {t("pay.actionRestore")}
+            </Button>
+          );
+        }
+        if (row.payment.status === "refunded" && row.payment.refundedAmountMinor >= row.payment.paidAmountMinor && hasPermission("payments.refund")) {
+          return (
+            <Button variant="ghost" size="sm" onClick={() => setUndoRefundTarget(row.payment)}>
+              <RotateCcw className="size-3.5" />
+              {t("pay.actionUndoRefund")}
+            </Button>
+          );
+        }
+        return (
           <div className="flex items-center gap-1">
             {hasPermission("payments.refund") && row.payment.paidAmountMinor > row.payment.refundedAmountMinor && (
               <Button variant="ghost" size="sm" onClick={() => setRefundTarget(row.payment)}>
@@ -227,9 +268,8 @@ export function PaymentsPage() {
               </Button>
             )}
           </div>
-        ) : (
-          <span className="text-[11px] text-faint">—</span>
-        ),
+        );
+      },
     },
   ];
 
@@ -343,6 +383,44 @@ export function PaymentsPage() {
         onClose={() => setVoidTarget(null)}
         onDone={reload}
         payment={voidTarget}
+      />
+      <ConfirmDialog
+        open={unvoidTarget !== null}
+        onClose={() => setUnvoidTarget(null)}
+        onConfirm={async () => {
+          if (!unvoidTarget) return;
+          try {
+            await api.payments.unvoid(unvoidTarget.id);
+            toast("success", t("pay.restoredToast"));
+            setUnvoidTarget(null);
+            reload();
+          } catch (err) {
+            toast("error", describeError(err, t));
+          }
+        }}
+        title={t("pay.restoreConfirmTitle")}
+        message={t("pay.restoreConfirmMsg")}
+        confirmLabel={t("pay.actionRestore")}
+        tone="danger"
+      />
+      <ConfirmDialog
+        open={undoRefundTarget !== null}
+        onClose={() => setUndoRefundTarget(null)}
+        onConfirm={async () => {
+          if (!undoRefundTarget) return;
+          try {
+            await api.payments.undoRefund(undoRefundTarget.id);
+            toast("success", t("pay.undoRefundToast"));
+            setUndoRefundTarget(null);
+            reload();
+          } catch (err) {
+            toast("error", describeError(err, t));
+          }
+        }}
+        title={t("pay.undoRefundConfirmTitle")}
+        message={t("pay.undoRefundConfirmMsg")}
+        confirmLabel={t("pay.actionUndoRefund")}
+        tone="danger"
       />
     </div>
   );

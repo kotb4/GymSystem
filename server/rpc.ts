@@ -33,6 +33,7 @@ import * as filesService from "./files.service";
 import { getDbContext, logLine } from "./context";
 import { recordAudit } from "../src/core/services/audit.service";
 import { nowStamp } from "@/core/dates";
+import { getDevOverrideDate, setDevOverrideDate } from "@/core/dates";
 
 /**
  * The frontend never touches SQLite. It calls whitelisted service functions
@@ -123,6 +124,7 @@ export const REGISTRY: Record<string, Record<string, Exposed>> = {
     createSubscription: a(subscriptionsService.createSubscription as Fn),
     updateSubscription: a(subscriptionsService.updateSubscription as Fn),
     setSubscriptionStatus: a(subscriptionsService.setSubscriptionStatus as Fn),
+    undoCancelSubscription: a(subscriptionsService.undoCancelSubscription as Fn),
     listMemberSubscriptions: a(subscriptionsService.listMemberSubscriptions as Fn),
     listSubscriptions: a(subscriptionsService.listSubscriptions as Fn),
     listExpiringSubscriptions: a(subscriptionsService.listExpiringSubscriptions as Fn),
@@ -131,6 +133,7 @@ export const REGISTRY: Record<string, Record<string, Exposed>> = {
     freezeSubscription: a(subscriptionsService.freezeSubscription as Fn),
     unfreezeSubscription: a(subscriptionsService.unfreezeSubscription as Fn),
     renewSubscription: a(subscriptionsService.renewSubscription as Fn),
+    purgeSubscription: a(subscriptionsService.purgeSubscription as Fn),
   },
   plans: {
     listPlans: a(plansService.listPlans as Fn),
@@ -154,6 +157,8 @@ export const REGISTRY: Record<string, Record<string, Exposed>> = {
     listRecentCheckIns: a(attendanceService.listRecentCheckIns as Fn),
     countCheckInsOnDate: p(attendanceService.countCheckInsOnDate as Fn),
     listAttendanceForMember: a(attendanceService.listAttendanceForMember as Fn),
+    deleteAttendance: a(attendanceService.deleteAttendance as Fn),
+    restoreAttendance: a(attendanceService.restoreAttendance as Fn),
     attendanceSeries: p(attendanceService.attendanceSeries as Fn),
     duplicateWindowSeconds: p(attendanceService.duplicateWindowSeconds as Fn),
   },
@@ -185,6 +190,8 @@ export const REGISTRY: Record<string, Record<string, Exposed>> = {
     recordPayment: a(paymentsService.recordPayment as Fn),
     refundPayment: a(paymentsService.refundPayment as Fn),
     voidPayment: a(paymentsService.voidPayment as Fn),
+    unvoidPayment: a(paymentsService.unvoidPayment as Fn),
+    undoRefund: a(paymentsService.undoRefund as Fn),
     getSubscriptionBalance: a(paymentsService.getSubscriptionBalance as Fn),
     listPayments: a(paymentsService.listPayments as Fn),
     listActiveMethods: p(paymentsService.listActiveMethods as Fn),
@@ -193,6 +200,7 @@ export const REGISTRY: Record<string, Record<string, Exposed>> = {
     createExpense: a(expensesService.createExpense as Fn),
     updateExpense: a(expensesService.updateExpense as Fn),
     voidExpense: a(expensesService.voidExpense as Fn),
+    unvoidExpense: a(expensesService.unvoidExpense as Fn),
     getExpenseById: a(expensesService.getExpenseById as Fn),
     listExpenses: a(expensesService.listExpenses as Fn),
     listCategories: p(expensesService.listCategories as Fn),
@@ -203,6 +211,7 @@ export const REGISTRY: Record<string, Record<string, Exposed>> = {
     getOpenCashSession: a(cashSessionService.getOpenCashSession as Fn),
     openCashSession: a(cashSessionService.openCashSession as Fn),
     closeCashSession: a(cashSessionService.closeCashSession as Fn),
+    deleteCashSession: a(cashSessionService.deleteCashSession as Fn),
     getOpenSessionTotals: a(cashSessionService.getOpenSessionTotals as Fn),
     listCashSessions: a(cashSessionService.listCashSessions as Fn),
   },
@@ -214,6 +223,7 @@ export const REGISTRY: Record<string, Record<string, Exposed>> = {
   },
   finance: {
     getFinanceOverview: a(financeService.getFinanceOverview as Fn),
+    getMemberOutstanding: a(financeService.getMemberOutstanding as Fn),
     listLedgerEntries: a(financeService.listLedgerEntries as Fn),
   },
   reports: {
@@ -233,6 +243,7 @@ export const REGISTRY: Record<string, Record<string, Exposed>> = {
     updateTrainingPlan: a(trainingPlansService.updateTrainingPlan as Fn),
     endTrainingPlan: a(trainingPlansService.endTrainingPlan as Fn),
     cancelTrainingPlan: a(trainingPlansService.cancelTrainingPlan as Fn),
+    reactivateTrainingPlan: a(trainingPlansService.reactivateTrainingPlan as Fn),
     listTrainingPlans: a(trainingPlansService.listTrainingPlans as Fn),
     sweepExpiredPlans: a(trainingPlansService.sweepExpiredPlans as Fn),
   },
@@ -258,6 +269,7 @@ export const REGISTRY: Record<string, Record<string, Exposed>> = {
     listProductCategories: a(storeService.listProductCategories as Fn),
     createProductCategory: a(storeService.createProductCategory as Fn),
     setProductCategoryActive: a(storeService.setProductCategoryActive as Fn),
+    purgeProduct: a(storeService.purgeProduct as Fn),
     listProducts: a(storeService.listProducts as Fn),
     getProduct: a(storeService.getProduct as Fn),
     createProduct: a(storeService.createProduct as Fn),
@@ -268,6 +280,7 @@ export const REGISTRY: Record<string, Record<string, Exposed>> = {
     getSale: a(storeService.getSale as Fn),
     listSales: a(storeService.listSales as Fn),
     voidStoreSale: a(storeService.voidStoreSale as Fn),
+    unvoidStoreSale: a(storeService.unvoidStoreSale as Fn),
     listStoreDebts: a(storeService.listStoreDebts as Fn),
     repayStoreDebt: a(storeService.repayStoreDebt as Fn),
     getMemberStoreDebtTotal: a(storeService.getMemberStoreDebtTotal as Fn),
@@ -280,6 +293,7 @@ export const REGISTRY: Record<string, Record<string, Exposed>> = {
     createClassSession: a(classesService.createClassSession as Fn),
     listSessions: a(classesService.listSessions as Fn),
     cancelClassSession: a(classesService.cancelClassSession as Fn),
+    uncancelClassSession: a(classesService.uncancelClassSession as Fn),
     completeClassSession: a(classesService.completeClassSession as Fn),
     listBookings: a(classesService.listBookings as Fn),
     listMemberBookings: a(classesService.listMemberBookings as Fn),
@@ -288,6 +302,7 @@ export const REGISTRY: Record<string, Record<string, Exposed>> = {
     setBookingStatus: a(classesService.setBookingStatus as Fn),
   },
   employees: {
+    purgeEmployee: a(employeesService.purgeEmployee as Fn),
     listEmployees: a(employeesService.listEmployees as Fn),
     createEmployee: a(employeesService.createEmployee as Fn),
     updateEmployee: a(employeesService.updateEmployee as Fn),
@@ -318,6 +333,14 @@ export const REGISTRY: Record<string, Record<string, Exposed>> = {
     getRolePermissions: a(permissionsService.getRolePermissions as Fn),
     getAllPermissions: a(permissionsService.getAllPermissions as Fn),
     setRolePermissions: a(permissionsService.setRolePermissions as Fn),
+  },
+  dev: {
+    getOverrideDate: p((() => getDevOverrideDate()) as Fn),
+    setOverrideDate: a((((_db: Db, actor: ServiceActor, date: string | null) => {
+      requirePermission(actor, "settings.edit");
+      setDevOverrideDate(date);
+      return getDevOverrideDate();
+    }) as Fn)),
   },
 };
 
