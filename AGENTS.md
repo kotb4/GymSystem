@@ -44,6 +44,7 @@ SQLite (WAL) at %LOCALAPPDATA%\GymSystem\Database\gym.db  + Files\ + Backups\ + 
 | Larger E2E audit (42 checks) | `powershell -NoProfile -ExecutionPolicy Bypass -File scripts/e2e-audit.ps1` |
 | Run built backend | `npm start` |
 | Value-level doc sync (counts/versions from source) | `npm run sync:docs` (also auto-runs via pre-commit hook) |
+| One-shot commit+push (add all → commit "msg" → push) | `git a "commit message"` |
 
 Demo data seeding: set `GYM_SEED_DEMO=1` for the built backend or `VITE_SEED_DEMO=1` (already set in `.env.development`) for dev.
 
