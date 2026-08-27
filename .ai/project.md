@@ -36,12 +36,11 @@ Members & trash/purge/photos · Plans & subscriptions (time/sessions/open kinds,
 ## Known Limitations
 
 - Arabic-only UI (single locale by design).
-- Single-machine deployment; no LAN/multi-device support yet.
+- Single-machine app; the backend binds `0.0.0.0` (LAN reachable) but there is no built-in multi-user collaborative workflow beyond the shared local SQLite — one writer process at a time (ADR-010/ADR-011: source is on private GitHub for collab, live DB stays local).
 - WhatsApp sending is manual-open flow; no automated provider transport.
 - Expense attachments stored as BLOBs inside SQLite (roadmap: move to `Files\`).
 - No EXE/installer packaging yet (bat launcher only).
-- README.md "known limitations" section is outdated (claims Store/Classes/InBody/CRM missing — they are implemented).
 
 ## NOT IMPLEMENTED (verified absent)
 
-NFC check-in · Printing/receipts · Multi-user LAN · Automated messaging transport · Installer packaging.
+NFC check-in · Printing/receipts · Multi-user LAN (true concurrent multi-writer) · Automated messaging transport · Installer packaging.

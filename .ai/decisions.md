@@ -72,3 +72,14 @@
   2. New `scripts/sync-docs.mjs` recomputes machine-checkable facts from source every run (PERMS count, AUDIT_ACTIONS count, migration max version, host default, service/page/test counts) and refreshes only those value patterns in `AGENTS.md`, `.ai/project.md`, `docs/ai/architecture.md`, `docs/ai/database.md`. It never rewrites narrative/business rules — those remain the `/docs` agent's job.
   3. Auto-run: npm `sync:docs` script for manual/agent use, plus a `.git/hooks/pre-commit` (sh, LF) that re-syncs before every commit.
 - Consequences: The app is now reachable on the LAN by default (bind 0.0.0.0) — a security-relevant change; operators should keep the network trusted or re-set `GYMSYSTEM_HOST` to loopback. Document counts/versions update automatically on commit; narrative/rule drift still needs `/docs` or a human. Secure-cookie note (ADR-005) becomes more relevant now that LAN exposure is on.
+
+## ADR-011: GitHub hosting (private) for version control & collaboration
+- Date: 2026-08-27
+- Status: accepted (product-owner request)
+- Context: The repo had a single initial commit, no remote, and the app was offline-only on one machine. Owner wants a private GitHub repo for version control, history and controlled collaboration.
+- Decision:
+  1. Default branch renamed `master` → `main`.
+  2. Remote `origin` = `https://github.com/kotb4/GymSystem` (PRIVATE), created via `gh repo create`.
+  3. All work committed in one clean history commit (36a4c7d) after a security scan confirmed no DB dumps, `.env*`, logs, `.gymbak` or secrets are tracked (`.gitignore` excludes them).
+  4. Collaboration stays private: collaborators added individually via GitHub repo Settings → Collaborators (invite-only) or `gh api repos/kotb4/GymSystem/collaborators/<username> -X PUT`; repo never made public.
+- Consequences: Source is now version-controlled off-machine; runtime data (SQLite DB, files, backups, sealed env) remains local under `%LOCALAPPDATA%\GymSystem` and is intentionally never committed. LAN/0.0.0.0 default (ADR-010) plus private-collab means the hosted code is code only, never the live database.
