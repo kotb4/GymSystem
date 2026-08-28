@@ -11,6 +11,7 @@ import {
   cancelLeave,
   updateLeave,
   getLeaveBalance,
+  listLeaves,
   addDeduction,
   addIncentive,
   listDeductions,
@@ -234,6 +235,14 @@ describe("leaves", () => {
     const leave = await requestLeave(db, owner, { employeeId: emp.id, leaveType: "sick", startDate: "2026-08-10", endDate: "2026-08-11" });
     const cancelled = await cancelLeave(db, owner, leave.id);
     expect(cancelled.status).toBe("cancelled");
+  });
+
+  it("lists all leaves for the owner with no filters (status all)", async () => {
+    const emp = await seedEmployee();
+    await requestLeave(db, owner, { employeeId: emp.id, leaveType: "sick", startDate: "2026-08-10", endDate: "2026-08-11" });
+    await requestLeave(db, owner, { employeeId: emp.id, leaveType: "annual", startDate: "2026-09-01", endDate: "2026-09-01" });
+    const rows = listLeaves(db, owner, { status: "all" });
+    expect(rows).toHaveLength(2);
   });
 });
 

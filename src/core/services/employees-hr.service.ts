@@ -615,10 +615,11 @@ export function listLeaves(
     params.push(str(mine.id));
   }
 
+  const where = conditions.length > 0 ? `WHERE ${conditions.join(" AND ")}` : "";
   const rows = db.all<Row>(
     `SELECT l.*, e.full_name AS employee_name
      FROM employee_leaves l JOIN employees e ON e.id = l.employee_id
-     WHERE ${conditions.join(" AND ")} ORDER BY l.created_at DESC`,
+     ${where} ORDER BY l.created_at DESC`,
     params,
   );
   return rows.map((r) => withRequestedName(db, r, actor));
