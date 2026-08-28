@@ -4,7 +4,9 @@ import { shouldSeedDemo, seedDemoData } from "../src/db/seed";
 import { loadPermissionsCache } from "../src/core/services/permissions.service";
 import { NodeSqliteDriver } from "./driver";
 import { resolveAppDirs, type AppDirs } from "./config";
-import { existsSync, renameSync, unlinkSync, appendFileSync } from "node:fs";
+import { existsSync, renameSync, unlinkSync, createWriteStream } from "node:fs";
+import type { WriteStream } from "node:fs";
+import path from "node:path";
 import { setFilesRoot } from "./files.service";
 
 export interface AppContext {
@@ -15,20 +17,79 @@ export interface AppContext {
 
 let context: AppContext | null = null;
 
+/**
+ * Logger backed by an append-only write stream (non-blocking). Lines written
+ * before the stream is ready are buffered and flushed on init. Logging must
+ * never break the server, so any failure is swallowed.
+ */
+let logStream: WriteStream | null = null;
+let logBuffer: string[] = [];
+
+export function initLogging(logsDir: string): void {
+  flushLogging();
+  try {
+    logStream = createWriteStream(path.join(logsDir, "server.log"), { flags: "a" });
+    logStream.on("error", () => {
+      /* keep serving even if logging fails */
+    });
+    logStream.on("drain", () => {
+      if (!logStream) return;
+      for (const buffered of logBuffer) logStream?.write(buffered);
+      logBuffer = [];
+    });
+    const buffered = logBuffer;
+    logBuffer = [];
+    for (const line of buffered) logStream?.write(line);
+  } catch {
+    logStream = null;
+  }
+}
+
+export function flushLogging(callback?: () => void): void {
+  const stream = logStream;
+  logStream = null;
+  logBuffer = [];
+  if (stream) {
+    try {
+      stream.end(callback);
+    } catch {
+      if (callback) callback();
+    }
+  } else if (callback) {
+    callback();
+  }
+}
+
 export function logLine(message: string): void {
   const line = `${new Date().toISOString()} ${message}\n`;
-  try {
-    if (context) appendFileSync(`${context.dirs.logsDir}/server.log`, line);
-  } catch {
-    /* logging must never break the server */
-  }
   process.stdout.write(line);
+  if (logStream) {
+    if (!logStream.write(line)) {
+      logBuffer.push(line);
+      if (logBuffer.length > 1000) logBuffer.shift();
+    }
+  } else {
+    logBuffer.push(line);
+    if (logBuffer.length > 1000) logBuffer.shift();
+  }
+}
+
+/** True while the live database handle is temporarily swapped (restore/import). */
+let maintenanceMode = false;
+
+export function isMaintenanceMode(): boolean {
+  return maintenanceMode;
+}
+
+export function setMaintenanceMode(value: boolean): void {
+  maintenanceMode = value;
 }
 
 /** Open (or create) the authoritative SQLite database and run migrations. */
 export function openDatabase(): AppContext {
   if (context) return context;
   const dirs = resolveAppDirs();
+  initLogging(dirs.logsDir);
   setFilesRoot(dirs.filesDir);
   const driver = new NodeSqliteDriver(dirs.dbFile);
   const db = new Db(driver);
@@ -65,6 +126,7 @@ export function adoptDatabaseFile(candidatePath: string): void {
   if (!ctx) throw new Error("database not opened yet");
 
   // close current handle first so Windows allows the swap
+  setMaintenanceMode(true);
   ctx.driver.close();
   context = null;
 
@@ -88,9 +150,11 @@ export function adoptDatabaseFile(candidatePath: string): void {
     logLine(`database adopted (${probe.users} users, schema v${probe.version})`);
   } catch (error) {
     // reopen whatever we still have so the server keeps serving
+    setMaintenanceMode(false);
     openDatabase();
     throw error;
   }
 
   openDatabase();
+  setMaintenanceMode(false);
 }

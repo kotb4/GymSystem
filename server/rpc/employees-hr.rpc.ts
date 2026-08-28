@@ -1,0 +1,31 @@
+import * as employeesHrService from "../../src/core/services/employees-hr.service";
+import { a, defineService, type Fn } from "./helpers";
+
+export const employeesHr = defineService({
+  clockIn: a(employeesHrService.clockIn as Fn),
+  clockOut: a(employeesHrService.clockOut as Fn),
+  clockInByBarcode: a(employeesHrService.clockInByBarcode as Fn),
+  clockOutByBarcode: a(employeesHrService.clockOutByBarcode as Fn),
+  setEmployeeBarcode: a(employeesHrService.setEmployeeBarcode as Fn),
+  upsertAttendance: a(employeesHrService.upsertAttendance as Fn),
+  listAttendance: a(employeesHrService.listAttendance as Fn),
+  requestLeave: a(employeesHrService.requestLeave as Fn),
+  updateLeave: a(employeesHrService.updateLeave as Fn),
+  listLeaves: a(employeesHrService.listLeaves as Fn),
+  decideLeave: a(employeesHrService.decideLeave as Fn),
+  cancelLeave: a(employeesHrService.cancelLeave as Fn),
+  getLeaveBalance: a(employeesHrService.getLeaveBalance as Fn),
+  listDeductions: a(employeesHrService.listDeductions as Fn),
+  listIncentives: a(employeesHrService.listIncentives as Fn),
+  addDeduction: a(employeesHrService.addDeduction as Fn),
+  addIncentive: a(employeesHrService.addIncentive as Fn),
+  updateDeduction: a(employeesHrService.updateDeduction as Fn),
+  updateIncentive: a(employeesHrService.updateIncentive as Fn),
+  deleteDeduction: a(employeesHrService.deleteDeduction as Fn),
+  deleteIncentive: a(employeesHrService.deleteIncentive as Fn),
+  monthlySalarySummary: a(employeesHrService.monthlySalarySummary as Fn),
+  employeeDailyActivity: a(employeesHrService.employeeDailyActivity as Fn),
+  employeeMonthlyHours: a(employeesHrService.employeeMonthlyHours as Fn),
+  setLeaveEntitlements: a(employeesHrService.setLeaveEntitlements as Fn),
+  ensureSalariesForMonth: a(employeesHrService.ensureSalariesForMonth as Fn),
+});

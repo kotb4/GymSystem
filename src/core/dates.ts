@@ -1,8 +1,8 @@
 const DATE_KEY_RE = /^\d{4}-\d{2}-\d{2}$/;
 
-let _devOverrideDate: string | null = (() => {
-  try { return localStorage.getItem("__dev_override_date"); } catch { return null; }
-})();
+// Dev/test-only override held in-memory (never persisted; the browser holds no
+// authoritative state and the server is the single source of truth).
+let _devOverrideDate: string | null = null;
 
 export function getDevOverrideDate(): string | null {
   return _devOverrideDate;
@@ -10,10 +10,6 @@ export function getDevOverrideDate(): string | null {
 
 export function setDevOverrideDate(dateKeyVal: string | null): void {
   _devOverrideDate = dateKeyVal && isValidDateKey(dateKeyVal) ? dateKeyVal : null;
-  try {
-    if (_devOverrideDate) localStorage.setItem("__dev_override_date", _devOverrideDate);
-    else localStorage.removeItem("__dev_override_date");
-  } catch { /* ignore */ }
 }
 
 export function pad2(value: number): string {

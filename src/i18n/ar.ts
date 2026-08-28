@@ -308,6 +308,7 @@
     settingTimeFormatInvalid: "صيغة الوقت المسموحة 24h أو 12h",
     settingWorkingDaysInvalid: "أيام العمل يجب أن تكون أرقامًا بين 0 و 6 مفصولة بفواصل",
     backupInvalidFile: "الملف ليس نسخة احتياطية صالحة (تالف أو نوع مختلف)",
+    invalidJsonBody: "بيانات الطلب غير صالحة (صيغة JSON خاطئة)",
     backupIntegrityFailed: "فشل فحص سلامة الملف: {result}",
     backupMissingTables: "الملف لا يحتوي على جداول النظام الأساسية ({table})",
     backupExportFailed: "تعذر تصدير قاعدة البيانات الحالية",

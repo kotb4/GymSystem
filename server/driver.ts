@@ -37,6 +37,14 @@ export class NodeSqliteDriver implements DbDriver {
     return rows as Row[];
   }
 
+  get(sql: string, params?: SqlParams): Row | null {
+    const statement = this.db.prepare(sql);
+    const row = params && params.length > 0
+      ? statement.get(...(params as never[]))
+      : statement.get();
+    return (row as Row | undefined) ?? null;
+  }
+
   exec(sql: string): void {
     this.db.exec(sql);
   }

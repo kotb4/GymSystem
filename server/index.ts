@@ -1,7 +1,7 @@
 ﻿import http from "node:http";
 import path from "node:path";
 import fs from "node:fs";
-import { getDbContext, openDatabase, logLine } from "./context";
+import { getDbContext, openDatabase, logLine, isMaintenanceMode, flushLogging } from "./context";
 import {
   SESSION_COOKIE,
   createSessionToken,
@@ -92,14 +92,18 @@ function errorBody(error: unknown): { status: number; body: unknown } {
   };
 }
 
-function readBody(req: http.IncomingMessage, limit: number = DEFAULT_BODY_LIMIT): Promise<Buffer> {
+function readBody(
+  req: http.IncomingMessage,
+  limit: number = DEFAULT_BODY_LIMIT,
+  errorKey: string = "errors.backupInvalidFile",
+): Promise<Buffer> {
   return new Promise((resolve, reject) => {
     const chunks: Buffer[] = [];
     let size = 0;
     req.on("data", (chunk: Buffer) => {
       size += chunk.length;
       if (size > limit) {
-        reject(errValidation("errors.backupInvalidFile"));
+        reject(errValidation(errorKey));
         req.destroy();
         return;
       }
@@ -110,14 +114,19 @@ function readBody(req: http.IncomingMessage, limit: number = DEFAULT_BODY_LIMIT)
   });
 }
 
-async function readJsonBody(req: http.IncomingMessage, limit?: number): Promise<Record<string, unknown>> {
-  const raw = await readBody(req, limit);
+async function readJsonBody(
+  req: http.IncomingMessage,
+  limit?: number,
+  errorKey: string = "errors.invalidJsonBody",
+): Promise<Record<string, unknown>> {
+  const raw = (await readBody(req, limit)).toString("utf8") || "{}";
+  let parsed: unknown;
   try {
-    const parsed = JSON.parse(raw.toString("utf8") || "{}");
-    return typeof parsed === "object" && parsed !== null ? (parsed as Record<string, unknown>) : {};
+    parsed = JSON.parse(raw);
   } catch {
-    return {};
+    throw errValidation(errorKey);
   }
+  return typeof parsed === "object" && parsed !== null ? (parsed as Record<string, unknown>) : {};
 }
 
 function parseCookies(req: http.IncomingMessage): Record<string, string> {
@@ -209,6 +218,14 @@ async function handleApi(ctx: Ctx): Promise<void> {
     return sendJson(res, 200, { ok: true });
   }
 
+  // Liveness/readiness probe; reports 503 while the DB is mid-swap so a
+  // supervisor/healthcheck knows not to consider the process ready.
+  if (route === "GET /api/health") {
+    const healthy = !isMaintenanceMode() && getDbContext().db != null;
+    const status = healthy && !isMaintenanceMode() ? 200 : 503;
+    return sendJson(res, status, { ok: healthy, maintenance: isMaintenanceMode() });
+  }
+
   if (route === "POST /api/auth/setup") {
     const body = await readJsonBody(req);
     try {
@@ -286,14 +303,19 @@ async function handleApi(ctx: Ctx): Promise<void> {
   }
 
   if (route === "POST /api/rpc") {
-    const body = await readJsonBody(req);
-    const outcome = await invokeRpc(
-      actor,
-      String(body.service ?? ""),
-      String(body.fn ?? ""),
-      Array.isArray(body.args) ? (body.args as unknown[]) : [],
-    );
-    return sendJson(res, outcome.status, outcome.body);
+    try {
+      const body = await readJsonBody(req);
+      const outcome = await invokeRpc(
+        actor,
+        String(body.service ?? ""),
+        String(body.fn ?? ""),
+        Array.isArray(body.args) ? (body.args as unknown[]) : [],
+      );
+      return sendJson(res, outcome.status, outcome.body);
+    } catch (error) {
+      const mapped = errorBody(error);
+      return sendJson(res, mapped.status, mapped.body);
+    }
   }
 
   if (route === "POST /api/backups/create") {
@@ -423,6 +445,9 @@ function serveStatic(ctx: Ctx): void {
     "Cache-Control": isHashedAsset
       ? "public, max-age=31536000, immutable"
       : "no-cache, must-revalidate",
+    "X-Content-Type-Options": "nosniff",
+    "X-Frame-Options": "DENY",
+    "Referrer-Policy": "no-referrer",
   };
   res.writeHead(200, headers);
   const stream = fs.createReadStream(filePath);
@@ -436,6 +461,15 @@ function serveStatic(ctx: Ctx): void {
 export function startHttpServer(): void {
   openDatabase();
   try { pruneExpiredSessions(getDbContext().db); } catch { /* first boot: table just created */ }
+  // Prune expired sessions hourly so the session table never grows unbounded
+  // (login also prunes opportunistically with each successful login).
+  setInterval(() => {
+    try {
+      pruneExpiredSessions(getDbContext().db);
+    } catch {
+      /* logged below if it recurs; never crash the loop */
+    }
+  }, 60 * 60 * 1000).unref();
   const server = http.createServer(async (req, res) => {
     const url = new URL(req.url ?? "/", `http://${req.headers.host ?? "localhost"}`);
     const ctx: Ctx = { req, res, url };
@@ -471,9 +505,13 @@ export function startHttpServer(): void {
 
 process.on("uncaughtException", (error) => {
   logLine(`uncaught exception: ${error.stack ?? String(error)}`);
+  // Log the crash, then exit so a supervisor can restart a possibly-corrupted process.
+  flushLogging(() => process.exit(1));
+  setTimeout(() => process.exit(1), 100);
 });
 process.on("unhandledRejection", (reason) => {
   logLine(`unhandled rejection: ${String(reason)}`);
+  flushLogging();
 });
 
 startHttpServer();

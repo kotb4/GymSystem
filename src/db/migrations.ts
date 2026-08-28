@@ -308,6 +308,46 @@ function buildMigrations(): Migration[] {
         "INSERT OR IGNORE INTO permissions (code) VALUES ('hr.employee_checkin')",
       ],
     },
+    {
+      // ---- drop the legacy members.photo_path column (photos now live in the
+      // files registry via photo_file_id). Guarded + non-fatal so old SQLite
+      // builds that lack ALTER DROP COLUMN still boot. ----
+      version: 14,
+      statements: [],
+      callback: (db) => {
+        const hasCol = db.first<{ cnt: number }>(
+          "SELECT COUNT(*) AS cnt FROM pragma_table_info('members') WHERE name = 'photo_path'",
+        );
+        if (!hasCol || Number(hasCol.cnt) === 0) return;
+        try {
+          db.exec("ALTER TABLE members DROP COLUMN photo_path");
+        } catch (error) {
+          console.error(`migration v14: could not drop photo_path: ${String(error)}`);
+        }
+      },
+    },
+    {
+      // ---- remove the dead in-DB expense_attachments BLOB table. Attachments
+      // have routed through the files registry for a long time, so this table
+      // is empty in every current install. To avoid silent data loss we only
+      // drop it when it holds no rows and defer otherwise. ----
+      version: 15,
+      statements: [],
+      callback: (db) => {
+        const hasTable = db.first<{ cnt: number }>(
+          "SELECT COUNT(*) AS cnt FROM sqlite_master WHERE type = 'table' AND name = 'expense_attachments'",
+        );
+        if (!hasTable || Number(hasTable.cnt) === 0) return;
+        const rows = db.count("SELECT COUNT(*) FROM expense_attachments");
+        if (rows > 0) {
+          console.error(
+            `migration v15: kept expense_attachments (${rows} legacy rows) — migrate manually before dropping`,
+          );
+          return;
+        }
+        db.exec("DROP TABLE IF EXISTS expense_attachments");
+      },
+    },
   ];
 }
 

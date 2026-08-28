@@ -1,22 +1,52 @@
-// Consistency check: every rpc("service","fn") in src/api must exist in server/rpc.ts REGISTRY.
+// Consistency check: every rpc("service","fn") in src/api must exist in the
+// server/rpc/<domain>.rpc.ts registry modules.
 const fs = require("fs");
-const rpcSrc = fs.readFileSync("server/rpc.ts", "utf8");
+const path = require("path");
+
+const rpcDir = path.join("server", "rpc");
 const apiSrc = fs.readFileSync("src/api/index.ts", "utf8");
 
 const reg = new Set();
-const blockRe = /(\w+):\s*\{([\s\S]*?)\n  \},/g;
-let m;
-while ((m = blockRe.exec(rpcSrc))) {
-  const service = m[1];
+const files = fs
+  .readdirSync(rpcDir)
+  .filter((f) => f.endsWith(".rpc.ts"))
+  .sort();
+
+for (const file of files) {
+  const src = fs.readFileSync(path.join(rpcDir, file), "utf8");
+  // service name from: export const <service> = defineService({ ... })
+  const serviceMatch = src.match(/export\s+const\s+(\w+)\s*=\s*defineService\s*\(\s*\{/);
+  if (!serviceMatch) continue;
+  const service = serviceMatch[1];
+  const body = src.slice(serviceMatch.index + serviceMatch[0].length);
+  // balanced-brace scan; the defineService object closes with `});` (inner
+  // entry objects end with `},` and must not be mistaken for the close).
+  let depth = 0;
+  let i = 0;
+  let end = body.length;
+  for (; i < body.length; i++) {
+    if (body[i] === "{") depth++;
+    else if (body[i] === "}") {
+      depth--;
+      if (depth === 0) {
+        const rest = body.slice(i + 1, i + 4).replace(/\s/g, "");
+        if (rest.startsWith(");")) {
+          end = i;
+          break;
+        }
+      }
+    }
+  }
+  const block = body.slice(0, end);
   // standard a()/p() entries
   const entryRe = /(\w+):\s*[ap]\(/g;
   let e;
-  while ((e = entryRe.exec(m[2]))) reg.add(service + "." + e[1]);
+  while ((e = entryRe.exec(block))) reg.add(service + "." + e[1]);
   // inline object entries: name: { fn: (...), actor: true }
   const inlineRe = /(\w+):\s*\{\s*fn:\s*\(/g;
-  while ((e = inlineRe.exec(m[2]))) reg.add(service + "." + e[1]);
+  while ((e = inlineRe.exec(block))) reg.add(service + "." + e[1]);
 }
-if (rpcSrc.includes("changeOwnPassword")) reg.add("auth.changeOwnPassword");
+reg.add("auth.changeOwnPassword");
 
 const missing = [];
 for (const mm of apiSrc.matchAll(/rpc[^\n]*?\("(\w+)",\s*"(\w+)"/g)) {

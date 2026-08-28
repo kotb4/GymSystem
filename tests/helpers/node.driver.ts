@@ -20,6 +20,11 @@ export class NodeSqliteDriver implements DbDriver {
     return statement.all(...(params as never[])) as Row[];
   }
 
+  get(sql: string, params: SqlParams = []): Row | null {
+    const statement = this.database.prepare(sql);
+    return (statement.get(...(params as never[])) as Row | undefined) ?? null;
+  }
+
   exec(sql: string): void {
     this.database.exec(sql);
   }

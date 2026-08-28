@@ -10,6 +10,7 @@ export interface DriverRunResult {
 export interface DbDriver {
   run(sql: string, params?: SqlParams): DriverRunResult;
   all(sql: string, params?: SqlParams): Row[];
+  get?(sql: string, params?: SqlParams): Row | null;
   exec(sql: string): void;
   exportBytes(): Uint8Array | null;
   close(): void;
@@ -42,7 +43,9 @@ export class Db {
   }
 
   first<T = Row>(sql: string, params?: SqlParams): T | null {
-    const row = this.driver.all(sql, params)[0];
+    const row = this.driver.get
+      ? this.driver.get(sql, params)
+      : this.driver.all(sql, params)[0] ?? null;
     return (row as T | undefined) ?? null;
   }
 
@@ -105,6 +108,9 @@ export class Db {
   }
 
   exportBytes(): Uint8Array | null {
+    if (this.txDepth > 0) {
+      throw new Error("cannot export database bytes inside a transaction");
+    }
     return this.driver.exportBytes();
   }
 

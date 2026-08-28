@@ -166,7 +166,7 @@ describe("validateRestoreFile", () => {
     const path = await buildRealDbFile();
     const bytes = readFileSync(path);
     const metadata = await validateRestoreFile(new Uint8Array(bytes), openFromBytesNode);
-    expect(metadata.migrationVersion).toBe(13);
+    expect(metadata.migrationVersion).toBe(15);
     expect(metadata.users).toBe(1);
     expect(metadata.members).toBe(0);
     expect(metadata.settings).toBeGreaterThan(0);

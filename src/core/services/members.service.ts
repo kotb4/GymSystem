@@ -23,7 +23,6 @@ export interface MemberRow extends Row {
   gender: "male" | "female" | null;
   date_of_birth: string | null;
   address: string | null;
-  photo_path: string | null;
   notes: string | null;
   registration_date: string;
   status: MemberStatus;
@@ -51,7 +50,6 @@ export interface PublicMember {
   gender: "male" | "female" | null;
   dateOfBirth: string | null;
   address: string | null;
-  photoPath: string | null;
   notes: string | null;
   registrationDate: string;
   status: MemberStatus;
@@ -142,7 +140,6 @@ export function toPublicMember(row: MemberRow): PublicMember {
     gender: row.gender,
     dateOfBirth: row.date_of_birth,
     address: row.address,
-    photoPath: row.photo_path,
     notes: row.notes,
     registrationDate: row.registration_date,
     status: row.status,
@@ -266,7 +263,7 @@ export async function createMember(
     const codeValue = bumpCounter(db, "member_code");
     memberCode = formatMemberCode(codeValue);
     db.run(
-      "INSERT INTO members (id, member_code, full_name, phone, email, gender, date_of_birth, address, photo_path, notes, height_cm, weight_kg, emergency_contact_name, emergency_contact_phone, department, registration_date, status, created_by, archived_at, created_at, updated_at)\nVALUES (?, ?, ?, ?, ?, ?, ?, ?, NULL, ?, ?, ?, ?, ?, ?, ?, 'active', ?, NULL, ?, ?)",
+      "INSERT INTO members (id, member_code, full_name, phone, email, gender, date_of_birth, address, notes, height_cm, weight_kg, emergency_contact_name, emergency_contact_phone, department, registration_date, status, created_by, archived_at, created_at, updated_at)\nVALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'active', ?, NULL, ?, ?)",
       [
         id,
         memberCode,
