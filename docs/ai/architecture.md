@@ -34,7 +34,7 @@
 ┌──────────────────────▼──────────────────────────┐
 │  SQLite (node:sqlite, synchronous, WAL)          │
 │  %LOCALAPPDATA%/GymSystem/Database/gym.db        │
-│  43 tables, v1..v12 migrations, ~60 indexes       │
+│  43 tables, v1..v13 migrations, ~60 indexes       │
 │  CHECK constraints, FK enforcement, append-only   │
 │  ledger                                         │
 └─────────────────────────────────────────────────┘
@@ -121,7 +121,7 @@ Tailwind CSS v4 with `@theme` design tokens in `src/index.css`:
 1. `resolveAppDirs()` — determines directory layout
 2. `setFilesRoot(dirs.filesDir)` — configures file storage
 3. Create `NodeSqliteDriver` → `Db` wrapper
-4. `runMigrations(db)` — applies all pending v1..v12
+4. `runMigrations(db)` — applies all pending v1..v13
 5. `loadPermissionsCache(db)` — populates in-memory role→permissions
 6. `db.onDirty(() => loadPermissionsCache(db))` — auto-refresh on writes
 7. Optional demo seed (if env enabled AND `settings.demo_seeded` is unset)
@@ -139,7 +139,7 @@ Tailwind CSS v4 with `@theme` design tokens in `src/index.css`:
 | `server/files.service.ts` | File upload/download |
 | `server/config.ts` | Data directory resolution |
 | `src/db/engine.ts` | Db wrapper class |
-| `src/db/migrations.ts` | Schema migrations v1..v12 |
+| `src/db/migrations.ts` | Schema migrations v1..v13 |
 | `src/db/seed.ts` | Demo data seeding |
 | `src/core/permissions.ts` | 73 permissions, 4 roles, requirePermission |
 | `src/core/errors.ts` | AppError factories |
