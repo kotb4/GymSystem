@@ -3,9 +3,8 @@ import {
   AlarmClock,
   ArrowDownToLine,
   ArrowUpFromLine,
-  Banknote,
   CalendarDays,
-  CircleDollarSign,
+  Check,
   Clock3,
   FileClock,
   HandCoins,
@@ -14,9 +13,12 @@ import {
   LogOut,
   Minus,
   Plus,
+  Pencil,
+  Trash2,
   History,
   UserPlus,
   Wallet,
+  X,
   type LucideIcon,
 } from "lucide-react";
 import { useAuth } from "@/contexts/auth-context";
@@ -31,8 +33,9 @@ import {
   type LeaveType,
   type LeaveStatus,
   type PublicHrAmount,
-  type PublicSalarySummary,
   type PublicDailyActivity,
+  type PublicLeaveBalance,
+  type EmployeeDailyWorked,
 } from "@/api";
 import { formatMinor } from "@/core/money";
 import { todayKey } from "@/core/dates";
@@ -41,48 +44,10 @@ import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Select } from "@/components/ui/select";
-import { Tabs } from "@/components/ui/tabs";
 import { Modal } from "@/components/ui/modal";
 import { DataTable, type Column } from "@/components/ui/table";
 import { EmptyState } from "@/components/ui/empty-state";
 import { ConfirmDialog } from "@/components/ui/confirm-dialog";
-
-export function HrPage() {
-  const t = useT();
-  const { hasPermission } = useAuth();
-  const [tab, setTab] = useState("attendance");
-  return (
-    <div className="space-y-4">
-      <Card>
-        <CardHeader title={t("nav.hr")} />
-        <div className="px-5 pb-1">
-          <Tabs
-            items={[
-              { value: "attendance", label: t("hr.tabAttendance") },
-              { value: "leaves", label: t("hr.tabLeaves") },
-              { value: "deductions", label: t("hr.tabDeductions") },
-              { value: "incentives", label: t("hr.tabIncentives") },
-              ...(hasPermission("salaries.view") || hasPermission("hr.activity_view")
-                ? [{ value: "salary", label: t("hr.tabSalarySummary") }]
-                : []),
-              ...(hasPermission("hr.activity_view")
-                ? [{ value: "activity", label: t("hr.tabActivity") }]
-                : []),
-            ]}
-            value={tab}
-            onChange={setTab}
-          />
-        </div>
-      </Card>
-      {tab === "attendance" && <AttendanceTab />}
-      {tab === "leaves" && <LeavesTab />}
-      {tab === "deductions" && <DeductionsTab />}
-      {tab === "incentives" && <IncentivesTab />}
-      {tab === "salary" && <SalarySummaryTab />}
-      {tab === "activity" && <ActivityTab />}
-    </div>
-  );
-}
 
 function hoursLabel(minutes: number): string {
   const h = Math.floor(minutes / 60);
@@ -92,7 +57,7 @@ function hoursLabel(minutes: number): string {
 
 // ------------------------------- attendance ------------------------------
 
-function AttendanceTab() {
+export function AttendanceTab() {
   const t = useT();
   const { hasPermission } = useAuth();
   const isManager = hasPermission("hr.manage");
@@ -135,6 +100,21 @@ function AttendanceTab() {
     { key: "out", header: t("hr.clockOutAt"), render: (r) => r.clockOutAt ? <span dir="ltr" className="tabnum">{r.clockOutAt.slice(11, 19)}</span> : <span className="text-faint">—</span> },
     { key: "worked", header: t("hr.workedHours"), render: (r) => r.workedMinutes > 0 ? <span dir="ltr" className="tabnum">{hoursLabel(r.workedMinutes)}</span> : <span>—</span> },
     { key: "late", header: t("common.status"), render: (r) => r.isLate ? <Badge variant="danger">{t("hr.late")}</Badge> : <Badge variant="success">{t("hr.onTime")}</Badge> },
+    ...(isManager ? [{
+      key: "actions", header: "", align: "end" as const,
+      render: (r: PublicAttendance) => (
+        <div className="flex items-center justify-end">
+          <button
+            type="button"
+            aria-label={t("common.edit")}
+            onClick={() => setEditing({ dateKey: r.dateKey, employeeId: r.employeeId, clockIn: r.clockInAt || "", clockOut: r.clockOutAt || "" })}
+            className="grid size-8 place-items-center rounded-lg text-faint transition-colors hover:bg-white/5 hover:text-neon"
+          >
+            <Pencil className="size-4" />
+          </button>
+        </div>
+      ),
+    }] : []),
   ];
 
   return (
@@ -215,21 +195,24 @@ function SelfClockButtons({ onDone }: { onDone: () => void }) {
 
 // ------------------------------- leaves -----------------------------------
 
-function LeavesTab() {
+export function LeavesTab() {
   const t = useT();
   const { hasPermission } = useAuth();
   const isManager = hasPermission("hr.manage");
   const { toast } = useToast();
   const [rows, setRows] = useState<PublicLeave[]>([]);
-  const [balance, setBalance] = useState<{ entitlement: number; used: number; remaining: number }>({ entitlement: 0, used: 0, remaining: 0 });
+  const [balances, setBalances] = useState<PublicLeaveBalance[]>([]);
   const [requesting, setRequesting] = useState(false);
+  const [settingEntitlements, setSettingEntitlements] = useState(false);
   const [decideTarget, setDecideTarget] = useState<PublicLeave | null>(null);
   const [decideApprove, setDecideApprove] = useState(true);
+  const [editingLeave, setEditingLeave] = useState<PublicLeave | null>(null);
+  const [cancelTarget, setCancelTarget] = useState<PublicLeave | null>(null);
   const [employees, setEmployees] = useState<PublicEmployee[]>([]);
 
   const reload = useCallback(() => {
     api.employeesHr.listLeaves({ status: "all" }).then(setRows).catch(console.error);
-    api.employeesHr.getLeaveBalance({}).then(setBalance).catch(console.error);
+    api.employeesHr.getLeaveBalance({}).then(setBalances).catch(console.error);
   }, []);
   useEffect(() => { reload(); }, [reload]);
   useEffect(() => {
@@ -256,6 +239,18 @@ function LeavesTab() {
     }
   };
 
+  const doCancel = async () => {
+    if (!cancelTarget) return;
+    try {
+      await api.employeesHr.cancelLeave(cancelTarget.id);
+      toast("success", t("hr.leaveCancelled"));
+      setCancelTarget(null);
+      reload();
+    } catch (err) {
+      toast("error", describeError(err, t));
+    }
+  };
+
   const columns: Column<PublicLeave>[] = [
     ...(isManager ? [{ key: "emp", header: t("emp.fullName"), render: (r: PublicLeave) => <span className="font-bold">{r.employeeName}</span> }] : []),
     { key: "type", header: t("hr.leaveType"), render: (r) => leaveTypeLabel(r.leaveType) },
@@ -263,36 +258,108 @@ function LeavesTab() {
     { key: "days", header: t("hr.leaveDays"), render: (r) => <span dir="ltr" className="tabnum">{r.days}</span> },
     { key: "reason", header: t("hr.leaveReason"), render: (r) => <span className="text-subtle">{r.reason ?? "—"}</span> },
     { key: "status", header: t("hr.leaveStatus"), render: (r) => <Badge variant={statusVariant(r.status)} dot>{statusLabel(r.status)}</Badge> },
-    ...(isManager ? [{
+    ...([{
       key: "actions", header: "", align: "end" as const,
       render: (r: PublicLeave) => r.status === "pending" ? (
-        <div className="flex items-center gap-1.5">
-          <Button size="sm" variant="primary" onClick={() => { setDecideApprove(true); setDecideTarget(r); }}><ListChecks className="size-3.5" />{t("hr.approve")}</Button>
-          <Button size="sm" variant="ghost" className="text-red" onClick={() => { setDecideApprove(false); setDecideTarget(r); }}><Minus className="size-3.5" />{t("hr.reject")}</Button>
+        <div className="flex items-center gap-1">
+          {isManager && (
+            <>
+              <button
+                type="button"
+                aria-label={t("hr.approve")}
+                onClick={() => { setDecideApprove(true); setDecideTarget(r); }}
+                className="grid size-8 place-items-center rounded-lg text-faint transition-colors hover:bg-white/5 hover:text-neon"
+              >
+                <ListChecks className="size-4" />
+              </button>
+              <button
+                type="button"
+                aria-label={t("hr.reject")}
+                onClick={() => { setDecideApprove(false); setDecideTarget(r); }}
+                className="grid size-8 place-items-center rounded-lg text-faint transition-colors hover:bg-white/5 hover:text-red"
+              >
+                <Minus className="size-4" />
+              </button>
+            </>
+          )}
+          <button
+            type="button"
+            aria-label={t("hr.editLeave")}
+            onClick={() => setEditingLeave(r)}
+            className="grid size-8 place-items-center rounded-lg text-faint transition-colors hover:bg-white/5 hover:text-neon"
+          >
+            <Pencil className="size-4" />
+          </button>
+          <button
+            type="button"
+            aria-label={t("hr.cancelLeave")}
+            onClick={() => setCancelTarget(r)}
+            className="grid size-8 place-items-center rounded-lg text-faint transition-colors hover:bg-white/5 hover:text-red"
+          >
+            <X className="size-4" />
+          </button>
         </div>
       ) : null,
-    }] : []),
+    }]),
   ];
 
   return (
     <>
-      <div className="grid grid-cols-3 gap-3">
-        <SummaryTile icon={CalendarDays} label={t("hr.leaveEntitlement")} value={String(balance.entitlement)} />
-        <SummaryTile icon={FileClock} label={t("hr.leaveUsed")} value={String(balance.used)} />
-        <SummaryTile icon={Clock3} label={t("hr.leaveRemaining")} value={String(balance.remaining)} />
+      <div className="grid grid-cols-2 gap-3 lg:grid-cols-4">
+        {balances.map((b) => (
+          <div key={b.type} className="rounded-xl border border-line bg-surface p-4">
+            <div className="flex items-center gap-2">
+              <div className="grid size-9 shrink-0 place-items-center rounded-lg bg-neon/10 text-neon">
+                {b.type === "annual" ? <CalendarDays className="size-4" /> : b.type === "sick" ? <FileClock className="size-4" /> : <Clock3 className="size-4" />}
+              </div>
+              <div className="text-[13px] font-bold">{leaveTypeLabel(b.type)}</div>
+            </div>
+            <div className="mt-3 grid grid-cols-3 gap-1 text-center">
+              <div>
+                <div className="text-[11px] text-subtle">{t("hr.leaveEntitlement")}</div>
+                <div className="font-bold tabnum">{b.limited ? b.entitlement : "∞"}</div>
+              </div>
+              <div>
+                <div className="text-[11px] text-subtle">{t("hr.leaveUsed")}</div>
+                <div className="font-bold tabnum">{b.used}</div>
+              </div>
+              <div>
+                <div className="text-[11px] text-subtle">{t("hr.leaveRemaining")}</div>
+                <div className={`font-bold tabnum ${b.limited && b.remaining === 0 ? "text-red" : "text-neon"}`}>{b.limited ? b.remaining : "∞"}</div>
+              </div>
+            </div>
+          </div>
+        ))}
       </div>
       <Card>
         <CardHeader title={t("hr.tabLeaves")} action={
-          hasPermission("hr.view") ? <Button onClick={() => setRequesting(true)}><Plus className="size-4" />{t("hr.requestLeave")}</Button> : undefined
+          <div className="flex items-center gap-2">
+            {isManager && <Button variant="secondary" size="sm" onClick={() => setSettingEntitlements(true)}>{t("hr.setLeaveEntitlements")}</Button>}
+            {hasPermission("hr.view") && <Button size="sm" onClick={() => setRequesting(true)}><Plus className="size-3.5" />{t("hr.requestLeave")}</Button>}
+          </div>
         } />
         {rows.length === 0 ? <EmptyState icon={<CalendarDays />} title={t("hr.noAttendanceToday")} /> : <DataTable columns={columns} data={rows} rowKey={(r) => r.id} />}
       </Card>
+      {settingEntitlements && (
+        <LeaveEntitlementsModal
+          employees={employees}
+          onClose={() => setSettingEntitlements(false)}
+          onSaved={() => { setSettingEntitlements(false); reload(); }}
+        />
+      )}
       {requesting && (
         <RequestLeaveModal
           isManager={isManager}
           employees={employees}
           onClose={() => setRequesting(false)}
           onSaved={() => { setRequesting(false); reload(); }}
+        />
+      )}
+      {editingLeave && (
+        <EditLeaveModal
+          leave={editingLeave}
+          onClose={() => setEditingLeave(null)}
+          onSaved={() => { setEditingLeave(null); reload(); }}
         />
       )}
       <ConfirmDialog
@@ -303,19 +370,15 @@ function LeavesTab() {
         confirmLabel={decideApprove ? t("common.confirm") : t("common.cancel")}
         onConfirm={() => void decide()}
       />
+      <ConfirmDialog
+        open={cancelTarget !== null}
+        onClose={() => setCancelTarget(null)}
+        title={t("hr.cancelLeave")}
+        message={cancelTarget ? `${cancelTarget.employeeName} — ${leaveTypeLabel(cancelTarget.leaveType)}` : ""}
+        confirmLabel={t("common.confirm")}
+        onConfirm={() => void doCancel()}
+      />
     </>
-  );
-}
-
-function SummaryTile({ icon: Icon, label, value }: { icon: LucideIcon; label: string; value: string }) {
-  return (
-    <div className="flex items-center gap-3 rounded-xl border border-line bg-surface p-4">
-      <div className="grid size-10 shrink-0 place-items-center rounded-lg bg-neon/10 text-neon"><Icon className="size-5" /></div>
-      <div>
-        <div className="text-[12px] text-subtle">{label}</div>
-        <div className="text-xl font-extrabold tabnum">{value}</div>
-      </div>
-    </div>
   );
 }
 
@@ -378,13 +441,131 @@ function RequestLeaveModal({ isManager, employees, onClose, onSaved }: {
   );
 }
 
+function EditLeaveModal({ leave, onClose, onSaved }: {
+  leave: PublicLeave;
+  onClose: () => void;
+  onSaved: () => void;
+}) {
+  const t = useT();
+  const { toast } = useToast();
+  const [form, setForm] = useState({
+    leaveType: leave.leaveType,
+    startDate: leave.startDate,
+    endDate: leave.endDate,
+    reason: leave.reason ?? "",
+  });
+  const [busy, setBusy] = useState(false);
+
+  const save = async () => {
+    setBusy(true);
+    try {
+      await api.employeesHr.updateLeave({
+        leaveId: leave.id,
+        leaveType: form.leaveType,
+        startDate: form.startDate,
+        endDate: form.endDate,
+        reason: form.reason || null,
+      });
+      toast("success", t("hr.savedToast"));
+      onSaved();
+    } catch (err) {
+      toast("error", describeError(err, t));
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  return (
+    <Modal open onClose={onClose} title={`${t("hr.editLeave")} — ${leave.employeeName}`} widthClass="max-w-sm"
+      footer={<><Button loading={busy} onClick={save}>{t("common.save")}</Button><Button variant="secondary" onClick={onClose}>{t("common.cancel")}</Button></>}>
+      <div className="space-y-3.5">
+        <Select label={t("hr.leaveType")} value={form.leaveType} onChange={(e) => setForm((f) => ({ ...f, leaveType: e.target.value as LeaveType }))} options={[
+          { value: "annual", label: t("hr.ltAnnual") },
+          { value: "sick", label: t("hr.ltSick") },
+          { value: "unpaid", label: t("hr.ltUnpaid") },
+          { value: "emergency", label: t("hr.ltEmergency") },
+        ]} />
+        <div className="grid grid-cols-2 gap-3">
+          <Input label={t("hr.leaveStart")} type="date" dir="ltr" value={form.startDate} onChange={(e) => setForm((f) => ({ ...f, startDate: e.target.value }))} />
+          <Input label={t("hr.leaveEnd")} type="date" dir="ltr" value={form.endDate} onChange={(e) => setForm((f) => ({ ...f, endDate: e.target.value }))} />
+        </div>
+        <Input label={t("hr.leaveReason")} value={form.reason} onChange={(e) => setForm((f) => ({ ...f, reason: e.target.value }))} />
+      </div>
+    </Modal>
+  );
+}
+
+function LeaveEntitlementsModal({ employees, onClose, onSaved }: {
+  employees: PublicEmployee[];
+  onClose: () => void;
+  onSaved: () => void;
+}) {
+  const t = useT();
+  const { toast } = useToast();
+  const [employeeId, setEmployeeId] = useState(employees[0]?.id ?? "");
+  const [annual, setAnnual] = useState("");
+  const [sick, setSick] = useState("");
+  const [unpaid, setUnpaid] = useState("");
+  const [busy, setBusy] = useState(false);
+
+  useEffect(() => {
+    if (!employeeId) return;
+    let alive = true;
+    api.employeesHr.getLeaveBalance({ employeeId }).then((balances) => {
+      if (!alive) return;
+      const yearly = balances.find((b) => b.type === "annual");
+      const sickly = balances.find((b) => b.type === "sick");
+      const nopay = balances.find((b) => b.type === "unpaid");
+      setAnnual(yearly?.limited ? String(yearly.entitlement) : "");
+      setSick(sickly?.limited ? String(sickly.entitlement) : "");
+      setUnpaid(nopay?.limited ? String(nopay.entitlement) : "");
+    }).catch(console.error);
+    return () => { alive = false; };
+  }, [employeeId]);
+
+  const save = async () => {
+    if (!employeeId) return;
+    setBusy(true);
+    try {
+      const toNum = (v: string) => (v.trim() === "" ? null : Math.round(Number(v)));
+      await api.employeesHr.setLeaveEntitlements({
+        employeeId,
+        annualDays: toNum(annual),
+        sickDays: toNum(sick),
+        unpaidDays: toNum(unpaid),
+      });
+      toast("success", t("hr.setLeaveEntitlements"));
+      onSaved();
+    } catch (err) {
+      toast("error", describeError(err, t));
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  return (
+    <Modal open onClose={onClose} title={t("hr.setLeaveEntitlements")} widthClass="max-w-sm"
+      footer={<><Button loading={busy} onClick={save}>{t("common.save")}</Button><Button variant="secondary" onClick={onClose}>{t("common.cancel")}</Button></>}>
+      <div className="space-y-3.5">
+        <Select label={t("emp.fullName")} value={employeeId} onChange={(e) => setEmployeeId(e.target.value)} options={employees.map((e) => ({ value: e.id, label: e.fullName }))} />
+        <p className="text-[12px] text-subtle">{t("hr.leaveEntitlementUnlimited")}</p>
+        <div className="grid grid-cols-3 gap-3">
+          <Input label={t("hr.annualLeaveDays")} type="number" min={0} dir="ltr" value={annual} onChange={(e) => setAnnual(e.target.value)} placeholder="∞" />
+          <Input label={t("hr.sickLeaveDays")} type="number" min={0} dir="ltr" value={sick} onChange={(e) => setSick(e.target.value)} placeholder="∞" />
+          <Input label={t("hr.unpaidLeaveDays")} type="number" min={0} dir="ltr" value={unpaid} onChange={(e) => setUnpaid(e.target.value)} placeholder="∞" />
+        </div>
+      </div>
+    </Modal>
+  );
+}
+
 // --------------------------- deductions/incentives ------------------------
 
-function DeductionsTab() {
+export function DeductionsTab() {
   const t = useT();
   return <AmountTab kind="deduction" title={t("hr.tabDeductions")} addLabel={t("hr.addDeduction")} emptyTitle={t("hr.noAttendanceToday")} />;
 }
-function IncentivesTab() {
+export function IncentivesTab() {
   const t = useT();
   return <AmountTab kind="incentive" title={t("hr.tabIncentives")} addLabel={t("hr.addIncentive")} emptyTitle={t("hr.noAttendanceToday")} />;
 }
@@ -392,11 +573,14 @@ function IncentivesTab() {
 function AmountTab({ kind, title, addLabel, emptyTitle }: { kind: "deduction" | "incentive"; title: string; addLabel: string; emptyTitle: string }) {
   const t = useT();
   const { hasPermission } = useAuth();
+  const { toast } = useToast();
   const isManager = hasPermission("hr.manage");
   const [month, setMonth] = useState(todayKey().slice(0, 7));
   const [rows, setRows] = useState<PublicHrAmount[]>([]);
   const [employees, setEmployees] = useState<PublicEmployee[]>([]);
   const [adding, setAdding] = useState(false);
+  const [editing, setEditing] = useState<PublicHrAmount | null>(null);
+  const [deleteTarget, setDeleteTarget] = useState<PublicHrAmount | null>(null);
 
   const fetchRows = useCallback(() => {
     const p = kind === "deduction" ? api.employeesHr.listDeductions : api.employeesHr.listIncentives;
@@ -414,6 +598,29 @@ function AmountTab({ kind, title, addLabel, emptyTitle }: { kind: "deduction" | 
     { key: "date", header: t("hr.dateKey"), render: (r) => <span dir="ltr" className="tabnum">{r.dateKey}</span> },
     { key: "reason", header: t("hr.reason"), render: (r) => <span className="text-subtle">{r.reason}</span> },
     { key: "amount", header: t("hr.amount"), render: (r) => <span dir="ltr" className={`font-bold tabnum ${kind === "deduction" ? "text-red" : "text-neon"}`}>{formatMinor(r.amountMinor)}</span> },
+    ...(isManager ? [{
+      key: "actions", header: "", align: "end" as const,
+      render: (r: PublicHrAmount) => (
+        <div className="flex items-center justify-end gap-1">
+          <button
+            type="button"
+            aria-label={t("common.edit")}
+            onClick={() => setEditing(r)}
+            className="grid size-8 place-items-center rounded-lg text-faint transition-colors hover:bg-white/5 hover:text-neon"
+          >
+            <Pencil className="size-4" />
+          </button>
+          <button
+            type="button"
+            aria-label={kind === "deduction" ? t("hr.deleteDeduction") : t("hr.deleteIncentive")}
+            onClick={() => setDeleteTarget(r)}
+            className="grid size-8 place-items-center rounded-lg text-faint transition-colors hover:bg-white/5 hover:text-red"
+          >
+            <Trash2 className="size-4" />
+          </button>
+        </div>
+      ),
+    }] : []),
   ];
 
   return (
@@ -435,19 +642,58 @@ function AmountTab({ kind, title, addLabel, emptyTitle }: { kind: "deduction" | 
           onSaved={() => { setAdding(false); fetchRows(); }}
         />
       )}
+      {editing && (
+        <AddAmountModal
+          kind={kind}
+          employees={employees}
+          editTarget={editing}
+          onClose={() => setEditing(null)}
+          onSaved={() => { setEditing(null); fetchRows(); }}
+        />
+      )}
+      <ConfirmDialog
+        open={deleteTarget !== null}
+        onClose={() => setDeleteTarget(null)}
+        title={kind === "deduction" ? t("hr.deleteDeduction") : t("hr.deleteIncentive")}
+        message={deleteTarget ? (kind === "deduction" ? t("hr.deleteDeductionConfirm") : t("hr.deleteIncentiveConfirm")) : ""}
+        confirmLabel={t("common.delete")}
+        tone="danger"
+        onConfirm={() => {
+          const target = deleteTarget;
+          setDeleteTarget(null);
+          if (!target) return;
+          void (async () => {
+            try {
+              if (kind === "deduction") await api.employeesHr.deleteDeduction(target.id);
+              else await api.employeesHr.deleteIncentive(target.id);
+              toast("success", t("hr.deletionDone"));
+              fetchRows();
+            } catch (err) {
+              toast("error", describeError(err, t));
+            }
+          })();
+        }}
+      />
     </>
   );
 }
 
-function AddAmountModal({ kind, employees, onClose, onSaved }: {
+function AddAmountModal({ kind, employees, editTarget, onClose, onSaved }: {
   kind: "deduction" | "incentive";
   employees: PublicEmployee[];
+  editTarget?: PublicHrAmount | null;
   onClose: () => void;
   onSaved: () => void;
 }) {
   const t = useT();
   const { toast } = useToast();
-  const [form, setForm] = useState({ employeeId: employees[0]?.id ?? "", amountMajor: "", reason: "", dateKey: todayKey() });
+  const isEdit = Boolean(editTarget);
+  const [form, setForm] = useState({
+    employeeId: editTarget?.employeeId ?? employees[0]?.id ?? "",
+    amountMajor: editTarget ? String(editTarget.amountMinor / 100) : "",
+    reason: editTarget?.reason ?? "",
+    dateKey: editTarget?.dateKey ?? todayKey(),
+  });
   const [busy, setBusy] = useState(false);
 
   const save = async () => {
@@ -455,10 +701,17 @@ function AddAmountModal({ kind, employees, onClose, onSaved }: {
     try {
       const amountMinor = Math.round(Number(form.amountMajor || 0) * 100);
       if (!form.employeeId || amountMinor <= 0 || form.reason.trim().length < 2) throw new Error("validation");
-      const input = { employeeId: form.employeeId, amountMinor, reason: form.reason, dateKey: form.dateKey };
-      if (kind === "deduction") await api.employeesHr.addDeduction(input);
-      else await api.employeesHr.addIncentive(input);
-      toast("success", kind === "deduction" ? t("hr.deductionCreated") : t("hr.incentiveCreated"));
+      if (isEdit && editTarget) {
+        const input = { id: editTarget.id, amountMinor, reason: form.reason, dateKey: form.dateKey };
+        if (kind === "deduction") await api.employeesHr.updateDeduction(input);
+        else await api.employeesHr.updateIncentive(input);
+        toast("success", kind === "deduction" ? t("hr.deductionUpdated") : t("hr.incentiveUpdated"));
+      } else {
+        const input = { employeeId: form.employeeId, amountMinor, reason: form.reason, dateKey: form.dateKey };
+        if (kind === "deduction") await api.employeesHr.addDeduction(input);
+        else await api.employeesHr.addIncentive(input);
+        toast("success", kind === "deduction" ? t("hr.deductionCreated") : t("hr.incentiveCreated"));
+      }
       onSaved();
     } catch (err) {
       toast("error", describeError(err, t));
@@ -468,10 +721,12 @@ function AddAmountModal({ kind, employees, onClose, onSaved }: {
   };
 
   return (
-    <Modal open onClose={onClose} title={kind === "deduction" ? t("hr.addDeduction") : t("hr.addIncentive")} widthClass="max-w-sm"
+    <Modal open onClose={onClose}
+      title={isEdit ? (kind === "deduction" ? t("hr.editDeduction") : t("hr.editIncentive")) : (kind === "deduction" ? t("hr.addDeduction") : t("hr.addIncentive"))}
+      widthClass="max-w-sm"
       footer={<><Button loading={busy} onClick={save}>{t("common.save")}</Button><Button variant="secondary" onClick={onClose}>{t("common.cancel")}</Button></>}>
       <div className="space-y-3.5">
-        <Select label={t("emp.fullName")} value={form.employeeId} onChange={(e) => setForm((f) => ({ ...f, employeeId: e.target.value }))} options={employees.map((e) => ({ value: e.id, label: e.fullName }))} />
+        <Select label={t("emp.fullName")} value={form.employeeId} onChange={(e) => setForm((f) => ({ ...f, employeeId: e.target.value }))} options={employees.map((e) => ({ value: e.id, label: e.fullName }))} disabled={isEdit} />
         <div className="grid grid-cols-2 gap-3">
           <Input label={t("hr.amount")} type="number" step="0.01" min={0} dir="ltr" value={form.amountMajor} onChange={(e) => setForm((f) => ({ ...f, amountMajor: e.target.value }))} />
           <Input label={t("hr.dateKey")} type="date" dir="ltr" value={form.dateKey} onChange={(e) => setForm((f) => ({ ...f, dateKey: e.target.value }))} />
@@ -484,64 +739,142 @@ function AddAmountModal({ kind, employees, onClose, onSaved }: {
 
 // ----------------------------- salary summary ----------------------------
 
-function SalarySummaryTab() {
+export function SalarySummaryTab() {
   const t = useT();
-  const [employees, setEmployees] = useState<PublicEmployee[]>([]);
-  const [empId, setEmpId] = useState("");
+  const { hasPermission } = useAuth();
+  const { toast } = useToast();
   const [month, setMonth] = useState(todayKey().slice(0, 7));
-  const [summary, setSummary] = useState<PublicSalarySummary | null>(null);
+  const [rows, setRows] = useState<SummaryRow[]>([]);
+  const [approving, setApproving] = useState(false);
+  const [payTarget, setPayTarget] = useState<{ id: string; name: string; netMinor: number } | null>(null);
+  const canManage = hasPermission("salaries.manage");
 
-  useEffect(() => {
-    api.employees.list({ includeInactive: false }).then((list) => {
-      setEmployees(list);
-      setEmpId((prev) => prev || list[0]?.id || "");
-    }).catch(console.error);
-  }, []);
+  interface SummaryRow {
+    employeeId: string;
+    employeeName: string;
+    baseMinor: number;
+    incentivesMinor: number;
+    deductionsMinor: number;
+    unpaidLeaveDays: number;
+    unpaidLeaveImpactMinor: number;
+    netMinor: number;
+    status: "none" | "pending" | "paid";
+    salaryId: string | null;
+  }
 
-  useEffect(() => {
-    if (!empId) { setSummary(null); return; }
-    api.employeesHr.monthlySalarySummary({ employeeId: empId, periodMonth: month }).then(setSummary).catch(() => setSummary(null));
-  }, [empId, month]);
+  const reload = useCallback(() => {
+    Promise.all([
+      api.employees.list({ includeInactive: false }).catch(() => []),
+      api.employees.listSalaries({ periodMonth: month }).catch(() => []),
+    ]).then(async ([emps, salaries]) => {
+      const byEmp: Record<string, { status: SummaryRow["status"]; salaryId: string | null }> = {};
+      for (const s of salaries) byEmp[s.employeeId] = { status: s.status, salaryId: s.id };
+      const summaries = await Promise.all(
+        emps.map((e) => api.employeesHr.monthlySalarySummary({ employeeId: e.id, periodMonth: month }).catch(() => null)),
+      );
+      setRows(emps.map((e, i) => {
+        const sum = summaries[i];
+        const rec = byEmp[e.id];
+        return {
+          employeeId: e.id,
+          employeeName: e.fullName,
+          baseMinor: sum?.baseMinor ?? 0,
+          incentivesMinor: sum?.incentivesMinor ?? 0,
+          deductionsMinor: sum?.deductionsMinor ?? 0,
+          unpaidLeaveDays: sum?.unpaidLeaveDays ?? 0,
+          unpaidLeaveImpactMinor: sum?.unpaidLeaveImpactMinor ?? 0,
+          netMinor: sum?.netMinor ?? 0,
+          status: rec?.status ?? "none",
+          salaryId: rec?.salaryId ?? null,
+        };
+      }));
+    });
+  }, [month]);
+  useEffect(() => { reload(); }, [reload]);
+
+  const approve = async () => {
+    setApproving(true);
+    try {
+      const res = await api.employeesHr.ensureSalariesForMonth({ periodMonth: month });
+      toast("success", res.created > 0 ? t("hr.salariesGenerated", { count: res.created }) : t("hr.salaryAlreadyApproved"));
+      reload();
+    } catch (err) {
+      toast("error", describeError(err, t));
+    } finally {
+      setApproving(false);
+    }
+  };
+
+  const doPay = async () => {
+    if (!payTarget) return;
+    try {
+      await api.employees.paySalary(payTarget.id);
+      toast("success", t("emp.paidToast"));
+      setPayTarget(null);
+      reload();
+    } catch (err) {
+      toast("error", describeError(err, t));
+    }
+  };
+
+  const totalNet = rows.reduce((sum, r) => sum + r.netMinor, 0);
+
+  const columns: Column<SummaryRow>[] = [
+    { key: "emp", header: t("emp.fullName"), render: (r) => <span className="font-bold">{r.employeeName}</span> },
+    { key: "base", header: t("emp.base"), render: (r) => <span dir="ltr" className="tabnum">{formatMinor(r.baseMinor)}</span> },
+    { key: "incentives", header: t("hr.incentivesTotal"), render: (r) => <span dir="ltr" className="tabnum text-neon">{formatMinor(r.incentivesMinor)}</span> },
+    { key: "deductions", header: t("hr.deductionsTotal"), render: (r) => <span dir="ltr" className="tabnum text-red">{formatMinor(r.deductionsMinor + r.unpaidLeaveImpactMinor)}</span> },
+    { key: "net", header: t("hr.netSalary"), render: (r) => <span dir="ltr" className="font-bold tabnum text-neon">{formatMinor(r.netMinor)}</span> },
+    {
+      key: "status", header: t("common.status"), render: (r) => r.status === "paid"
+        ? <Badge variant="success" dot>{t("emp.paid")}</Badge>
+        : r.status === "pending" ? <Badge variant="warning" dot>{t("emp.pending")}</Badge>
+        : <Badge variant="neutral" dot>{t("hr.salaryNotGenerated")}</Badge>,
+    },
+    ...(canManage ? [{
+      key: "actions", header: "", align: "end" as const,
+      render: (r: SummaryRow) => r.status === "pending" && r.salaryId ? (
+        <Button size="sm" variant="secondary" onClick={() => setPayTarget({ id: r.salaryId!, name: r.employeeName, netMinor: r.netMinor })}>
+          <HandCoins className="size-3.5" />{t("emp.paySalary")}
+        </Button>
+      ) : null,
+    }] : []),
+  ];
 
   return (
-    <Card>
-      <CardHeader title={t("hr.tabSalarySummary")} action={
-        <div className="flex items-center gap-2">
-          <Input type="month" dir="ltr" value={month} onChange={(e: ChangeEvent<HTMLInputElement>) => setMonth(e.target.value)} className="w-36" />
-          <Select value={empId} onChange={(e) => setEmpId(e.target.value)} options={employees.map((e) => ({ value: e.id, label: e.fullName }))} className="w-44" />
-        </div>
-      } />
-      {!summary ? (
-        <EmptyState icon={<Wallet />} title={t("hr.noAttendanceToday")} />
-      ) : (
-        <div className="space-y-3 p-5">
-          <div className="flex items-center justify-between">
-            <span className="font-bold">{summary.employeeName}</span>
-            {summary.alreadyRecorded && <Badge variant="neutral">{t("hr.alreadyRecordedSalary")}</Badge>}
+    <>
+      <Card>
+        <CardHeader title={t("hr.tabSalarySummary")} action={
+          <div className="flex items-center gap-2">
+            {canManage && <Button size="sm" loading={approving} onClick={() => void approve()}><Check className="size-3.5" />{t("hr.approveSalaries")}</Button>}
+            <Input type="month" dir="ltr" value={month} onChange={(e: ChangeEvent<HTMLInputElement>) => setMonth(e.target.value)} className="w-36" />
           </div>
-          <div className="grid grid-cols-2 gap-3">
-            <SummaryTile icon={Banknote} label={t("hr.baseSalary")} value={formatMinor(summary.baseMinor)} />
-            <SummaryTile icon={CircleDollarSign} label={t("hr.incentivesTotal")} value={formatMinor(summary.incentivesMinor)} />
-            <SummaryTile icon={Minus} label={t("hr.deductionsTotal")} value={formatMinor(summary.deductionsMinor)} />
-            <SummaryTile icon={CalendarDays} label={t("hr.attendedDays")} value={String(summary.attendedDays)} />
-          </div>
-          <p className="flex items-center justify-between rounded-xl border border-line bg-panel px-3.5 py-2.5 text-sm">
-            <span>{t("hr.unpaidLeaveImpact")} ({summary.unpaidLeaveDays} يوم)</span>
-            <span dir="ltr" className="font-bold tabnum text-red">-{formatMinor(summary.unpaidLeaveImpactMinor)}</span>
-          </p>
-          <p className="flex items-center justify-between border-t border-line pt-3 text-lg font-extrabold">
-            <span>{t("hr.netSalary")}</span>
-            <span dir="ltr" className="tabnum text-neon">{formatMinor(summary.netMinor)}</span>
-          </p>
-        </div>
-      )}
-    </Card>
+        } />
+        {rows.length === 0 ? (
+          <EmptyState icon={<Wallet />} title={t("hr.noAttendanceToday")} />
+        ) : (
+          <DataTable columns={columns} data={rows} rowKey={(r) => r.employeeId} />
+        )}
+      </Card>
+      <div className="flex items-center justify-between rounded-xl border border-line bg-surface px-4 py-3">
+        <span className="text-sm font-bold">{t("hr.monthlySalariesTotal")}</span>
+        <span dir="ltr" className="text-lg font-extrabold tabnum text-neon">{formatMinor(totalNet)}</span>
+      </div>
+      <ConfirmDialog
+        open={payTarget !== null}
+        onClose={() => setPayTarget(null)}
+        title={t("emp.paySalary")}
+        message={payTarget ? `${payTarget.name} — ${month} — ${formatMinor(payTarget.netMinor)}` : ""}
+        confirmLabel={t("common.confirm")}
+        onConfirm={() => void doPay()}
+      />
+    </>
   );
 }
 
 // ------------------------------- activity ---------------------------------
 
-function ActivityTab() {
+export function ActivityTab() {
   const t = useT();
   const [employees, setEmployees] = useState<PublicEmployee[]>([]);
   const [empId, setEmpId] = useState("");
@@ -612,6 +945,62 @@ function ActivityTab() {
               </ul>
             )}
           </div>
+        </div>
+      )}
+    </Card>
+  );
+}
+
+export function MonthlyHoursTab() {
+  const t = useT();
+  const [employees, setEmployees] = useState<PublicEmployee[]>([]);
+  const [empId, setEmpId] = useState("");
+  const [month, setMonth] = useState(todayKey().slice(0, 7));
+  const [data, setData] = useState<{ employeeName: string; days: EmployeeDailyWorked[]; totalMinutes: number } | null>(null);
+
+  useEffect(() => {
+    api.employees.list({ includeInactive: false }).then((list) => {
+      setEmployees(list);
+      setEmpId((prev) => prev || list[0]?.id || "");
+    }).catch(console.error);
+  }, []);
+
+  useEffect(() => {
+    if (!empId) { setData(null); return; }
+    api.employeesHr.employeeMonthlyHours({ employeeId: empId, month }).then((res) => {
+      setData({
+        employeeName: res.employeeName,
+        days: res.days ?? [],
+        totalMinutes: (res.days ?? []).reduce((sum, d) => sum + d.workedMinutes, 0),
+      });
+    }).catch(() => setData(null));
+  }, [empId, month]);
+
+  const columns: Column<EmployeeDailyWorked>[] = [
+    { key: "date", header: t("hr.dateKey"), render: (r) => <span dir="ltr" className="tabnum">{r.dateKey}</span> },
+    { key: "in", header: t("hr.clockInAt"), render: (r) => <span dir="ltr" className="tabnum">{r.clockInAt ? r.clockInAt.slice(11, 19) : "—"}</span> },
+    { key: "out", header: t("hr.clockOutAt"), render: (r) => r.clockOutAt ? <span dir="ltr" className="tabnum">{r.clockOutAt.slice(11, 19)}</span> : <span className="text-faint">—</span> },
+    { key: "worked", header: t("hr.workedHours"), render: (r) => r.workedMinutes > 0 ? <span dir="ltr" className="font-bold tabnum">{hoursLabel(r.workedMinutes)}</span> : <span>—</span> },
+    { key: "late", header: t("common.status"), render: (r) => r.isLate ? <Badge variant="danger">{t("hr.late")}</Badge> : <Badge variant="success">{t("hr.onTime")}</Badge> },
+  ];
+
+  return (
+    <Card>
+      <CardHeader title={t("hr.monthlyHours")} action={
+        <div className="flex items-center gap-2">
+          <Input type="month" dir="ltr" value={month} onChange={(e) => setMonth(e.target.value)} className="w-36" />
+          <Select value={empId} onChange={(e) => setEmpId(e.target.value)} options={employees.map((e) => ({ value: e.id, label: e.fullName }))} className="w-44" />
+        </div>
+      } />
+      {!data ? (
+        <EmptyState icon={<Clock3 />} title={t("hr.noAttendanceToday")} />
+      ) : (
+        <div className="p-5">
+          <div className="mb-4 flex items-center justify-between rounded-xl border border-line bg-surface px-4 py-3">
+            <span className="font-bold">{data.employeeName}</span>
+            <span dir="ltr" className="text-lg font-extrabold tabnum text-neon">{hoursLabel(data.totalMinutes)}</span>
+          </div>
+          <DataTable columns={columns} data={data.days} rowKey={(d) => d.dateKey} />
         </div>
       )}
     </Card>

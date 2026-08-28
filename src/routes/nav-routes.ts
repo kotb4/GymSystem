@@ -3,7 +3,8 @@ import type { Permission } from "@/core/permissions";
 export interface NavRoute {
   path: string;
   key: string;
-  permission: Permission;
+  permission?: Permission;
+  permissions?: Permission[];
 }
 
 export const NAV_ROUTES: NavRoute[] = [
@@ -16,8 +17,8 @@ export const NAV_ROUTES: NavRoute[] = [
   { path: "/classes", key: "nav.classes", permission: "classes.view" },
   { path: "/expenses", key: "nav.expenses", permission: "expenses.view" },
   { path: "/cash", key: "nav.cash", permission: "payments.view" },
-  { path: "/employees", key: "nav.employees", permission: "employees.view" },
-  { path: "/hr", key: "nav.hr", permission: "hr.view" },
+  { path: "/employees", key: "nav.employees", permissions: ["employees.view", "hr.view"] },
+  { path: "/employee-checkin", key: "nav.employeeCheckIn", permission: "hr.employee_checkin" },
   { path: "/crm", key: "nav.crm", permission: "crm.send" },
   { path: "/reports", key: "nav.reports", permission: "reports.view" },
   { path: "/trainers", key: "nav.trainers", permission: "trainers.view" },

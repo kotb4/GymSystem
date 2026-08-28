@@ -209,13 +209,14 @@ function publicLeave(r: Row, requestedName: string, approvedName: string | null)
   };
 }
 
-/** Count approved annual-leave days of an employee consumed in `year`. */
-function annualLeaveUsedDays(db: Db, employeeId: string, year: string): number {
+/** Count approved leave days of an employee of `type` consumed in `year`. */
+function leaveUsedDays(db: Db, employeeId: string, type: LeaveType, year: string): number {
+  if (type === "emergency") return 0;
   const rows = db.all<Row>(
     `SELECT start_date, end_date FROM employee_leaves
-     WHERE employee_id = ? AND leave_type = 'annual' AND status = 'approved'
+     WHERE employee_id = ? AND leave_type = ? AND status = 'approved'
        AND (start_date LIKE ? OR end_date LIKE ? OR (start_date <= ? AND end_date >= ?))`,
-    [employeeId, `${year}-%`, `${year}-%`, `${year}-12-31`, `${year}-01-01`],
+    [employeeId, type, `${year}-%`, `${year}-%`, `${year}-12-31`, `${year}-01-01`],
   );
   let total = 0;
   for (const row of rows) {
@@ -226,6 +227,30 @@ function annualLeaveUsedDays(db: Db, employeeId: string, year: string): number {
     if (os <= oe) total += diffDaysKeys(os, oe) + 1;
   }
   return total;
+}
+
+const DEFAULT_ANNUAL = 21;
+const DEFAULT_SICK = 12;
+
+/**
+ * Leave entitlement (days) for a given type for the year. Annual/sick carry a
+ * numeric quota; an employee-specific value overrides the global default.
+ * `unpaid` gets a quota only when explicitly configured on the employee;
+ * otherwise it (and `emergency`) are unlimited.
+ */
+function leaveEntitlement(db: Db, employee: Row, type: LeaveType): number {
+  switch (type) {
+    case "annual":
+      return Math.max(0, Math.round(
+        employee.annual_leave_days != null ? num(employee.annual_leave_days) : settingNum(db, "hr.annual_leave_days", DEFAULT_ANNUAL),
+      ));
+    case "sick":
+      return Math.max(0, Math.round(employee.sick_leave_days != null ? num(employee.sick_leave_days) : DEFAULT_SICK));
+    case "unpaid":
+      return employee.unpaid_leave_days != null ? Math.max(0, Math.round(num(employee.unpaid_leave_days))) : Number.POSITIVE_INFINITY;
+    case "emergency":
+      return Number.POSITIVE_INFINITY;
+  }
 }
 
 /** Total leave days (overlapping the given month) of an approved leave. */
@@ -431,7 +456,7 @@ export function listAttendance(
     }
   } else {
     const mine = db.first<Row>("SELECT id FROM employees WHERE user_id = ?", [actor.userId]);
-    if (!mine) return [];
+    if (!mine) throw errValidation("errors.hrNoEmployeeProfile");
     conditions.push("a.employee_id = ?");
     params.push(str(mine.id));
   }
@@ -450,26 +475,39 @@ export function listAttendance(
 // Leaves
 // ---------------------------------------------------------------------------
 
-/** Annual leave entitlement (days) for `year`, from settings or default 21. */
+/** Annual leave entitlement (days) of `employee` for `year` (per-employee > global default). */
 export function annualLeaveEntitlement(db: Db, year: string): number {
   void year;
-  return Math.max(0, Math.round(settingNum(db, "hr.annual_leave_days", 21)));
+  return Math.max(0, Math.round(settingNum(db, "hr.annual_leave_days", DEFAULT_ANNUAL)));
+}
+
+export interface LeaveBalance {
+  type: LeaveType;
+  entitlement: number;
+  used: number;
+  remaining: number;
+  limited: boolean;
 }
 
 export function getLeaveBalance(
   db: Db,
   actor: ServiceActor,
   input: { employeeId?: string | null; year?: string | null },
-): { entitlement: number; used: number; remaining: number } {
+): LeaveBalance[] {
   requirePermission(actor, "hr.view");
   const manage = roleHasPermission(actor.roleId, "hr.manage");
   const employee = resolveTargetEmployee(db, actor, input.employeeId ?? null, manage);
   assertEmployeeScopedAccess(actor, employee);
   const year = input.year?.trim() || todayKey().slice(0, 4);
   if (!/^\d{4}$/.test(year)) throw errValidation("errors.invalidPeriod");
-  const entitlement = annualLeaveEntitlement(db, year);
-  const used = annualLeaveUsedDays(db, str(employee.id), year);
-  return { entitlement, used, remaining: Math.max(0, entitlement - used) };
+  const types: LeaveType[] = ["annual", "sick", "unpaid", "emergency"];
+  return types.map((type) => {
+    const entitlement = leaveEntitlement(db, employee, type);
+    const limited = Number.isFinite(entitlement);
+    const used = leaveUsedDays(db, str(employee.id), type, year);
+    const remaining = limited ? Math.max(0, entitlement - used) : Number.POSITIVE_INFINITY;
+    return { type, entitlement: limited ? entitlement : 0, used, remaining, limited };
+  });
 }
 
 export async function requestLeave(
@@ -490,11 +528,13 @@ export async function requestLeave(
   }
 
   const year = start.slice(0, 4);
-  if (input.leaveType === "annual") {
-    const days = diffDaysKeys(start, end) + 1;
-    const balance = getLeaveBalance(db, actor, { employeeId: str(employee.id), year });
-    if (days > balance.remaining) {
-      throw errConflict("errors.hrLeaveNoBalance", { remaining: String(balance.remaining) });
+  const days = diffDaysKeys(start, end) + 1;
+  const entitlement = leaveEntitlement(db, employee, input.leaveType);
+  if (Number.isFinite(entitlement)) {
+    const used = leaveUsedDays(db, str(employee.id), input.leaveType, year);
+    const remaining = Math.max(0, entitlement - used);
+    if (days > remaining) {
+      throw errConflict("errors.hrLeaveNoBalance", { remaining: String(remaining) });
     }
   }
 
@@ -570,7 +610,7 @@ export function listLeaves(
     }
   } else {
     const mine = db.first<Row>("SELECT id FROM employees WHERE user_id = ?", [actor.userId]);
-    if (!mine) return [];
+    if (!mine) throw errValidation("errors.hrNoEmployeeProfile");
     conditions.push("l.employee_id = ?");
     params.push(str(mine.id));
   }
@@ -600,12 +640,16 @@ export async function decideLeave(
   const employee = getEmployee(db, str(leave.employee_id));
   assertEmployeeScopedAccess(actor, employee);
 
-  // re-check annual balance on approval
-  if (input.approve && str(leave.leave_type) === "annual") {
-    const year = str(leave.start_date).slice(0, 4);
-    const days = diffDaysKeys(str(leave.start_date), str(leave.end_date)) + 1;
-    if (days > annualLeaveEntitlement(db, year) - annualLeaveUsedDays(db, str(employee.id), year)) {
-      throw errConflict("errors.hrLeaveNoBalance");
+  // re-check per-type balance on approval
+  if (input.approve) {
+    const type = str(leave.leave_type) as LeaveType;
+    const entitlement = leaveEntitlement(db, employee, type);
+    if (Number.isFinite(entitlement)) {
+      const year = str(leave.start_date).slice(0, 4);
+      const days = diffDaysKeys(str(leave.start_date), str(leave.end_date)) + 1;
+      if (days > Math.max(0, entitlement - leaveUsedDays(db, str(employee.id), type, year))) {
+        throw errConflict("errors.hrLeaveNoBalance");
+      }
     }
   }
 
@@ -661,6 +705,61 @@ export async function cancelLeave(db: Db, actor: ServiceActor, leaveId: string):
   return withRequestedName(db, updated, actor);
 }
 
+/** Edit a still-pending leave request (owner/manager can edit any, others only their own). */
+export async function updateLeave(
+  db: Db,
+  actor: ServiceActor,
+  input: { leaveId: string; leaveType: LeaveType; startDate: string; endDate: string; reason?: string | null },
+): Promise<PublicLeave> {
+  requirePermission(actor, "hr.view");
+  const leave = db.first<Row>(
+    "SELECT l.*, e.full_name AS employee_name FROM employee_leaves l JOIN employees e ON e.id = l.employee_id WHERE l.id = ?",
+    [input.leaveId],
+  );
+  if (!leave) throw errNotFound("errors.hrLeaveNotFound");
+  const manage = roleHasPermission(actor.roleId, "hr.manage");
+  const isMine = str(leave.requested_by) === actor.userId;
+  const employee = getEmployee(db, str(leave.employee_id));
+  assertEmployeeScopedAccess(actor, employee);
+  if (!manage && !isMine) throw errForbidden();
+  if (str(leave.status) !== "pending") throw errConflict("errors.hrLeaveNotEditable");
+
+  const start = assertDateKey(input.startDate);
+  const end = assertDateKey(input.endDate);
+  if (end < start) throw errValidation("errors.hrLeaveRangeInvalid");
+  if (!["annual", "sick", "unpaid", "emergency"].includes(input.leaveType)) {
+    throw errValidation("errors.hrLeaveTypeInvalid");
+  }
+  const year = start.slice(0, 4);
+  const days = diffDaysKeys(start, end) + 1;
+  const entitlement = leaveEntitlement(db, employee, input.leaveType);
+  if (Number.isFinite(entitlement)) {
+    const used = leaveUsedDays(db, str(employee.id), input.leaveType, year);
+    const remaining = Math.max(0, entitlement - used);
+    if (days > remaining) {
+      throw errConflict("errors.hrLeaveNoBalance", { remaining: String(remaining) });
+    }
+  }
+
+  await db.transaction(async () => {
+    db.run(
+      "UPDATE employee_leaves SET leave_type = ?, start_date = ?, end_date = ?, reason = ?, updated_at = ? WHERE id = ?",
+      [input.leaveType, start, end, input.reason?.trim() || null, nowStamp(), input.leaveId],
+    );
+    recordAudit(db, actor, "EMPLOYEE_LEAVE_UPDATED", "employee_leave", input.leaveId, {
+      employee: str(employee.full_name),
+      leaveType: input.leaveType,
+      start,
+      end,
+    });
+  });
+  const updated = db.first<Row>(
+    "SELECT l.*, e.full_name AS employee_name FROM employee_leaves l JOIN employees e ON e.id = l.employee_id WHERE l.id = ?",
+    [input.leaveId],
+  )!;
+  return withRequestedName(db, updated, actor);
+}
+
 // ---------------------------------------------------------------------------
 // Deductions & incentives
 // ---------------------------------------------------------------------------
@@ -690,7 +789,7 @@ function listHrAmounts(
     }
   } else {
     const mine = db.first<Row>("SELECT id FROM employees WHERE user_id = ?", [actor.userId]);
-    if (!mine) return [];
+    if (!mine) throw errValidation("errors.hrNoEmployeeProfile");
     conditions.push("d.employee_id = ?");
     params.push(str(mine.id));
   }
@@ -776,6 +875,92 @@ export async function addIncentive(
   return addHrAmount(db, actor, "employee_incentives", "EMPLOYEE_INCENTIVE_ADDED", input);
 }
 
+async function updateHrAmount(
+  db: Db,
+  actor: ServiceActor,
+  table: "employee_deductions" | "employee_incentives",
+  action: "EMPLOYEE_DEDUCTION_UPDATED" | "EMPLOYEE_INCENTIVE_UPDATED",
+  input: { id: string; amountMinor: number; reason: string; dateKey?: string | null },
+): Promise<PublicHrAmount> {
+  requirePermission(actor, "hr.manage");
+  const row = db.first<Row>(`SELECT * FROM ${table} WHERE id = ?`, [input.id]);
+  if (!row) throw errNotFound("errors.hrAmountNotFound");
+  const employee = getEmployee(db, str(row.employee_id));
+  assertEmployeeScopedAccess(actor, employee);
+
+  assertNonNegativeInteger(Math.round(input.amountMinor), "errors.finance.invalidAmount");
+  const amount = Math.round(input.amountMinor);
+  if (amount <= 0) throw errValidation("errors.finance.invalidAmount");
+  const reason = input.reason.trim();
+  if (reason.length < 2) throw errValidation("errors.hrReasonRequired");
+  const dateKey = input.dateKey ? assertDateKey(input.dateKey) : todayKey();
+
+  await db.transaction(async () => {
+    db.run(`UPDATE ${table} SET amount_minor = ?, reason = ?, date_key = ? WHERE id = ?`, [
+      amount,
+      reason,
+      dateKey,
+      input.id,
+    ]);
+    recordAudit(db, actor, action, table, input.id, {
+      employee: str(employee.full_name),
+      amountMinor: amount,
+      reason,
+      dateKey,
+    });
+  });
+  return {
+    id: input.id,
+    employeeId: str(row.employee_id),
+    employeeName: str(employee.full_name),
+    amountMinor: amount,
+    reason,
+    dateKey,
+  };
+}
+
+export async function updateDeduction(
+  db: Db,
+  actor: ServiceActor,
+  input: { id: string; amountMinor: number; reason: string; dateKey?: string | null },
+): Promise<PublicHrAmount> {
+  return updateHrAmount(db, actor, "employee_deductions", "EMPLOYEE_DEDUCTION_UPDATED", input);
+}
+
+export async function updateIncentive(
+  db: Db,
+  actor: ServiceActor,
+  input: { id: string; amountMinor: number; reason: string; dateKey?: string | null },
+): Promise<PublicHrAmount> {
+  return updateHrAmount(db, actor, "employee_incentives", "EMPLOYEE_INCENTIVE_UPDATED", input);
+}
+
+async function deleteHrAmount(
+  db: Db,
+  actor: ServiceActor,
+  table: "employee_deductions" | "employee_incentives",
+  action: "EMPLOYEE_DEDUCTION_DELETED" | "EMPLOYEE_INCENTIVE_DELETED",
+  id: string,
+): Promise<void> {
+  requirePermission(actor, "hr.manage");
+  const row = db.first<Row>(`SELECT * FROM ${table} WHERE id = ?`, [id]);
+  if (!row) throw errNotFound("errors.hrAmountNotFound");
+  const employee = getEmployee(db, str(row.employee_id));
+  assertEmployeeScopedAccess(actor, employee);
+  await db.transaction(async () => {
+    db.run(`DELETE FROM ${table} WHERE id = ?`, [id]);
+    recordAudit(db, actor, action, table, id, { employee: str(employee.full_name) });
+  });
+}
+
+export async function deleteDeduction(db: Db, actor: ServiceActor, id: string): Promise<void> {
+  return deleteHrAmount(db, actor, "employee_deductions", "EMPLOYEE_DEDUCTION_DELETED", id);
+}
+
+export async function deleteIncentive(db: Db, actor: ServiceActor, id: string): Promise<void> {
+  return deleteHrAmount(db, actor, "employee_incentives", "EMPLOYEE_INCENTIVE_DELETED", id);
+}
+
 // ---------------------------------------------------------------------------
 // Monthly salary summary
 // ---------------------------------------------------------------------------
@@ -799,26 +984,7 @@ export function monthlySalarySummary(
   const month = input.periodMonth.trim();
   if (!MONTH_RE.test(month)) throw errValidation("errors.invalidPeriod");
 
-  const baseMinor = Math.round(num(employee.salary_base_minor ?? employee.monthly_salary_minor, 0));
-  const incentivesMinor = num(
-    db.scalar("SELECT COALESCE(SUM(amount_minor),0) FROM employee_incentives WHERE employee_id = ? AND substr(date_key,1,7) = ?", [input.employeeId, month]),
-  );
-  const deductionsMinor = num(
-    db.scalar("SELECT COALESCE(SUM(amount_minor),0) FROM employee_deductions WHERE employee_id = ? AND substr(date_key,1,7) = ?", [input.employeeId, month]),
-  );
-
-  // unpaid-leave influence
-  const unpaidRows = db.all<Row>(
-    `SELECT start_date, end_date FROM employee_leaves
-     WHERE employee_id = ? AND leave_type = 'unpaid' AND status = 'approved'
-       AND (start_date LIKE ? OR end_date LIKE ? OR (start_date <= ? AND end_date >= ?))`,
-    [input.employeeId, `${month}-%`, `${month}-%`, `${month}-31`, `${month}-01`],
-  );
-  const unpaidLeaveDays = unpaidRows.reduce((sum, r) => sum + leaveDaysInMonth(str(r.start_date), str(r.end_date), month), 0);
-
-  const salaryType = str(employee.salary_type) || "monthly";
-  const dailyRate = salaryType === "daily" ? baseMinor : Math.round(baseMinor / 30);
-  const unpaidLeaveImpactMinor = unpaidLeaveDays * dailyRate;
+  const amounts = salaryAmounts(db, employee, month);
 
   const attendedDays = num(
     db.scalar("SELECT COUNT(*) FROM employee_attendance WHERE employee_id = ? AND substr(date_key,1,7) = ? AND clock_out_at IS NOT NULL AND worked_minutes > 0", [input.employeeId, month]),
@@ -829,21 +995,117 @@ export function monthlySalarySummary(
     [input.employeeId, month],
   );
 
-  const netMinor = Math.max(0, baseMinor + incentivesMinor - deductionsMinor - unpaidLeaveImpactMinor);
-
   return {
     employeeId: input.employeeId,
     employeeName: str(employee.full_name),
     periodMonth: month,
+    baseMinor: amounts.baseMinor,
+    incentivesMinor: amounts.incentivesMinor,
+    deductionsMinor: amounts.deductionsMinor,
+    unpaidLeaveDays: amounts.unpaidLeaveDays,
+    unpaidLeaveImpactMinor: amounts.unpaidLeaveImpactMinor,
+    attendedDays,
+    netMinor: amounts.netMinor,
+    alreadyRecorded,
+  };
+}
+
+/** Derive the monthly amount components used for both the summary and payroll rows. */
+function salaryAmounts(
+  db: Db,
+  employee: Row,
+  month: string,
+): {
+  baseMinor: number;
+  incentivesMinor: number;
+  deductionsMinor: number;
+  unpaidLeaveDays: number;
+  unpaidLeaveImpactMinor: number;
+  netMinor: number;
+} {
+  const employeeId = str(employee.id);
+  const baseMinor = Math.round(num(employee.salary_base_minor ?? employee.monthly_salary_minor, 0));
+  const incentivesMinor = num(
+    db.scalar("SELECT COALESCE(SUM(amount_minor),0) FROM employee_incentives WHERE employee_id = ? AND substr(date_key,1,7) = ?", [employeeId, month]),
+  );
+  const deductionsMinor = num(
+    db.scalar("SELECT COALESCE(SUM(amount_minor),0) FROM employee_deductions WHERE employee_id = ? AND substr(date_key,1,7) = ?", [employeeId, month]),
+  );
+
+  const unpaidRows = db.all<Row>(
+    `SELECT start_date, end_date FROM employee_leaves
+     WHERE employee_id = ? AND leave_type = 'unpaid' AND status = 'approved'
+       AND (start_date LIKE ? OR end_date LIKE ? OR (start_date <= ? AND end_date >= ?))`,
+    [employeeId, `${month}-%`, `${month}-%`, `${month}-31`, `${month}-01`],
+  );
+  const unpaidLeaveDays = unpaidRows.reduce((sum, r) => sum + leaveDaysInMonth(str(r.start_date), str(r.end_date), month), 0);
+
+  const salaryType = str(employee.salary_type) || "monthly";
+  const dailyRate = salaryType === "daily" ? baseMinor : Math.round(baseMinor / 30);
+  const unpaidLeaveImpactMinor = unpaidLeaveDays * dailyRate;
+
+  return {
     baseMinor,
     incentivesMinor,
     deductionsMinor,
     unpaidLeaveDays,
     unpaidLeaveImpactMinor,
-    attendedDays,
-    netMinor,
-    alreadyRecorded,
+    netMinor: Math.max(0, baseMinor + incentivesMinor - deductionsMinor - unpaidLeaveImpactMinor),
   };
+}
+
+/**
+ * Auto-generate pending salary rows for every active employee that does not yet
+ * have a row for `periodMonth`, deriving base + incentives − deductions − unpaid
+ * leave impact (same math as the monthly summary). Idempotent; never overwrites
+ * existing rows. Returns the number of rows created.
+ */
+export async function ensureSalariesForMonth(
+  db: Db,
+  actor: ServiceActor,
+  input: { periodMonth: string },
+): Promise<{ created: number; periodMonth: string }> {
+  requirePermission(actor, "salaries.manage");
+  const month = input.periodMonth.trim();
+  if (!MONTH_RE.test(month)) throw errValidation("errors.invalidPeriod");
+
+  const employees = db.all<Row>(
+    `SELECT * FROM employees WHERE is_active = 1 AND id NOT IN (
+       SELECT employee_id FROM salaries WHERE period_month = ?
+     )`,
+    [month],
+  );
+
+  let created = 0;
+  await db.transaction(async () => {
+    for (const emp of employees) {
+      assertEmployeeScopedAccess(actor, emp);
+      const amounts = salaryAmounts(db, emp, month);
+      const id = crypto.randomUUID();
+      db.run(
+        "INSERT INTO salaries (id, employee_id, period_month, base_amount_minor, bonus_minor, deduction_minor, net_amount_minor, method_code, status, notes, created_by, created_at, updated_at)\nVALUES (?, ?, ?, ?, ?, ?, ?, 'cash', 'pending', 'auto', ?, ?, ?)",
+        [
+          id,
+          str(emp.id),
+          month,
+          amounts.baseMinor,
+          amounts.incentivesMinor,
+          amounts.deductionsMinor + amounts.unpaidLeaveImpactMinor,
+          amounts.netMinor,
+          actor.userId,
+          nowStamp(),
+          nowStamp(),
+        ],
+      );
+      recordAudit(db, actor, "SALARY_GENERATED", "salary", id, {
+        employee: str(emp.full_name),
+        period: month,
+        netMinor: amounts.netMinor,
+      });
+      created++;
+    }
+  });
+  return { created, periodMonth: month };
 }
 
 // ---------------------------------------------------------------------------
@@ -1026,4 +1288,206 @@ export function employeeDailyActivity(
     totals,
     entries,
   };
+}
+
+// ---------------------------------------------------------------------------
+// Employee barcodes & worker self check-in/out
+// ---------------------------------------------------------------------------
+
+const EMP_BARCODE_RE = /^[A-Za-z0-9-]{4,32}$/;
+function normalizeBarcode(value: string): string {
+  return value.trim().toUpperCase();
+}
+
+/** Assign (or clear) a unique barcode to an employee. Manager/owner only. */
+export async function setEmployeeBarcode(
+  db: Db,
+  actor: ServiceActor,
+  input: { employeeId: string; barcode?: string | null },
+): Promise<{ employeeId: string; barcode: string | null }> {
+  requirePermission(actor, "employees.manage");
+  const employee = getEmployee(db, input.employeeId);
+  assertEmployeeScopedAccess(actor, employee);
+
+  let barcode: string | null = null;
+  if (input.barcode != null && input.barcode.trim() !== "") {
+    barcode = normalizeBarcode(input.barcode);
+    if (!EMP_BARCODE_RE.test(barcode)) throw errValidation("errors.invalidBarcode");
+    const dup = db.first(
+      "SELECT id FROM employees WHERE barcode = ? AND id != ?",
+      [barcode, input.employeeId],
+    );
+    if (dup) throw errConflict("errors.barcodeTaken");
+  }
+
+  await db.transaction(async () => {
+    db.run("UPDATE employees SET barcode = ?, updated_at = ? WHERE id = ?", [barcode, nowStamp(), input.employeeId]);
+    recordAudit(db, actor, "EMPLOYEE_BARCODE_SET", "employee", input.employeeId, {
+      employee: str(employee.full_name),
+      barcode,
+    });
+  });
+  return { employeeId: input.employeeId, barcode };
+}
+
+function findEmployeeByBarcode(db: Db, barcode: string): Row {
+  const normalized = normalizeBarcode(barcode);
+  if (!EMP_BARCODE_RE.test(normalized)) throw errValidation("errors.invalidBarcode");
+  const employee = db.first<Row>("SELECT * FROM employees WHERE barcode = ? AND is_active = 1", [normalized]);
+  if (!employee) throw errNotFound("errors.employeeBarcodeUnknown");
+  return employee;
+}
+
+/** Worker self check-in by scanning their own barcode. */
+export async function clockInByBarcode(
+  db: Db,
+  actor: ServiceActor,
+  input: { barcode: string; at?: string | null; dateKey?: string | null; notes?: string | null },
+): Promise<PublicAttendance> {
+  requirePermission(actor, "hr.view");
+  const employee = findEmployeeByBarcode(db, input.barcode);
+  const dateKey = input.dateKey ? assertDateKey(input.dateKey) : todayKey();
+  const at = input.at?.trim() || nowStamp();
+
+  const existing = db.first<Row>(
+    "SELECT * FROM employee_attendance WHERE employee_id = ? AND date_key = ?",
+    [str(employee.id), dateKey],
+  );
+  if (existing) throw errConflict("errors.hrAlreadyClockedIn");
+  if (dateKey > todayKey()) throw errValidation("errors.hrDateFuture");
+
+  const id = crypto.randomUUID();
+  await db.transaction(async () => {
+    db.run(
+      "INSERT INTO employee_attendance (id, employee_id, date_key, clock_in_at, clock_out_at, worked_minutes, is_late, notes, created_by, created_at, updated_at)\nVALUES (?, ?, ?, ?, NULL, 0, ?, ?, ?, ?, ?)",
+      [id, str(employee.id), dateKey, at, isLateFor(db, at) ? 1 : 0, input.notes?.trim() || null, actor.userId, nowStamp(), nowStamp()],
+    );
+    recordAudit(db, actor, "EMPLOYEE_ATTENDANCE_IN", "employee_attendance", id, {
+      employee: str(employee.full_name),
+      dateKey,
+      at,
+    });
+  });
+  return mapAttendance(db.first<Row>("SELECT * FROM employee_attendance WHERE id = ?", [id])!, str(employee.full_name));
+}
+
+/** Worker self check-out by scanning their own barcode. */
+export async function clockOutByBarcode(
+  db: Db,
+  actor: ServiceActor,
+  input: { barcode: string; at?: string | null; dateKey?: string | null },
+): Promise<PublicAttendance> {
+  requirePermission(actor, "hr.view");
+  const employee = findEmployeeByBarcode(db, input.barcode);
+  const dateKey = input.dateKey ? assertDateKey(input.dateKey) : todayKey();
+  const at = input.at?.trim() || nowStamp();
+
+  const existing = db.first<Row>(
+    "SELECT * FROM employee_attendance WHERE employee_id = ? AND date_key = ?",
+    [str(employee.id), dateKey],
+  );
+  if (!existing) throw errNotFound("errors.hrNotClockedIn");
+  if (existing.clock_out_at) throw errConflict("errors.hrAlreadyClockedOut");
+
+  await db.transaction(async () => {
+    db.run(
+      "UPDATE employee_attendance SET clock_out_at = ?, worked_minutes = ?, updated_at = ? WHERE id = ?",
+      [at, minutesBetween(at, str(existing.clock_in_at)), nowStamp(), str(existing.id)],
+    );
+    recordAudit(db, actor, "EMPLOYEE_ATTENDANCE_OUT", "employee_attendance", str(existing.id), {
+      employee: str(employee.full_name),
+      dateKey,
+      at,
+    });
+  });
+  return mapAttendance(db.first<Row>("SELECT * FROM employee_attendance WHERE id = ?", [str(existing.id)])!, str(employee.full_name));
+}
+
+// ---------------------------------------------------------------------------
+// Per-employee leave entitlements
+// ---------------------------------------------------------------------------
+
+export interface LeaveEntitlementInput {
+  annualDays?: number | null;
+  sickDays?: number | null;
+  unpaidDays?: number | null;
+}
+
+/**
+ * Set per-employee annual/sick/unpaid leave day quotas. `unpaidDays=null` means
+ * unlimited; `annualDays`/`sickDays` fall back to their global defaults when null.
+ */
+export async function setLeaveEntitlements(
+  db: Db,
+  actor: ServiceActor,
+  input: { employeeId: string; annualDays?: number | null; sickDays?: number | null; unpaidDays?: number | null },
+): Promise<{ employeeId: string; annualDays: number | null; sickDays: number | null; unpaidDays: number | null }> {
+  requirePermission(actor, "hr.manage");
+  const employee = getEmployee(db, input.employeeId);
+  assertEmployeeScopedAccess(actor, employee);
+  const annual = input.annualDays == null ? null : Math.max(0, Math.round(input.annualDays));
+  const sick = input.sickDays == null ? null : Math.max(0, Math.round(input.sickDays));
+  const unpaid = input.unpaidDays == null ? null : Math.max(0, Math.round(input.unpaidDays));
+
+  await db.transaction(async () => {
+    db.run(
+      "UPDATE employees SET annual_leave_days = ?, sick_leave_days = ?, unpaid_leave_days = ?, updated_at = ? WHERE id = ?",
+      [annual, sick, unpaid, nowStamp(), input.employeeId],
+    );
+    recordAudit(db, actor, "EMPLOYEE_LEAVE_ENTITLEMENT_UPDATED", "employee", input.employeeId, {
+      employee: str(employee.full_name),
+      annualDays: annual,
+      sickDays: sick,
+      unpaidDays: unpaid,
+    });
+  });
+  return { employeeId: input.employeeId, annualDays: annual, sickDays: sick, unpaidDays: unpaid };
+}
+
+// ---------------------------------------------------------------------------
+// Employee monthly worked hours (per working day)
+// ---------------------------------------------------------------------------
+
+export interface EmployeeDailyWorked {
+  dateKey: string;
+  clockInAt: string;
+  clockOutAt: string | null;
+  workedMinutes: number;
+  isLate: boolean;
+}
+
+/** Per-day worked hours for one employee in a month. Manager/owner, or self. */
+export function employeeMonthlyHours(
+  db: Db,
+  actor: ServiceActor,
+  input: { employeeId: string; month?: string },
+): { employeeId: string; employeeName: string; month: string; days: EmployeeDailyWorked[] } {
+  requirePermission(actor, "hr.view");
+  const employee = getEmployee(db, input.employeeId);
+  const manage = roleHasPermission(actor.roleId, "hr.manage");
+  const canViewOther =
+    roleHasPermission(actor.roleId, "salaries.view") || roleHasPermission(actor.roleId, "hr.activity_view");
+  if (!manage && !canViewOther) {
+    const mine = db.first<Row>("SELECT id FROM employees WHERE user_id = ?", [actor.userId]);
+    if (!mine || str(mine.id) !== input.employeeId) throw errForbidden();
+  }
+  assertEmployeeScopedAccess(actor, employee);
+
+  const month = input.month?.trim() || todayKey().slice(0, 7);
+  if (!MONTH_RE.test(month)) throw errValidation("errors.invalidPeriod");
+
+  const days = db.all<Row>(
+    `SELECT date_key, clock_in_at, clock_out_at, worked_minutes, is_late
+     FROM employee_attendance WHERE employee_id = ? AND substr(date_key,1,7) = ?
+     ORDER BY date_key`,
+    [input.employeeId, month],
+  ).map((r) => ({
+    dateKey: str(r.date_key),
+    clockInAt: str(r.clock_in_at),
+    clockOutAt: r.clock_out_at == null ? null : str(r.clock_out_at),
+    workedMinutes: num(r.worked_minutes),
+    isLate: num(r.is_late) === 1,
+  }));
+
+  return { employeeId: input.employeeId, employeeName: str(employee.full_name), month, days };
 }

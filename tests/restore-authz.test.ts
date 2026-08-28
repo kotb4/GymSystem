@@ -135,6 +135,11 @@ describe("restore/import authorization (audit F-01)", () => {
       sourceCtx.db.run("ALTER TABLE members DROP COLUMN photo_file_id");
       sourceCtx.db.run("ALTER TABLE employees DROP COLUMN salary_type");
       sourceCtx.db.run("ALTER TABLE employees DROP COLUMN salary_base_minor");
+      sourceCtx.db.run("DROP INDEX IF EXISTS idx_employees_barcode");
+      sourceCtx.db.run("ALTER TABLE employees DROP COLUMN barcode");
+      sourceCtx.db.run("ALTER TABLE employees DROP COLUMN annual_leave_days");
+      sourceCtx.db.run("ALTER TABLE employees DROP COLUMN sick_leave_days");
+      sourceCtx.db.run("ALTER TABLE employees DROP COLUMN unpaid_leave_days");
       sourceCtx.db.run("DELETE FROM settings WHERE key = 'allow_negative_stock'");
       sourceCtx.db.run("DELETE FROM schema_migrations WHERE version > 5");
     });
@@ -152,7 +157,7 @@ describe("restore/import authorization (audit F-01)", () => {
 
     const reopened = (await import("../server/context")).getDbContext() as unknown as BootedContext;
     expect(countActiveOwners(reopened.db as never)).toBe(1);
-    expect(Number(reopened.db.scalar("SELECT MAX(version) FROM schema_migrations"))).toBe(12);
+    expect(Number(reopened.db.scalar("SELECT MAX(version) FROM schema_migrations"))).toBe(13);
     expect(report.schemaVersion).toBeLessThanOrEqual(5);
 
     cleanups.push(() => {

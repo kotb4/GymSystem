@@ -27,7 +27,7 @@ import { HealthPage } from "@/pages/health-page";
 import { StorePage } from "@/pages/store-page";
 import { ClassesPage } from "@/pages/classes-page";
 import { EmployeesPage } from "@/pages/employees-page";
-import { HrPage } from "@/pages/hr-page";
+import { EmployeeCheckInPage } from "@/pages/employee-checkin-page";
 import { CrmPage } from "@/pages/crm-page";
 import { PermissionsPage } from "@/pages/permissions-page";
 
@@ -58,9 +58,13 @@ function ForbiddenView() {
   );
 }
 
-function RequirePermission({ permission, children }: { permission: Permission; children: ReactNode }) {
+function RequirePermission({ permission, permissions, children }: { permission?: Permission; permissions?: Permission[]; children: ReactNode }) {
   const { hasPermission } = useAuth();
-  if (!hasPermission(permission)) return <ForbiddenView />;
+  if (permissions) {
+    if (!permissions.some((p) => hasPermission(p))) return <ForbiddenView />;
+  } else if (!permission || !hasPermission(permission)) {
+    return <ForbiddenView />;
+  }
   return <>{children}</>;
 }
 
@@ -148,16 +152,16 @@ export function AppRoutes() {
         <Route
           path="employees"
           element={
-            <RequirePermission permission="employees.view">
+            <RequirePermission permissions={["employees.view", "hr.view"]}>
               <EmployeesPage />
             </RequirePermission>
           }
         />
         <Route
-          path="hr"
+          path="employee-checkin"
           element={
-            <RequirePermission permission="hr.view">
-              <HrPage />
+            <RequirePermission permission="hr.employee_checkin">
+              <EmployeeCheckInPage />
             </RequirePermission>
           }
         />

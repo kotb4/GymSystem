@@ -10,6 +10,7 @@ import {
   ChevronsRight,
   CreditCard,
   Dumbbell,
+  Fingerprint,
   LayoutDashboard,
   ReceiptText,
   ScanLine,
@@ -46,6 +47,8 @@ const ICONS: Record<string, LucideIcon> = {
   "/permissions": ShieldCheck,
   "/audit": ScrollText,
   "/settings": Settings,
+  "/employees": Users,
+  "/employee-checkin": Fingerprint,
   "/hr": CalendarClock,
 };
 
@@ -90,7 +93,10 @@ export function Sidebar() {
 
       <nav className="flex-1 overflow-y-auto p-3" aria-label="main">
         <ul className="space-y-1">
-          {NAV_ROUTES.filter((route) => hasPermission(route.permission)).map((route) => {
+          {NAV_ROUTES.filter((route) => {
+            if (route.permissions) return route.permissions.some((p) => hasPermission(p));
+            return route.permission ? hasPermission(route.permission) : true;
+          }).map((route) => {
             const Icon = ICONS[route.path] ?? LayoutDashboard;
             const active =
               route.path === "/"

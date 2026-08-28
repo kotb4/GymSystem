@@ -84,6 +84,7 @@ export const PERMS = [
   "hr.manage",
   "hr.approve_leaves",
   "hr.activity_view",
+  "hr.employee_checkin",
 ] as const;
 
 export type Permission = (typeof PERMS)[number];
@@ -152,6 +153,7 @@ const MANAGER_PERMS: readonly Permission[] = [
   "hr.manage",
   "hr.approve_leaves",
   "hr.activity_view",
+  "hr.employee_checkin",
   "crm.send",
   "crm.templates",
   "backup.create",
@@ -188,6 +190,7 @@ const RECEPTION_PERMS: readonly Permission[] = [
   "trainers.view",
   "crm.send",
   "hr.view",
+  "hr.employee_checkin",
 ];
 
 const TRAINER_PERMS: readonly Permission[] = [
@@ -195,6 +198,7 @@ const TRAINER_PERMS: readonly Permission[] = [
   "classes.view",
   "assessments.view",
   "hr.view",
+  "hr.employee_checkin",
 ];
 
 export const ROLE_GRANTS: Record<RoleId, readonly Permission[]> = {

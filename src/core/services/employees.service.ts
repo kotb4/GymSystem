@@ -60,6 +60,7 @@ export interface EmployeeInput {
   salaryType?: SalaryType;
   salaryBaseMinor?: number | null;
   notes?: string | null;
+  userId?: string | null;
 }
 
 export interface PublicEmployee {
@@ -75,6 +76,11 @@ export interface PublicEmployee {
   monthlySalaryMinor: number | null;
   isActive: boolean;
   notes: string | null;
+  userId: string | null;
+  barcode: string | null;
+  annualLeaveDays: number | null;
+  sickLeaveDays: number | null;
+  unpaidLeaveDays: number | null;
 }
 
 const EMP_SELECT = "SELECT * FROM employees";
@@ -95,6 +101,11 @@ function mapEmployee(r: Row): PublicEmployee {
     monthlySalaryMinor: r.monthly_salary_minor == null ? null : num(r.monthly_salary_minor),
     isActive: num(r.is_active, 1) === 1,
     notes: r.notes == null ? null : str(r.notes),
+    userId: r.user_id == null ? null : str(r.user_id),
+    barcode: r.barcode == null || str(r.barcode) === "" ? null : str(r.barcode),
+    annualLeaveDays: r.annual_leave_days == null ? null : num(r.annual_leave_days),
+    sickLeaveDays: r.sick_leave_days == null ? null : num(r.sick_leave_days),
+    unpaidLeaveDays: r.unpaid_leave_days == null ? null : num(r.unpaid_leave_days),
   };
 }
 
@@ -134,9 +145,10 @@ export async function createEmployee(db: Db, actor: ServiceActor, input: Employe
     assertNonNegativeInteger(Math.round(input.salaryBaseMinor), "errors.finance.invalidAmount");
   }
   const id = crypto.randomUUID();
+  const userId = linkUserId(db, input.userId, id);
   await db.transaction(async () => {
     db.run(
-      "INSERT INTO employees (id, full_name, phone, role_title, department, specialization, joined_date, salary_type, salary_base_minor, is_active, notes, created_by, created_at, updated_at)\nVALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 1, ?, ?, ?, ?)",
+      "INSERT INTO employees (id, full_name, phone, role_title, department, specialization, joined_date, salary_type, salary_base_minor, is_active, notes, user_id, created_by, created_at, updated_at)\nVALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 1, ?, ?, ?, ?, ?)",
       [
         id,
         fullName,
@@ -148,6 +160,7 @@ export async function createEmployee(db: Db, actor: ServiceActor, input: Employe
         input.salaryType ?? "monthly",
         input.salaryBaseMinor != null ? Math.round(input.salaryBaseMinor) : null,
         input.notes?.trim() || null,
+        userId,
         actor.userId,
         stamp(),
         stamp(),
@@ -156,6 +169,16 @@ export async function createEmployee(db: Db, actor: ServiceActor, input: Employe
     recordAudit(db, actor, "EMPLOYEE_CREATED", "employee", id, { name: fullName });
   });
   return mapEmployee(getEmployeeRow(db, id));
+}
+
+/** Validate a requested user-link, returning the user id (or null to unlink). */
+function linkUserId(db: Db, requested: string | null | undefined, employeeId: string): string | null {
+  if (requested == null || requested === "") return null;
+  const user = db.first<Row>("SELECT id, username FROM users WHERE id = ?", [requested]);
+  if (!user) throw errValidation("errors.userNotFound");
+  const dup = db.first("SELECT id FROM employees WHERE user_id = ? AND id != ?", [requested, employeeId]);
+  if (dup) throw errConflict("errors.userAlreadyLinked");
+  return requested;
 }
 
 export async function updateEmployee(
@@ -169,9 +192,10 @@ export async function updateEmployee(
   if (patch.salaryBaseMinor != null) {
     assertNonNegativeInteger(Math.round(patch.salaryBaseMinor), "errors.finance.invalidAmount");
   }
+  const userId = patch.userId !== undefined ? linkUserId(db, patch.userId, employeeId) : row.user_id == null ? null : str(row.user_id);
   await db.transaction(async () => {
     db.run(
-      "UPDATE employees SET full_name = ?, phone = ?, role_title = ?, department = ?, specialization = ?, joined_date = ?, salary_type = ?, salary_base_minor = ?, is_active = ?, notes = ?, updated_at = ? WHERE id = ?",
+      "UPDATE employees SET full_name = ?, phone = ?, role_title = ?, department = ?, specialization = ?, joined_date = ?, salary_type = ?, salary_base_minor = ?, is_active = ?, notes = ?, user_id = ?, updated_at = ? WHERE id = ?",
       [
         patch.fullName?.trim() ?? str(row.full_name),
         patch.phone !== undefined ? patch.phone?.trim() || null : row.phone,
@@ -187,6 +211,7 @@ export async function updateEmployee(
           : row.salary_base_minor,
         patch.isActive !== undefined ? (patch.isActive ? 1 : 0) : num(row.is_active, 1),
         patch.notes !== undefined ? patch.notes?.trim() || null : row.notes,
+        userId,
         stamp(),
         employeeId,
       ],

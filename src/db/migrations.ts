@@ -296,6 +296,18 @@ function buildMigrations(): Migration[] {
         "CREATE INDEX IF NOT EXISTS idx_emp_inc_emp_date ON employee_incentives(employee_id, date_key)",
       ],
     },
+    {
+      // ---- employee barcodes (self-service check-in/out) + per-type leave quotas ----
+      version: 13,
+      statements: [
+        "ALTER TABLE employees ADD COLUMN barcode TEXT",
+        "CREATE UNIQUE INDEX IF NOT EXISTS idx_employees_barcode ON employees(barcode) WHERE barcode IS NOT NULL AND barcode != ''",
+        "ALTER TABLE employees ADD COLUMN annual_leave_days INTEGER CHECK (annual_leave_days IS NULL OR annual_leave_days >= 0)",
+        "ALTER TABLE employees ADD COLUMN sick_leave_days INTEGER CHECK (sick_leave_days IS NULL OR sick_leave_days >= 0)",
+        "ALTER TABLE employees ADD COLUMN unpaid_leave_days INTEGER CHECK (unpaid_leave_days IS NULL OR unpaid_leave_days >= 0)",
+        "INSERT OR IGNORE INTO permissions (code) VALUES ('hr.employee_checkin')",
+      ],
+    },
   ];
 }
 

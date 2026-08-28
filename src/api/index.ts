@@ -450,6 +450,11 @@ export interface PublicEmployee {
   monthlySalaryMinor: number | null;
   isActive: boolean;
   notes: string | null;
+  userId: string | null;
+  barcode: string | null;
+  annualLeaveDays: number | null;
+  sickLeaveDays: number | null;
+  unpaidLeaveDays: number | null;
 }
 export interface PublicSalary {
   id: string;
@@ -469,7 +474,7 @@ export interface PublicSalary {
 const employeesApi = {
   list: (query?: { search?: string; includeInactive?: boolean }) =>
     rpc<PublicEmployee[]>("employees", "listEmployees", [query ?? {}]),
-  create: (input: { fullName: string; phone?: string | null; roleTitle?: string | null; department?: string; specialization?: string | null; joinedDate?: string | null; salaryType?: SalaryType; salaryBaseMinor?: number | null; notes?: string | null }) =>
+  create: (input: { fullName: string; phone?: string | null; roleTitle?: string | null; department?: string; specialization?: string | null; joinedDate?: string | null; salaryType?: SalaryType; salaryBaseMinor?: number | null; notes?: string | null; userId?: string | null }) =>
     rpc<PublicEmployee>("employees", "createEmployee", [input]),
   update: (id: string, patch: Record<string, unknown>) => rpc<PublicEmployee>("employees", "updateEmployee", [id, patch]),
   listSalaries: (query?: { employeeId?: string; periodMonth?: string; status?: string; limit?: number }) =>
@@ -519,9 +524,11 @@ export interface PublicHrAmount {
   dateKey: string;
 }
 export interface PublicLeaveBalance {
+  type: LeaveType;
   entitlement: number;
   used: number;
   remaining: number;
+  limited: boolean;
 }
 export interface PublicSalarySummary {
   employeeId: string;
@@ -556,6 +563,33 @@ export interface PublicDailyActivity {
   entries: Array<{ time: string; category: string; label: string; reference: string | null; amountMinor: number }>;
 }
 
+export interface EmployeeDailyWorked {
+  dateKey: string;
+  clockInAt: string;
+  clockOutAt: string | null;
+  workedMinutes: number;
+  isLate: boolean;
+}
+
+export interface EmployeeMonthlyHoursResult {
+  employeeId: string;
+  employeeName: string;
+  month: string;
+  days: EmployeeDailyWorked[];
+}
+
+export interface LeaveEntitlementResult {
+  employeeId: string;
+  annualDays: number | null;
+  sickDays: number | null;
+  unpaidDays: number | null;
+}
+
+export interface EnsureSalariesResult {
+  created: number;
+  periodMonth: string;
+}
+
 const employeesHrApi = {
   clockIn: (input: { employeeId?: string | null; at?: string | null; dateKey?: string | null; notes?: string | null }) =>
     rpc<PublicAttendance>("employeesHr", "clockIn", [input]),
@@ -567,13 +601,15 @@ const employeesHrApi = {
     rpc<PublicAttendance[]>("employeesHr", "listAttendance", [query ?? {}]),
   requestLeave: (input: { employeeId?: string | null; leaveType: LeaveType; startDate: string; endDate: string; reason?: string | null }) =>
     rpc<PublicLeave>("employeesHr", "requestLeave", [input]),
+  updateLeave: (input: { leaveId: string; leaveType: LeaveType; startDate: string; endDate: string; reason?: string | null }) =>
+    rpc<PublicLeave>("employeesHr", "updateLeave", [input]),
   listLeaves: (query?: { status?: LeaveStatus | "all"; employeeId?: string | null; month?: string | null }) =>
     rpc<PublicLeave[]>("employeesHr", "listLeaves", [query ?? {}]),
   decideLeave: (input: { leaveId: string; approve: boolean; decisionNote?: string | null }) =>
     rpc<PublicLeave>("employeesHr", "decideLeave", [input]),
   cancelLeave: (leaveId: string) => rpc<PublicLeave>("employeesHr", "cancelLeave", [leaveId]),
   getLeaveBalance: (input: { employeeId?: string | null; year?: string | null }) =>
-    rpc<PublicLeaveBalance>("employeesHr", "getLeaveBalance", [input]),
+    rpc<PublicLeaveBalance[]>("employeesHr", "getLeaveBalance", [input]),
   listDeductions: (query?: { month?: string; employeeId?: string | null }) =>
     rpc<PublicHrAmount[]>("employeesHr", "listDeductions", [query ?? {}]),
   listIncentives: (query?: { month?: string; employeeId?: string | null }) =>
@@ -582,10 +618,28 @@ const employeesHrApi = {
     rpc<PublicHrAmount>("employeesHr", "addDeduction", [input]),
   addIncentive: (input: { employeeId: string; amountMinor: number; reason: string; dateKey?: string | null }) =>
     rpc<PublicHrAmount>("employeesHr", "addIncentive", [input]),
+  updateDeduction: (input: { id: string; amountMinor: number; reason: string; dateKey?: string | null }) =>
+    rpc<PublicHrAmount>("employeesHr", "updateDeduction", [input]),
+  updateIncentive: (input: { id: string; amountMinor: number; reason: string; dateKey?: string | null }) =>
+    rpc<PublicHrAmount>("employeesHr", "updateIncentive", [input]),
+  deleteDeduction: (id: string) => rpc<void>("employeesHr", "deleteDeduction", [id]),
+  deleteIncentive: (id: string) => rpc<void>("employeesHr", "deleteIncentive", [id]),
   monthlySalarySummary: (input: { employeeId: string; periodMonth: string }) =>
     rpc<PublicSalarySummary>("employeesHr", "monthlySalarySummary", [input]),
   employeeDailyActivity: (input: { employeeId: string; dateKey: string }) =>
     rpc<PublicDailyActivity>("employeesHr", "employeeDailyActivity", [input]),
+  employeeMonthlyHours: (input: { employeeId: string; month?: string }) =>
+    rpc<EmployeeMonthlyHoursResult>("employeesHr", "employeeMonthlyHours", [input]),
+  setLeaveEntitlements: (input: { employeeId: string; annualDays?: number | null; sickDays?: number | null; unpaidDays?: number | null }) =>
+    rpc<LeaveEntitlementResult>("employeesHr", "setLeaveEntitlements", [input]),
+  ensureSalariesForMonth: (input: { periodMonth: string }) =>
+    rpc<EnsureSalariesResult>("employeesHr", "ensureSalariesForMonth", [input]),
+  clockInByBarcode: (input: { barcode: string; at?: string | null; dateKey?: string | null; notes?: string | null }) =>
+    rpc<PublicAttendance>("employeesHr", "clockInByBarcode", [input]),
+  clockOutByBarcode: (input: { barcode: string; at?: string | null; dateKey?: string | null }) =>
+    rpc<PublicAttendance>("employeesHr", "clockOutByBarcode", [input]),
+  setEmployeeBarcode: (employeeId: string, barcode?: string | null) =>
+    rpc<{ employeeId: string; barcode: string | null }>("employeesHr", "setEmployeeBarcode", [{ employeeId, barcode }]),
 };
 
 // ------------------------------ InBody -----------------------------------
