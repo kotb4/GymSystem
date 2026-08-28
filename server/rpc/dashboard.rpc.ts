@@ -6,4 +6,6 @@ export const dashboard = defineService({
   getDashboardAttendance: a(dashboardService.getDashboardAttendance as Fn),
   getExpiringForDashboard: a(dashboardService.getExpiringForDashboard as Fn),
   getDashboardOperational: a(dashboardService.getDashboardOperational as Fn),
+  getDashboardSeries: a(dashboardService.getDashboardSeries as Fn),
+  getDashboardOverview: a(dashboardService.getDashboardOverview as Fn),
 });

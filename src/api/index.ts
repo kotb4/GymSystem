@@ -38,7 +38,10 @@ import type { Expense, ExpenseCategory, ExpenseListQuery } from "@/core/services
 import type { CashSession, CashSessionStatus } from "@/core/services/cash-session.service";
 import type {
   DashboardOperationalStats,
+  DashboardOverview,
+  DashboardRange,
   DashboardStats,
+  DashboardSeriesResult,
 } from "@/core/services/dashboard.service";
 import type { FinanceOverview } from "@/core/services/finance.service";
 import type { PeriodReport } from "@/core/services/financial-report.service";
@@ -212,6 +215,14 @@ const dashboardApi = {
   expiring: (withinDays = 7) =>
     rpc<SubscriptionWithMember[]>("dashboard", "getExpiringForDashboard", [withinDays]),
   operational: () => rpc<DashboardOperationalStats>("dashboard", "getDashboardOperational", []),
+  series: (
+    key: "today" | "7d" | "30d" | "month" | "year" | "custom",
+    custom?: DashboardRange,
+  ) => rpc<DashboardSeriesResult>("dashboard", "getDashboardSeries", [key, custom]),
+  overview: (
+    key: "today" | "7d" | "30d" | "month" | "year" | "custom",
+    custom?: DashboardRange,
+  ) => rpc<DashboardOverview>("dashboard", "getDashboardOverview", [key, custom]),
 };
 
 const financeApi = {
