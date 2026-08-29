@@ -88,8 +88,8 @@ src/
   api/                      Frontend client: fetch/RPC wrappers + shared types
   core/
     services/               ALL business logic (34 files, backend-only)
-    permissions.ts          Roles, 89 permissions, DB-backed grant cache
-    audit-actions.ts        Audit action enum (144 actions)
+    permissions.ts          Roles, 90 permissions, DB-backed grant cache
+    audit-actions.ts        Audit action enum (145 actions)
     errors.ts               AppError codes + i18n messageKeys
     dates.ts money.ts       Shared primitives (date keys, minor units)
   db/
