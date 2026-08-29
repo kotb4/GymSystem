@@ -140,6 +140,16 @@ describe("restore/import authorization (audit F-01)", () => {
       sourceCtx.db.run("ALTER TABLE employees DROP COLUMN annual_leave_days");
       sourceCtx.db.run("ALTER TABLE employees DROP COLUMN sick_leave_days");
       sourceCtx.db.run("ALTER TABLE employees DROP COLUMN unpaid_leave_days");
+      sourceCtx.db.run("ALTER TABLE member_subscriptions DROP COLUMN package_id");
+      sourceCtx.db.run("ALTER TABLE member_subscriptions DROP COLUMN package_name");
+      sourceCtx.db.run("ALTER TABLE member_subscriptions DROP COLUMN package_model");
+      sourceCtx.db.run("ALTER TABLE member_subscriptions DROP COLUMN package_duration_days");
+      sourceCtx.db.run("ALTER TABLE member_subscriptions DROP COLUMN package_price");
+      sourceCtx.db.run("ALTER TABLE member_subscriptions DROP COLUMN package_visit_limit");
+      sourceCtx.db.run("ALTER TABLE member_subscriptions DROP COLUMN package_unlimited_visits");
+      sourceCtx.db.run("ALTER TABLE member_subscriptions DROP COLUMN package_freeze_allowance_days");
+      sourceCtx.db.run("ALTER TABLE member_subscriptions DROP COLUMN package_allowed_freezes");
+      sourceCtx.db.run("ALTER TABLE member_subscriptions DROP COLUMN package_pt_sessions");
       sourceCtx.db.run("DELETE FROM settings WHERE key = 'allow_negative_stock'");
       sourceCtx.db.run("DELETE FROM schema_migrations WHERE version > 5");
     });
@@ -157,7 +167,7 @@ describe("restore/import authorization (audit F-01)", () => {
 
     const reopened = (await import("../server/context")).getDbContext() as unknown as BootedContext;
     expect(countActiveOwners(reopened.db as never)).toBe(1);
-    expect(Number(reopened.db.scalar("SELECT MAX(version) FROM schema_migrations"))).toBe(15);
+    expect(Number(reopened.db.scalar("SELECT MAX(version) FROM schema_migrations"))).toBe(22);
     expect(report.schemaVersion).toBeLessThanOrEqual(5);
 
     cleanups.push(() => {

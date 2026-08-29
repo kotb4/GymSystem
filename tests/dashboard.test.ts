@@ -49,7 +49,7 @@ function randomPhone() {
 }
 
 async function newMember(name = "عضو") {
-  return createMember(db, owner, { fullName: `ك-${name}`, phone: randomPhone() });
+  return createMember(db, owner, { fullName: `ك-${name}-${Math.floor(Math.random() * 1e9)}`, phone: randomPhone() });
 }
 
 async function seedSubWithPayment(priceMajor = 1000, paidMajor?: number) {

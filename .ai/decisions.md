@@ -73,6 +73,24 @@
   3. Auto-run: npm `sync:docs` script for manual/agent use, plus a `.git/hooks/pre-commit` (sh, LF) that re-syncs before every commit.
 - Consequences: The app is now reachable on the LAN by default (bind 0.0.0.0) — a security-relevant change; operators should keep the network trusted or re-set `GYMSYSTEM_HOST` to loopback. Document counts/versions update automatically on commit; narrative/rule drift still needs `/docs` or a human. Secure-cookie note (ADR-005) becomes more relevant now that LAN exposure is on.
 
+## ADR-012: Single shared cross-agent memory under `.ai/` (no parallel systems)
+- Date: 2026-08-29
+- Status: accepted
+- Context: The AI workflow was implicitly OpenCode-centric (AGENTS.md + `.opencode/` agents/commands). Switching to Cursor, Claude Code, or another agent meant the next agent lost the prior chat context and had to re-derive the live state by re-reading code. There was a temptation to spawn multiple parallel memory systems (STATE.md, TASKS.md, CHANGELOG.md, .cursor/rules/, separate Claude memory) — that would have caused drift.
+- Decision:
+  1. **One coherent shared memory under `.ai/`** with clear roles:
+     - `.ai/project.md` — long-form project profile (idempotent, value-level auto-synced by `scripts/sync-docs.mjs`).
+     - `.ai/architecture.md`, `.ai/business-rules.md` — quick-reference for AI agents (short, not narrative; full versions live in `docs/ai/`).
+     - `.ai/tasks.md` — task history & roadmap (active / completed / blocked / discovered-followup).
+     - `.ai/decisions.md` — Architecture Decision Record (this file).
+     - `.ai/current-state.md` — live dev-state handoff. Concise, agent-maintained, **never machine-generated**. Answers: "What was the previous agent doing? Where did it stop? What should the next agent do?"
+  2. **AGENTS.md is the single repository-wide entry point.** It mandates the reading order (`AGENTS.md` → `.ai/project.md` → `.ai/current-state.md` → `.ai/tasks.md` → `.ai/decisions.md` → inspect source) and explicitly states: "The repository files are the persistent memory shared between coding agents. Chat history is NOT part of the project's source of truth."
+  3. **No duplicate system**: no STATE.md, no TASKS.md, no CHANGELOG.md, no `.claude/`, no separate memory schema. The existing `.ai/architecture.md` and `.ai/business-rules.md` are kept as short quick-reference; their full counterparts in `docs/ai/` are kept as human-readable long-form. They are NOT duplicates — they serve different audiences.
+  4. **OpenCode agents and commands** are updated to read and write the SAME `.ai/` files (no OpenCode-only memory). `.opencode/agents/{planner,tester,reviewer,security,docs,analyze,audit}.md` and `.opencode/commands/{feature,review,test,docs,analyze,audit}.md` must reference `.ai/current-state.md` as the live-state source.
+  5. **Cursor rule (`.cursor/rules/gym-assistant.md`)** is minimal and points to the shared state without duplicating AGENTS.md content.
+  6. **`scripts/sync-docs.mjs`** continues to update only machine-verifiable facts (counts, versions) — it must NEVER touch `.ai/current-state.md` because that file is the agent's live context and would lose its meaning if auto-generated.
+- Consequences: any future agent (Cursor, Claude Code, OpenCode) can resume the project from repository files alone. The reading order and update discipline become the contract. The workflow becomes portable.
+
 ## ADR-011: GitHub hosting (private) for version control & collaboration
 - Date: 2026-08-27
 - Status: accepted (product-owner request)

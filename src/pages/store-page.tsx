@@ -4,7 +4,7 @@ import { useAuth } from "@/contexts/auth-context";
 import { useT } from "@/i18n";
 import { useToast } from "@/components/ui/toast";
 import { describeError } from "@/utils/app-error";
-import { api, type ProductPublic, type StoreSale, type StoreDebtRow, type StockMovementRow } from "@/api";
+import { api, type ProductPublic, type StoreSale, type StoreDebtRow, type StockMovementRow, type StoreReturnRow, type DailySalesRow, type ProductSalesRow, type StockValueRow } from "@/api";
 import { formatMinor } from "@/core/money";
 import { Card, CardHeader } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
@@ -18,14 +18,26 @@ import { EmptyState } from "@/components/ui/empty-state";
 import { ConfirmDialog } from "@/components/ui/confirm-dialog";
 import { MemberPickerModal } from "@/components/members/member-picker-modal";
 
+const MOVEMENT_LABEL_KEYS: Record<string, string> = {
+  stock_in: "store.movement_stock_in",
+  sale: "store.movement_sale",
+  manual_adjust: "store.movement_manual_adjust",
+  damage: "store.movement_damage",
+  count_correction: "store.movement_count_correction",
+  return: "store.movement_return",
+  lost: "store.movement_lost",
+};
+
 type CartLine = { productId: string; name: string; unitPriceMinor: number; qty: number };
 
 const TAB_ITEMS = [
   { value: "pos", labelKey: "store.tabPos" },
   { value: "products", labelKey: "store.tabProducts" },
   { value: "sales", labelKey: "store.tabSales" },
+  { value: "returns", labelKey: "store.tabReturns" },
   { value: "debts", labelKey: "store.tabDebts" },
   { value: "movements", labelKey: "store.tabMovements" },
+  { value: "reports", labelKey: "store.tabReports" },
 ];
 
 export function StorePage() {
@@ -46,8 +58,10 @@ export function StorePage() {
       {tab === "pos" && <PosTab onDone={() => setTab("sales")} />}
       {tab === "products" && <ProductsTab />}
       {tab === "sales" && <SalesTab />}
+      {tab === "returns" && <ReturnsTab />}
       {tab === "debts" && <DebtsTab />}
       {tab === "movements" && <MovementsTab />}
+      {tab === "reports" && <ReportsTab />}
     </div>
   );
 }
@@ -414,6 +428,7 @@ function StockModal({ product, onClose, onSaved }: { product: ProductPublic; onC
           { value: "stock_in", label: "توريد" },
           { value: "manual_adjust", label: "تسوية يدوية" },
           { value: "damage", label: "تالف" },
+          { value: "lost", label: "مفقود" },
           { value: "count_correction", label: "تصحيح جرد" },
         ]} />
         <Input label={`${t("store.qty")} (+/-)`} type="number" dir="ltr" value={delta} onChange={(e: ChangeEvent<HTMLInputElement>) => setDelta(e.target.value)} autoFocus />
@@ -434,6 +449,7 @@ function SalesTab() {
   const [viewing, setViewing] = useState<StoreSale | null>(null);
   const [voidTarget, setVoidTarget] = useState<StoreSale | null>(null);
   const [unvoidSaleTarget, setUnvoidSaleTarget] = useState<StoreSale | null>(null);
+  const [returnTarget, setReturnTarget] = useState<StoreSale | null>(null);
   const [reason, setReason] = useState("");
 
   const reload = useCallback(() => {
@@ -469,17 +485,28 @@ function SalesTab() {
         ? <span dir="ltr" className="tabnum text-emerald">{formatMinor(r.grossProfitMinor)}</span>
         : <span>—</span> },
     { key: "status", header: t("store.colStatus"), render: (r) => <Badge variant={r.status === "completed" ? "success" : "danger"}>{r.status === "completed" ? t("exp.statusActive") : t("exp.statusVoided")}</Badge> },
-    ...(hasPermission("store.void_sale")
+    ...(hasPermission("store.void_sale") || hasPermission("store.return")
       ? [{
           key: "actions",
           header: "",
           align: "end" as const,
-          render: (r: StoreSale) =>
-            r.status === "completed" ? (
-              <button type="button" aria-label={t("store.voidSale")} onClick={() => setVoidTarget(r)} className="text-faint hover:text-red"><Undo2 className="size-4" /></button>
-            ) : r.status === "voided" ? (
-              <button type="button" aria-label={t("store.actionRestore")} onClick={() => setUnvoidSaleTarget(r)} className="text-faint hover:text-subtle"><RotateCcw className="size-4" /></button>
-            ) : null,
+          render: (r: StoreSale) => {
+            if (r.status !== "completed") {
+              return hasPermission("store.void_sale") ? (
+                <button type="button" aria-label={t("store.actionRestore")} onClick={() => setUnvoidSaleTarget(r)} className="text-faint hover:text-subtle"><RotateCcw className="size-4" /></button>
+              ) : null;
+            }
+            return (
+              <div className="flex items-center justify-end gap-1.5">
+                {hasPermission("store.return") && (
+                  <button type="button" aria-label={t("store.makeReturn")} onClick={() => setReturnTarget(r)} className="text-faint hover:text-amber"><Undo2 className="size-4" /></button>
+                )}
+                {hasPermission("store.void_sale") && (
+                  <button type="button" aria-label={t("store.voidSale")} onClick={() => setVoidTarget(r)} className="text-faint hover:text-red"><Trash2 className="size-4" /></button>
+                )}
+              </div>
+            );
+          },
         }]
       : []),
   ];
@@ -514,11 +541,161 @@ function SalesTab() {
             .catch((err) => toast("error", describeError(err, t)));
         }}
       />
+      {returnTarget && (
+        <ReturnModal
+          sale={returnTarget}
+          onClose={() => setReturnTarget(null)}
+          onDone={() => { setReturnTarget(null); reload(); }}
+        />
+      )}
       {viewing && (
         <Modal open onClose={() => setViewing(null)} title={viewing.saleNo} widthClass="max-w-md">
           <ul className="divide-y divide-line text-sm">
             {viewing.items.map((it, i) => (
               <li key={`${it.productId}-${i}`} className="flex justify-between py-2">
+                <span>{it.productName} × {it.qty}</span>
+                <span dir="ltr" className="tabnum">{formatMinor(it.lineTotalMinor)}</span>
+              </li>
+            ))}
+          </ul>
+        </Modal>
+      )}
+    </>
+  );
+}
+
+// ------------------------------- returns ----------------------------------
+
+function ReturnModal({ sale, onClose, onDone }: { sale: StoreSale; onClose: () => void; onDone: () => void }) {
+  const t = useT();
+  const { toast } = useToast();
+  const [lines, setLines] = useState<Record<string, string>>(() => {
+    const init: Record<string, string> = {};
+    for (const it of sale.items) init[it.id] = String(Math.max(0, it.qty - it.returnedQty));
+    return init;
+  });
+  const [reason, setReason] = useState("");
+  const [busy, setBusy] = useState(false);
+
+  const returnable = sale.items.filter((it) => it.qty - it.returnedQty > 0);
+  const itemsTotal = returnable.reduce((s, it) => s + it.unitPriceMinor * Math.max(0, Math.min(Number(lines[it.id] || 0), it.qty - it.returnedQty)), 0);
+  const totalMinor = itemsTotal;
+
+  const submit = async () => {
+    const chosen = returnable
+      .map((it) => ({ id: it.id, qty: Math.floor(Number(lines[it.id] || 0)) }))
+      .filter((l) => l.qty > 0);
+    if (chosen.length === 0) {
+      toast("error", t("store.emptyReturn"));
+      return;
+    }
+    setBusy(true);
+    try {
+      const ret = await api.store.returnSale({
+        saleId: sale.id,
+        lines: chosen.map((l) => ({ saleItemId: l.id, qty: l.qty })),
+        reason: reason || null,
+      });
+      toast("success", t("store.returnToast", { no: ret.returnNo }));
+      onDone();
+    } catch (err) {
+      toast("error", describeError(err, t));
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  if (sale.isCredit) {
+    return (
+      <Modal open onClose={onClose} title={t("store.makeReturn")} widthClass="max-w-sm"
+        footer={<Button variant="secondary" onClick={onClose}>{t("common.close")}</Button>}>
+        <p className="text-sm text-subtle">{t("store.returnBlockedCredit")}</p>
+      </Modal>
+    );
+  }
+
+  return (
+    <Modal open onClose={onClose} title={`${t("store.makeReturn")} — ${sale.saleNo}`} widthClass="max-w-md"
+      footer={<><Button type="submit" form="return-form" loading={busy}>{t("store.returnSubmit")}</Button><Button variant="secondary" onClick={onClose}>{t("common.cancel")}</Button></>}>
+      <form id="return-form" onSubmit={(e) => { e.preventDefault(); void submit(); }} className="space-y-3.5">
+        {returnable.length === 0 ? (
+          <p className="text-sm text-subtle">{t("store.noReturnable")}</p>
+        ) : (
+          <>
+            <ul className="divide-y divide-line">
+              {returnable.map((it) => {
+                const max = it.qty - it.returnedQty;
+                return (
+                  <li key={it.id} className="flex items-center gap-3 py-2.5 text-sm">
+                    <span className="min-w-0 flex-1">
+                      <span className="block truncate font-bold">{it.productName}</span>
+                      <span dir="ltr" className="block text-[11px] text-faint tabnum">{t("store.returnAvailable")}: {max}</span>
+                    </span>
+                    <span dir="ltr" className="w-16 text-end tabnum text-subtle">{formatMinor(it.unitPriceMinor * Math.max(0, Math.min(Number(lines[it.id] || 0), max)))}</span>
+                    <input
+                      type="number"
+                      min={0}
+                      max={max}
+                      dir="ltr"
+                      className="w-16 rounded-lg border border-line bg-panel px-2 py-1.5 text-center tabnum"
+                      value={lines[it.id] ?? "0"}
+                      onChange={(e) => setLines((p) => ({ ...p, [it.id]: e.target.value }))}
+                    />
+                  </li>
+                );
+              })}
+            </ul>
+            <div className="flex justify-between border-t border-line pt-2.5 text-base font-extrabold text-neon">
+              <span>{t("store.returnHeader")}</span>
+              <span dir="ltr" className="tabnum">{formatMinor(totalMinor)}</span>
+            </div>
+            <Input label={t("store.returnReason")} value={reason} onChange={(e: ChangeEvent<HTMLInputElement>) => setReason(e.target.value)} />
+          </>
+        )}
+      </form>
+    </Modal>
+  );
+}
+
+function ReturnsTab() {
+  const t = useT();
+  const [rows, setRows] = useState<Array<Omit<StoreReturnRow, "items">>>([]);
+  const [viewing, setViewing] = useState<StoreReturnRow | null>(null);
+  const reload = useCallback(() => {
+    api.store.listReturns({}).then((r) => setRows(r.items)).catch(console.error);
+  }, []);
+  useEffect(() => { reload(); }, [reload]);
+
+  const openDetails = (returnId: string) => {
+    api.store.getReturn(returnId).then(setViewing).catch(console.error);
+  };
+
+  const columns: Column<Omit<StoreReturnRow, "items">>[] = [
+    { key: "no", header: t("store.returnNoCol"), render: (r) => (
+      <button type="button" onClick={() => openDetails(r.id)} className="font-bold tabnum hover:text-neon" dir="ltr">{r.returnNo}</button>
+    ) },
+    { key: "sale", header: t("store.colSaleNo"), render: (r) => <span dir="ltr" className="tabnum text-subtle">{r.saleNo}</span> },
+    { key: "member", header: t("store.colMember"), render: (r) => r.memberName ?? "—" },
+    { key: "total", header: t("store.colTotal"), render: (r) => <span dir="ltr" className="tabnum font-bold text-red">{formatMinor(r.totalMinor)}</span> },
+    { key: "reason", header: t("store.returnReason"), render: (r) => r.reason ?? "—" },
+    { key: "date", header: t("store.colDate"), render: (r) => <span dir="ltr" className="tabnum text-subtle">{r.createdAt.slice(0, 16)}</span> },
+  ];
+
+  return (
+    <>
+      <Card>
+        <CardHeader title={t("store.tabReturns")} />
+        {rows.length === 0 ? <EmptyState icon={<Package />} title={t("store.emptyReturns")} /> : <DataTable columns={columns} data={rows} rowKey={(r) => r.id} />}
+      </Card>
+      {viewing && (
+        <Modal open onClose={() => setViewing(null)} title={viewing.returnNo} widthClass="max-w-md">
+          <div className="mb-2 flex justify-between text-sm text-subtle">
+            <span>{viewing.saleNo}</span>
+            <span dir="ltr" className="tabnum font-bold text-red">{formatMinor(viewing.totalMinor)}</span>
+          </div>
+          <ul className="divide-y divide-line text-sm">
+            {viewing.items.map((it, i) => (
+              <li key={`${it.id}-${i}`} className="flex justify-between py-2">
                 <span>{it.productName} × {it.qty}</span>
                 <span dir="ltr" className="tabnum">{formatMinor(it.lineTotalMinor)}</span>
               </li>
@@ -599,7 +776,7 @@ function MovementsTab() {
   const columns: Column<StockMovementRow>[] = [
     { key: "date", header: t("common.date"), render: (r) => <span dir="ltr" className="tabnum text-subtle">{r.createdAt.slice(0, 16)}</span> },
     { key: "product", header: t("store.name"), render: (r) => <span className="font-bold">{r.productName}</span> },
-    { key: "type", header: "", render: (r) => r.movementType },
+    { key: "type", header: "", render: (r) => t(MOVEMENT_LABEL_KEYS[r.movementType] ?? r.movementType, {} as never) },
     { key: "delta", header: t("store.qty"), render: (r) => <Badge variant={r.delta > 0 ? "success" : "danger"}>{r.delta > 0 ? `+${r.delta}` : `${r.delta}`}</Badge> },
     { key: "result", header: t("store.stock"), render: (r) => <span dir="ltr" className="tabnum">{r.resultQty}</span> },
   ];
@@ -608,6 +785,119 @@ function MovementsTab() {
     <Card>
       <CardHeader title={t("store.tabMovements")} />
       {rows.length === 0 ? <EmptyState icon={<Package />} title={t("audit.empty")} /> : <DataTable columns={columns} data={rows} rowKey={(r) => r.id} />}
+    </Card>
+  );
+}
+
+// -------------------------------- reports ---------------------------------
+
+function ReportsTab() {
+  const t = useT();
+  const { hasPermission } = useAuth();
+  const defaultFrom = new Date();
+  defaultFrom.setDate(defaultFrom.getDate() - 29);
+  const today = new Date().toISOString().slice(0, 10);
+  const [fromKey, setFromKey] = useState(defaultFrom.toISOString().slice(0, 10));
+  const [toKey, setToKey] = useState(today);
+  const [daily, setDaily] = useState<DailySalesRow[]>([]);
+  const [products, setProducts] = useState<ProductSalesRow[]>([]);
+  const [stockValue, setStockValue] = useState<StockValueRow | null>(null);
+  const [lowStock, setLowStock] = useState<ProductPublic[]>([]);
+  const [loaded, setLoaded] = useState(false);
+  const canProfit = hasPermission("store.profit");
+
+  const load = useCallback(() => {
+    if (!canProfit) { setLoaded(true); return; }
+    const range = { fromKey, toKey };
+    api.store.dailySalesReport(range).then(setDaily).catch(console.error);
+    api.store.productSalesReport(range).then(setProducts).catch(console.error);
+    api.store.stockValue().then(setStockValue).catch(console.error);
+    api.store.lowStockProducts({ limit: 20 }).then(setLowStock).catch(console.error);
+    setLoaded(true);
+  }, [canProfit, fromKey, toKey]);
+
+  useEffect(() => { load(); }, [load]);
+
+  if (!canProfit) {
+    return <Card><CardHeader title={t("store.tabReports")} /><p className="px-5 pb-5 text-sm text-subtle">{t("common.noPermission")}</p></Card>;
+  }
+
+  const dailyCols: Column<DailySalesRow>[] = [
+    { key: "date", header: t("store.colDateKey"), render: (r) => <span dir="ltr" className="tabnum font-bold">{r.dateKey}</span> },
+    { key: "count", header: t("store.colSalesCount"), render: (r) => <span className="tabnum">{r.salesCount}</span> },
+    { key: "net", header: t("store.colNetMinor"), render: (r) => <span dir="ltr" className="tabnum font-bold">{formatMinor(r.netMinor)}</span> },
+    { key: "returns", header: t("store.colReturnsCount"), render: (r) => r.returnsCount > 0 ? <span className="tabnum text-red">-{r.returnsMinor / 100} ({r.returnsCount})</span> : <span>—</span> },
+    { key: "profit", header: t("store.colProfit"), render: (r) => <span dir="ltr" className="tabnum text-emerald">{formatMinor(r.grossProfitMinor)}</span> },
+  ];
+
+  const prodCols: Column<ProductSalesRow>[] = [
+    { key: "product", header: t("store.name"), render: (r) => <span className="font-bold">{r.productName}</span> },
+    { key: "cat", header: t("store.category"), render: (r) => r.categoryName ?? "—" },
+    { key: "units", header: t("store.colUnitsSold"), render: (r) => <span className="tabnum">{r.unitsSold}</span> },
+    { key: "returned", header: t("store.colUnitsReturned"), render: (r) => r.unitsReturned > 0 ? <span className="tabnum text-red">{r.unitsReturned}</span> : <span className="tabnum text-subtle">0</span> },
+    { key: "net", header: t("store.colNetUnits"), render: (r) => <span className="tabnum font-bold">{r.netUnits}</span> },
+    { key: "revenue", header: t("store.colTotal"), render: (r) => <span dir="ltr" className="tabnum">{formatMinor(r.revenueMinor)}</span> },
+    { key: "profit", header: t("store.colProfit"), render: (r) => <span dir="ltr" className="tabnum text-emerald">{formatMinor(r.grossProfitMinor)}</span> },
+  ];
+
+  const lowStockCols: Column<ProductPublic>[] = [
+    { key: "name", header: t("store.name"), render: (r) => <span className="font-bold">{r.name}</span> },
+    { key: "stock", header: t("store.stock"), render: (r) => <Badge variant="danger">{r.stockQty}</Badge> },
+    { key: "min", header: t("store.minStock"), render: (r) => <span className="tabnum">{r.minStockQty}</span> },
+    { key: "value", header: t("store.stockCostValue"), render: (r) => <span dir="ltr" className="tabnum">{formatMinor(r.stockQty * r.costMinor)}</span> },
+  ];
+
+  return (
+    <div className="space-y-4">
+      <Card>
+        <CardHeader
+          title={t("store.tabReports")}
+          action={
+            <div className="flex items-end gap-2">
+              <div className="w-40"><Input type="date" dir="ltr" value={fromKey} onChange={(e) => setFromKey(e.target.value)} /></div>
+              <div className="w-40"><Input type="date" dir="ltr" value={toKey} onChange={(e) => setToKey(e.target.value)} /></div>
+              <Button size="sm" onClick={load}>{t("rpt.apply")}</Button>
+            </div>
+          }
+        />
+      </Card>
+
+      {stockValue && (
+        <div className="grid grid-cols-2 gap-3 md:grid-cols-4">
+          <ValueCard label={t("store.stockCostValue")} value={formatMinor(stockValue.totalCostMinor)} />
+          <ValueCard label={t("store.stockRetailValue")} value={formatMinor(stockValue.potentialRetailMinor)} />
+          <ValueCard label={t("store.stockPotentialProfit")} value={formatMinor(stockValue.potentialGrossProfitMinor)} positive />
+          <ValueCard label={t("store.stockProductCount")} value={String(stockValue.productCount)} />
+        </div>
+      )}
+
+      {loaded && (
+        <>
+          <Card>
+            <CardHeader title={t("store.reportDailySales")} />
+            {daily.length === 0 ? <EmptyState icon={<Package />} title={t("pay.empty")} /> : <DataTable columns={dailyCols} data={daily} rowKey={(r) => r.dateKey} />}
+          </Card>
+          <Card>
+            <CardHeader title={t("store.reportBestSellers")} />
+            {products.length === 0 ? <EmptyState icon={<Package />} title={t("pay.empty")} /> : <DataTable columns={prodCols} data={products} rowKey={(r) => r.productId} />}
+          </Card>
+          <Card>
+            <CardHeader title={t("store.reportLowStock")} />
+            {lowStock.length === 0 ? <EmptyState icon={<Package />} title={t("store.reportLowStock")} /> : <DataTable columns={lowStockCols} data={lowStock} rowKey={(r) => r.id} />}
+          </Card>
+        </>
+      )}
+    </div>
+  );
+}
+
+function ValueCard({ label, value, positive }: { label: string; value: string; positive?: boolean }) {
+  return (
+    <Card>
+      <div className="p-4">
+        <p className="text-[11px] text-subtle">{label}</p>
+        <p dir="ltr" className={`mt-1 text-lg font-extrabold tabnum ${positive ? "text-emerald" : ""}`}>{value}</p>
+      </div>
     </Card>
   );
 }

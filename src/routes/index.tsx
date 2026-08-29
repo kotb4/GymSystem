@@ -10,9 +10,11 @@ import { LoginPage } from "@/pages/login-page";
 import { SetupPage } from "@/pages/setup-page";
 import { DashboardPage } from "@/pages/dashboard-page";
 import { CheckInPage } from "@/pages/checkin-page";
+import { ReceptionPage } from "@/pages/reception-page";
 import { MembersPage } from "@/pages/members-page";
 import { MemberProfilePage } from "@/pages/member-profile-page";
 import { SubscriptionsPage } from "@/pages/subscriptions-page";
+import { PackagesPage } from "@/pages/packages-page";
 import { CardsPage } from "@/pages/cards-page";
 import { UsersPage } from "@/pages/users-page";
 import { AuditPage } from "@/pages/audit-page";
@@ -30,6 +32,8 @@ import { EmployeesPage } from "@/pages/employees-page";
 import { EmployeeCheckInPage } from "@/pages/employee-checkin-page";
 import { CrmPage } from "@/pages/crm-page";
 import { PermissionsPage } from "@/pages/permissions-page";
+import { TreasuryPage } from "@/pages/treasury";
+import { TreasuryPrintPage } from "@/pages/treasury/print";
 
 function RequireAuth({ children }: { children: ReactNode }) {
   const { user, booting } = useAuth();
@@ -94,10 +98,26 @@ export function AppRoutes() {
           }
         />
         <Route
+          path="reception"
+          element={
+            <RequirePermission permission="reception.view">
+              <ReceptionPage />
+            </RequirePermission>
+          }
+        />
+        <Route
           path="subscriptions"
           element={
             <RequirePermission permission="subscriptions.view">
               <SubscriptionsPage />
+            </RequirePermission>
+          }
+        />
+        <Route
+          path="packages"
+          element={
+            <RequirePermission permission="packages.view">
+              <PackagesPage />
             </RequirePermission>
           }
         />
@@ -168,7 +188,7 @@ export function AppRoutes() {
         <Route
           path="crm"
           element={
-            <RequirePermission permission="crm.send">
+            <RequirePermission permissions={["crm.send", "leads.view", "trials.view"]}>
               <CrmPage />
             </RequirePermission>
           }
@@ -237,8 +257,24 @@ export function AppRoutes() {
             </RequirePermission>
           }
         />
-      </Route>
-      <Route path="*" element={<Navigate to="/" replace />} />
+        <Route
+          path="treasury"
+          element={
+            <RequirePermission permission="cash.daily_close">
+              <TreasuryPage />
+            </RequirePermission>
+          }
+        />
+        <Route
+          path="treasury/print/:closingId"
+          element={
+            <RequirePermission permission="cash.daily_close">
+              <TreasuryPrintPage />
+            </RequirePermission>
+          }
+        />
+       </Route>
+       <Route path="*" element={<Navigate to="/" replace />} />
     </Routes>
   );
 }

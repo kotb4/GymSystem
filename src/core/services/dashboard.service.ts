@@ -13,6 +13,11 @@ import {
   type AttendanceDayPoint,
 } from "./attendance.service";
 import {
+  getTreasurySnapshot,
+  type CashBox,
+  type TreasurySnapshot,
+} from "./daily-closing.service";
+import {
   countActiveSubscriptions,
   listExpiringSubscriptions,
   type SubscriptionWithMember,
@@ -159,6 +164,7 @@ export interface DashboardStats {
   totalMembers: number;
   activeMembers: number;
   activeSubscriptions: number;
+  frozenSubscriptions: number;
   checkinsToday: number;
 }
 
@@ -168,6 +174,9 @@ export function getDashboardStats(db: Db, actor: ServiceActor): DashboardStats {
     totalMembers: db.count("SELECT COUNT(*) FROM members WHERE status != 'archived'"),
     activeMembers: db.count("SELECT COUNT(*) FROM members WHERE status = 'active'"),
     activeSubscriptions: countActiveSubscriptions(db),
+    frozenSubscriptions: db.count(
+      "SELECT COUNT(*) FROM member_subscriptions WHERE status = 'suspended'",
+    ),
     checkinsToday: countCheckInsOnDate(db, todayKey()),
   };
 }
@@ -401,6 +410,7 @@ export interface DashboardMembersSection {
   totalMembers: number;
   activeMembers: number;
   activeSubscriptions: number;
+  frozenSubscriptions: number;
 }
 
 export interface DashboardStoreSection {
@@ -426,6 +436,7 @@ export interface DashboardOverview {
   store: DashboardStoreSection | null;
   operations: DashboardOperationsSection | null;
   pendingCrmMessages: number;
+  expiredTrials: number;
 }
 
 export function getDashboardOverview(
@@ -484,6 +495,9 @@ export function getDashboardOverview(
       totalMembers: db.count("SELECT COUNT(*) FROM members WHERE deleted_at IS NULL"),
       activeMembers: db.count("SELECT COUNT(*) FROM members WHERE status = 'active' AND deleted_at IS NULL"),
       activeSubscriptions: canSubs ? countActiveSubscriptions(db) : 0,
+      frozenSubscriptions: canSubs
+        ? db.count("SELECT COUNT(*) FROM member_subscriptions WHERE status = 'suspended'")
+        : 0,
     };
   }
 
@@ -520,6 +534,12 @@ export function getDashboardOverview(
     ? db.count("SELECT COUNT(*) FROM crm_messages WHERE status = 'pending'")
     : 0;
 
+  const expiredTrials = roleHasPermission(actor.roleId, "trials.view")
+    ? db.count(
+        `SELECT COUNT(*) FROM trials WHERE status = 'active' AND end_date < '${todayKey()}'`,
+      )
+    : 0;
+
   return {
     range,
     bucket,
@@ -530,6 +550,7 @@ export function getDashboardOverview(
     store,
     operations,
     pendingCrmMessages,
+    expiredTrials,
   };
 }
 
@@ -541,4 +562,39 @@ function seriesDayMapOf(series: DashboardSeriesResult): Map<string, DayPoint> {
 
 function ledgerOnly(db: Db, fromKey: string, toKey: string): Map<string, DayPoint> {
   return ledgerDayMap(db, fromKey, toKey);
+}
+
+export interface DashboardTreasurySection {
+  businessDate: string;
+  gym: TreasurySnapshot;
+  store: TreasurySnapshot;
+}
+
+export function getTreasuryForDashboard(
+  db: Db,
+  actor: ServiceActor,
+  businessDate: string = todayKey(),
+): DashboardTreasurySection {
+  requirePermission(actor, "cash.daily_close");
+  const resolve = (box: CashBox): TreasurySnapshot => {
+    try {
+      return getTreasurySnapshot(db, actor, businessDate, box);
+    } catch {
+      return {
+        businessDate,
+        box,
+        status: "missing",
+        expectedMinor: 0,
+        expectedCashMinor: 0,
+        countedCashMinor: null,
+        differenceMinor: null,
+        closingId: null,
+      };
+    }
+  };
+  return {
+    businessDate,
+    gym: resolve("gym"),
+    store: resolve("store"),
+  };
 }

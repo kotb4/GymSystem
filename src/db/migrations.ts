@@ -1,4 +1,4 @@
-import { nowStamp } from "@/core/dates";
+import { nowStamp, diffDaysKeys } from "@/core/dates";
 import { PERMS, ROLES, ROLE_GRANTS, type RoleId } from "@/core/permissions";
 import type { Db } from "./engine";
 
@@ -346,6 +346,210 @@ function buildMigrations(): Migration[] {
           return;
         }
         db.exec("DROP TABLE IF EXISTS expense_attachments");
+      },
+    },
+    {
+      version: 16,
+      statements: [
+        "CREATE TABLE IF NOT EXISTS leads (\n  id TEXT PRIMARY KEY,\n  full_name TEXT NOT NULL,\n  phone TEXT,\n  email TEXT,\n  source TEXT NOT NULL CHECK (source IN ('facebook', 'instagram', 'whatsapp', 'referral', 'walk_in', 'existing_member', 'other')),\n  interested_plan_id TEXT REFERENCES membership_plans(id),\n  department TEXT NOT NULL DEFAULT 'general' CHECK (department IN ('general', 'men', 'women')),\n  assigned_employee_id TEXT REFERENCES employees(id),\n  assigned_user_id TEXT REFERENCES users(id),\n  status TEXT NOT NULL DEFAULT 'new' CHECK (status IN ('new', 'contacted', 'interested', 'trial', 'joined', 'lost')),\n  notes TEXT,\n  lost_reason TEXT,\n  converted_member_id TEXT REFERENCES members(id),\n  contacted_at TEXT,\n  interested_at TEXT,\n  trial_at TEXT,\n  joined_at TEXT,\n  lost_at TEXT,\n  created_by TEXT REFERENCES users(id),\n  created_at TEXT NOT NULL,\n  updated_at TEXT NOT NULL\n)",
+        "CREATE TABLE IF NOT EXISTS lead_followups (\n  id TEXT PRIMARY KEY,\n  lead_id TEXT NOT NULL REFERENCES leads(id) ON DELETE CASCADE,\n  due_date TEXT NOT NULL,\n  due_time TEXT,\n  note TEXT,\n  done INTEGER NOT NULL DEFAULT 0 CHECK (done IN (0, 1)),\n  done_at TEXT,\n  done_by TEXT REFERENCES users(id),\n  created_by TEXT REFERENCES users(id),\n  created_at TEXT NOT NULL\n)",
+        "CREATE TABLE IF NOT EXISTS lead_activity (\n  id TEXT PRIMARY KEY,\n  lead_id TEXT NOT NULL REFERENCES leads(id) ON DELETE CASCADE,\n  action TEXT NOT NULL,\n  note TEXT,\n  created_by TEXT REFERENCES users(id),\n  created_at TEXT NOT NULL\n)",
+        "CREATE INDEX IF NOT EXISTS idx_leads_status ON leads(status, department)",
+        "CREATE INDEX IF NOT EXISTS idx_leads_phone ON leads(phone)",
+        "CREATE INDEX IF NOT EXISTS idx_lead_followups_due ON lead_followups(lead_id, done, due_date)",
+        "CREATE INDEX IF NOT EXISTS idx_lead_activity_lead ON lead_activity(lead_id, created_at)",
+      ],
+    },
+    {
+      // ---- Trial Membership workflow. A trial is a bounded-access offer
+      // attached optionally to a CRM lead and/or a member. During its active
+      // window the linked member may check in without a paid subscription
+      // (the check-in authority lives in trials.service + attendance.service).
+      // Full history is preserved via the trial row + denormalized member
+      // name/code so it survives a later member purge. ----
+      version: 17,
+      statements: [
+        "CREATE TABLE IF NOT EXISTS trials (\n  id TEXT PRIMARY KEY,\n  trial_type TEXT NOT NULL CHECK (trial_type IN ('free', 'paid', 'day_1', 'day_3', 'day_7', 'custom')),\n  lead_id TEXT REFERENCES leads(id),\n  member_id TEXT REFERENCES members(id),\n  member_code TEXT,\n  member_name TEXT,\n  phone TEXT,\n  preferred_plan_id TEXT REFERENCES membership_plans(id),\n  plan_name TEXT,\n  department TEXT NOT NULL DEFAULT 'general' CHECK (department IN ('general', 'men', 'women')),\n  start_date TEXT NOT NULL,\n  end_date TEXT NOT NULL,\n  notes TEXT,\n  status TEXT NOT NULL DEFAULT 'active' CHECK (status IN ('active', 'expired', 'converted', 'cancelled')),\n  converted_member_id TEXT REFERENCES members(id),\n  created_by TEXT REFERENCES users(id),\n  created_at TEXT NOT NULL,\n  updated_at TEXT NOT NULL,\n  expired_at TEXT,\n  cancelled_at TEXT,\n  cancelled_by TEXT REFERENCES users(id),\n  cancel_reason TEXT,\n  converted_at TEXT,\n  CHECK (end_date >= start_date)\n)",
+        "CREATE INDEX IF NOT EXISTS idx_trials_status ON trials(status, department)",
+        "CREATE INDEX IF NOT EXISTS idx_trials_member ON trials(member_id, status)",
+        "CREATE INDEX IF NOT EXISTS idx_trials_lead ON trials(lead_id)",
+        "CREATE INDEX IF NOT EXISTS idx_trials_dates ON trials(start_date, end_date)",
+      ],
+    },
+    {
+      // ---- Membership Package Builder. A package is a fully configurable
+      // offering (time / visit / hybrid model) with duration, price, optional
+      // visit limit or unlimited visits, freeze allowance, allowed freeze
+      // count, included PT sessions, allowed access areas and description.
+      // -- Architecture: packages live in their OWN table so the legacy
+      // membership_plans table (deeply wired into check-in, reports, payments
+      // and subscriptions) stays untouched. Each package also maintains a
+      // synthetic membership_plans row (synthetic_plan_id → same name/duration/
+      // price, kind mapped to a legacy token) so every existing JOIN keeps
+      // working. When a member subscribes, the chosen package's full config is
+      // SNAPSHOTTED onto the subscription row so later package edits never
+      // mutate historical subscriptions — satisfying "package changes must not
+      // corrupt history" and "historical subscriptions keep their snapshot". ----
+      version: 18,
+      statements: [
+        "CREATE TABLE IF NOT EXISTS packages (\n  id TEXT PRIMARY KEY,\n  name TEXT NOT NULL UNIQUE,\n  model TEXT NOT NULL CHECK (model IN ('time', 'visit', 'hybrid')),\n  duration_days INTEGER NOT NULL CHECK (duration_days > 0),\n  price REAL NOT NULL CHECK (price >= 0),\n  visit_limit INTEGER CHECK (visit_limit IS NULL OR visit_limit > 0),\n  unlimited_visits INTEGER NOT NULL DEFAULT 0 CHECK (unlimited_visits IN (0, 1)),\n  freeze_allowance_days INTEGER NOT NULL DEFAULT 0 CHECK (freeze_allowance_days >= 0),\n  allowed_freezes INTEGER NOT NULL DEFAULT 0 CHECK (allowed_freezes >= 0),\n  pt_sessions INTEGER NOT NULL DEFAULT 0 CHECK (pt_sessions >= 0),\n  allowed_areas TEXT,\n  description TEXT,\n  is_active INTEGER NOT NULL DEFAULT 1 CHECK (is_active IN (0, 1)),\n  synthetic_plan_id TEXT REFERENCES membership_plans(id),\n  created_at TEXT NOT NULL,\n  updated_at TEXT NOT NULL\n)",
+        "CREATE INDEX IF NOT EXISTS idx_packages_active ON packages(is_active)",
+        "ALTER TABLE member_subscriptions ADD COLUMN package_id TEXT REFERENCES packages(id)",
+        "ALTER TABLE member_subscriptions ADD COLUMN package_name TEXT",
+        "ALTER TABLE member_subscriptions ADD COLUMN package_model TEXT CHECK (package_model IS NULL OR package_model IN ('time', 'visit', 'hybrid'))",
+        "ALTER TABLE member_subscriptions ADD COLUMN package_duration_days INTEGER",
+        "ALTER TABLE member_subscriptions ADD COLUMN package_price REAL",
+        "ALTER TABLE member_subscriptions ADD COLUMN package_visit_limit INTEGER",
+        "ALTER TABLE member_subscriptions ADD COLUMN package_unlimited_visits INTEGER NOT NULL DEFAULT 0",
+        "ALTER TABLE member_subscriptions ADD COLUMN package_freeze_allowance_days INTEGER NOT NULL DEFAULT 0",
+        "ALTER TABLE member_subscriptions ADD COLUMN package_allowed_freezes INTEGER NOT NULL DEFAULT 0",
+        "ALTER TABLE member_subscriptions ADD COLUMN package_pt_sessions INTEGER NOT NULL DEFAULT 0",
+      ],
+    },
+    {
+      // ---- v19: Enhanced freeze system ----
+      // Add start_date, end_date, duration_days, notes to subscription_freezes
+      // Backfill existing rows with sensible defaults
+      version: 19,
+      statements: [],
+      callback: (db: Db) => {
+        const existing = new Set(
+          db
+            .all<{ name: string }>("PRAGMA table_info(subscription_freezes)")
+            .map((r) => r.name),
+        );
+        db.transaction(() => {
+          if (!existing.has("start_date")) {
+            db.exec("ALTER TABLE subscription_freezes ADD COLUMN start_date TEXT NOT NULL DEFAULT ''");
+          }
+          if (!existing.has("end_date")) {
+            db.exec("ALTER TABLE subscription_freezes ADD COLUMN end_date TEXT NOT NULL DEFAULT ''");
+          }
+          if (!existing.has("duration_days")) {
+            db.exec("ALTER TABLE subscription_freezes ADD COLUMN duration_days INTEGER NOT NULL DEFAULT 0");
+          }
+          if (!existing.has("notes")) {
+            db.exec("ALTER TABLE subscription_freezes ADD COLUMN notes TEXT");
+          }
+          // Backfill existing freeze rows that lack the new fields
+          const freezes = db.all<{ id: string; subscription_id: string; frozen_at: string; expected_resume_date: string | null }>(
+            "SELECT id, subscription_id, frozen_at, expected_resume_date FROM subscription_freezes WHERE start_date = ''",
+          );
+          for (const f of freezes) {
+            const startDate = f.frozen_at.slice(0, 10);
+            let endDate = f.expected_resume_date;
+            if (!endDate) {
+              const sub = db.first<{ end_date: string }>(
+                "SELECT end_date FROM member_subscriptions WHERE id = ?",
+                [f.subscription_id],
+              );
+              endDate = sub?.end_date ?? startDate;
+            }
+            const duration = Math.max(0, diffDaysKeys(startDate, endDate) + 1);
+            db.run(
+              "UPDATE subscription_freezes SET start_date = ?, end_date = ?, duration_days = ? WHERE id = ?",
+              [startDate, endDate, duration, f.id],
+            );
+          }
+        });
+      },
+    },
+    {
+      // ---- v20: Daily closing workflow ----
+      // Per-business-date reconciliation of expected vs counted cash per cash box.
+      // One CURRENT row per (business_date, box); reopen creates a new row and
+      // marks the previous as 'reopened' (immutable history).
+      version: 20,
+      statements: [],
+      callback: (db: Db) => {
+        const existing = new Set(
+          db.all<{ name: string }>("SELECT name FROM sqlite_master WHERE type = 'table'").map((r) => r.name),
+        );
+        if (!existing.has("daily_closings")) {
+          db.run("CREATE TABLE daily_closings (id TEXT PRIMARY KEY, business_date TEXT NOT NULL, box TEXT NOT NULL CHECK (box IN ('gym','store')), status TEXT NOT NULL CHECK (status IN ('open','closed','reopened')), opening_balance_minor INTEGER NOT NULL CHECK (opening_balance_minor >= 0), expected_cash_minor INTEGER NOT NULL CHECK (expected_cash_minor >= 0), expected_card_minor INTEGER NOT NULL CHECK (expected_card_minor >= 0), expected_transfer_minor INTEGER NOT NULL CHECK (expected_transfer_minor >= 0), expected_other_minor INTEGER NOT NULL CHECK (expected_other_minor >= 0), expected_total_minor INTEGER NOT NULL CHECK (expected_total_minor >= 0), counted_cash_minor INTEGER, difference_minor INTEGER, reason TEXT, responsible_user_id TEXT REFERENCES users(id), responsible_user_name TEXT, opened_by TEXT NOT NULL REFERENCES users(id), opened_by_name TEXT NOT NULL, opened_at TEXT NOT NULL, closed_by TEXT REFERENCES users(id), closed_by_name TEXT, closed_at TEXT, reopen_reason TEXT, reopened_by TEXT REFERENCES users(id), reopened_by_name TEXT, reopened_at TEXT, reopen_count INTEGER NOT NULL DEFAULT 0 CHECK (reopen_count >= 0), superseded_by TEXT REFERENCES daily_closings(id), CHECK ((status = 'open' AND counted_cash_minor IS NULL AND difference_minor IS NULL AND closed_by IS NULL AND closed_at IS NULL) OR (status = 'closed' AND counted_cash_minor IS NOT NULL AND closed_by IS NOT NULL AND closed_at IS NOT NULL) OR (status = 'reopened' AND counted_cash_minor IS NOT NULL AND closed_by IS NOT NULL AND closed_at IS NOT NULL AND reopened_by IS NOT NULL)))");
+          db.run("CREATE INDEX idx_daily_closings_date ON daily_closings(business_date)");
+          db.run("CREATE INDEX idx_daily_closings_status ON daily_closings(status, business_date)");
+          db.run("CREATE INDEX idx_daily_closings_active ON daily_closings(business_date, box) WHERE superseded_by IS NULL");
+        }
+        if (!existing.has("daily_closing_audit_entries")) {
+          db.run("CREATE TABLE daily_closing_audit_entries (id TEXT PRIMARY KEY, daily_closing_id TEXT NOT NULL REFERENCES daily_closings(id), method_code TEXT NOT NULL, expected_minor INTEGER NOT NULL CHECK (expected_minor >= 0), actual_minor INTEGER, UNIQUE (daily_closing_id, method_code))");
+          db.run("CREATE INDEX idx_daily_closing_audit ON daily_closing_audit_entries(daily_closing_id)");
+        }
+        db.run("INSERT OR IGNORE INTO permissions (code) VALUES ('cash.daily_close')");
+        db.run("INSERT OR IGNORE INTO permissions (code) VALUES ('cash.daily_reopen')");
+        db.run("INSERT OR IGNORE INTO role_permissions (role_id, permission_code) VALUES ('manager', 'cash.daily_close')");
+        db.run("INSERT OR IGNORE INTO role_permissions (role_id, permission_code) VALUES ('manager', 'cash.daily_reopen')");
+        db.run("INSERT OR IGNORE INTO role_permissions (role_id, permission_code) VALUES ('reception', 'cash.daily_close')");
+      },
+    },
+    {
+      version: 21,
+      statements: [],
+      callback: (db) => {
+        db.exec("PRAGMA foreign_keys = OFF");
+        db.exec(
+          "CREATE TABLE products_v21 (\n  id TEXT PRIMARY KEY,\n  name TEXT NOT NULL,\n  category_id TEXT REFERENCES product_categories(id),\n  sku TEXT UNIQUE,\n  barcode TEXT UNIQUE,\n  cost_minor INTEGER NOT NULL DEFAULT 0 CHECK (cost_minor >= 0),\n  price_minor INTEGER NOT NULL CHECK (price_minor >= 0),\n  stock_qty REAL NOT NULL DEFAULT 0,\n  min_stock_qty REAL NOT NULL DEFAULT 0 CHECK (min_stock_qty >= 0),\n  supplier_name TEXT,\n  is_active INTEGER NOT NULL DEFAULT 1 CHECK (is_active IN (0, 1)),\n  created_by TEXT REFERENCES users(id),\n  created_at TEXT NOT NULL,\n  updated_at TEXT NOT NULL\n)",
+        );
+        db.exec("INSERT INTO products_v21 SELECT * FROM products");
+        db.exec("DROP TABLE products");
+        db.exec("ALTER TABLE products_v21 RENAME TO products");
+        db.exec("CREATE INDEX IF NOT EXISTS idx_products_category ON products(category_id)");
+        db.exec("CREATE INDEX IF NOT EXISTS idx_products_active ON products(is_active)");
+        db.exec("CREATE INDEX IF NOT EXISTS idx_products_name ON products(name)");
+
+        db.exec(
+          "CREATE TABLE stock_movements_v21 (\n  id TEXT PRIMARY KEY,\n  product_id TEXT NOT NULL REFERENCES products(id),\n  movement_type TEXT NOT NULL CHECK (movement_type IN ('stock_in', 'sale', 'manual_adjust', 'damage', 'count_correction', 'return', 'lost')),\n  delta REAL NOT NULL,\n  result_qty REAL NOT NULL,\n  unit_cost_minor INTEGER,\n  ref_table TEXT,\n  ref_id TEXT,\n  notes TEXT,\n  created_by TEXT REFERENCES users(id),\n  created_at TEXT NOT NULL\n)",
+        );
+        db.exec("INSERT INTO stock_movements_v21 SELECT * FROM stock_movements");
+        db.exec("DROP TABLE stock_movements");
+        db.exec("ALTER TABLE stock_movements_v21 RENAME TO stock_movements");
+        db.exec("CREATE INDEX IF NOT EXISTS idx_stock_moves_product ON stock_movements(product_id, created_at)");
+        db.exec("CREATE INDEX IF NOT EXISTS idx_stock_moves_type ON stock_movements(movement_type)");
+
+        const itemCols = new Set(
+          db.all<{ name: string }>("PRAGMA table_info(store_sale_items)").map((c) => c.name),
+        );
+        if (!itemCols.has("returned_qty")) {
+          db.exec(
+            "ALTER TABLE store_sale_items ADD COLUMN returned_qty REAL NOT NULL DEFAULT 0 CHECK (returned_qty >= 0)",
+          );
+        }
+        db.exec(
+          "CREATE TABLE IF NOT EXISTS store_returns (\n  id TEXT PRIMARY KEY,\n  sale_id TEXT NOT NULL REFERENCES store_sales(id),\n  amount_minor INTEGER NOT NULL CHECK (amount_minor >= 0),\n  reason TEXT,\n  created_by TEXT REFERENCES users(id),\n  created_at TEXT NOT NULL\n)",
+        );
+        db.exec("CREATE INDEX IF NOT EXISTS idx_store_returns_sale ON store_returns(sale_id)");
+        db.exec("INSERT OR IGNORE INTO settings (key, value) VALUES ('allow_negative_stock', '0')");
+        db.exec("PRAGMA foreign_keys = ON");
+      },
+    },
+    {
+      version: 22,
+      statements: [],
+      callback: (db: Db) => {
+        // Item-level sales returns (partial/full) with a fixed receipt number.
+        const returnCols = new Set(
+          db.all<{ name: string }>("PRAGMA table_info(store_returns)").map((c) => c.name),
+        );
+        if (!returnCols.has("return_no"))
+          db.run("ALTER TABLE store_returns ADD COLUMN return_no TEXT");
+        if (!returnCols.has("items_total_minor"))
+          db.run("ALTER TABLE store_returns ADD COLUMN items_total_minor INTEGER NOT NULL DEFAULT 0");
+        if (!returnCols.has("discount_minor"))
+          db.run("ALTER TABLE store_returns ADD COLUMN discount_minor INTEGER NOT NULL DEFAULT 0");
+        if (!returnCols.has("total_minor"))
+          db.run("ALTER TABLE store_returns ADD COLUMN total_minor INTEGER NOT NULL DEFAULT 0");
+        if (!returnCols.has("box"))
+          db.run("ALTER TABLE store_returns ADD COLUMN box TEXT NOT NULL DEFAULT 'store'");
+        db.run("CREATE UNIQUE INDEX IF NOT EXISTS idx_store_returns_return_no ON store_returns(return_no)");
+        db.run("CREATE INDEX IF NOT EXISTS idx_store_returns_created ON store_returns(created_at)");
+        db.run(
+          "CREATE TABLE IF NOT EXISTS store_return_items (\n  id TEXT PRIMARY KEY,\n  return_id TEXT NOT NULL REFERENCES store_returns(id),\n  sale_item_id TEXT NOT NULL REFERENCES store_sale_items(id),\n  product_id TEXT NOT NULL REFERENCES products(id),\n  product_name_snapshot TEXT NOT NULL,\n  qty REAL NOT NULL CHECK (qty > 0),\n  unit_price_minor INTEGER NOT NULL CHECK (unit_price_minor >= 0),\n  unit_cost_minor INTEGER NOT NULL DEFAULT 0 CHECK (unit_cost_minor >= 0),\n  line_total_minor INTEGER NOT NULL CHECK (line_total_minor >= 0)\n)",
+        );
+        db.run("CREATE INDEX IF NOT EXISTS idx_store_return_items_return ON store_return_items(return_id)");
+        db.run("CREATE INDEX IF NOT EXISTS idx_store_return_items_product ON store_return_items(product_id)");
+        db.run("CREATE INDEX IF NOT EXISTS idx_store_return_items_sale_item ON store_return_items(sale_item_id)");
+        db.run("INSERT OR IGNORE INTO permissions (code) VALUES ('store.return')");
+        db.run("INSERT OR IGNORE INTO role_permissions (role_id, permission_code) VALUES ('manager', 'store.return')");
       },
     },
   ];

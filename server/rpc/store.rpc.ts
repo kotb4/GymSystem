@@ -21,4 +21,11 @@ export const store = defineService({
   repayStoreDebt: a(storeService.repayStoreDebt as Fn),
   getMemberStoreDebtTotal: a(storeService.getMemberStoreDebtTotal as Fn),
   getStoreStats: a(storeService.getStoreStats as Fn),
+  returnStoreSale: a(storeService.returnStoreSale as Fn),
+  getStoreReturn: a(storeService.getStoreReturn as Fn),
+  listStoreReturns: a(storeService.listStoreReturns as Fn),
+  getDailySalesReport: a(storeService.getDailySalesReport as Fn),
+  getProductSalesReport: a(storeService.getProductSalesReport as Fn),
+  getStockValue: a(storeService.getStockValue as Fn),
+  listLowStockProducts: a(storeService.listLowStockProducts as Fn),
 });

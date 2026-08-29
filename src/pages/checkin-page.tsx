@@ -6,8 +6,9 @@ import { useToast } from "@/components/ui/toast";
 import { describeError } from "@/utils/app-error";
 import { api, type CardWithMember } from "@/api";
 import type { CheckInResult, RecentCheckIn } from "@/core/services/attendance.service";
-import { diffDaysKeys, todayKey } from "@/core/dates";
+import { safeDiffDaysKeys, todayKey } from "@/core/dates";
 import { formatMinor } from "@/core/money";
+import { trialPlanLabel } from "@/utils/trial-label";
 
 import { useConfiguredScanner } from "@/hooks/use-configured-scanner";
 
@@ -277,7 +278,7 @@ export function CheckInPage() {
 
 function SuccessPanel({ result }: { result: Extract<CheckInResult, { kind: "success" }> }) {
   const t = useT();
-  const left = diffDaysKeys(result.subscriptionEndsAt, todayKey());
+  const left = safeDiffDaysKeys(result.subscriptionEndsAt, todayKey());
   return (
     <div className="animate-pop rounded-2xl border border-neon/40 bg-neon/[0.07] p-5 shadow-glow-sm">
       <div className="flex items-center gap-3.5">
@@ -291,9 +292,11 @@ function SuccessPanel({ result }: { result: Extract<CheckInResult, { kind: "succ
       </div>
       <dl className="mt-4 grid grid-cols-2 gap-x-6 gap-y-2.5 border-t border-neon/20 pt-4 text-[13px] sm:grid-cols-4">
         <Info label={t("members.code")} value={result.memberCode} ltr />
-        <Info label={t("common.plan")} value={result.planName ?? "-"} />
-        <Info label={t("checkin.fieldExpiry")} value={result.subscriptionEndsAt} ltr />
-        <Info label={t("checkin.fieldRemaining")} value={`${left}`} ltr />
+        <Info label={t("common.plan")} value={trialPlanLabel(result.planName, t) ?? "-"} />
+        {result.subscriptionEndsAt && (
+          <Info label={t("checkin.fieldExpiry")} value={result.subscriptionEndsAt} ltr />
+        )}
+        {left != null && <Info label={t("checkin.fieldRemaining")} value={`${left}`} ltr />}
         {result.sessionsRemaining != null && (
           <Info label={t("checkin.sessionsLeft")} value={`${result.sessionsRemaining}`} ltr />
         )}

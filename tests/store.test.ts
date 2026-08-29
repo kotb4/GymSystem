@@ -15,7 +15,14 @@ import {
   getSale,
   voidStoreSale,
   repayStoreDebt,
+  returnStoreSale,
+  getStoreReturn,
+  listStoreReturns,
   getStoreStats,
+  getDailySalesReport,
+  getProductSalesReport,
+  getStockValue,
+  listLowStockProducts,
   getMemberStoreDebtTotal,
 } from "@/core/services/store.service";
 import { writeSettingInternal, SETTING_KEYS } from "@/core/services/settings.service";
@@ -239,5 +246,195 @@ describe("permission denials", () => {
     await expect(
       createProduct(db, reception, { name: "ممنوع", costMinor: 1000, priceMinor: 2000 }),
     ).rejects.toThrow();
+  });
+});
+
+describe("returns", () => {
+  it("returns a partial quantity, restocks and records movement", async () => {
+    const p = await seedProduct({ stockQty: 10, priceMinor: 10000, costMinor: 5000 });
+    const sale = await createSale(db, owner, {
+      items: [{ productId: p.id, qty: 4 }],
+      methodCode: "cash",
+    });
+    const item = getSale(db, owner, sale.id).items[0];
+
+    const ret = await returnStoreSale(db, owner, {
+      saleId: sale.id,
+      lines: [{ saleItemId: item.id, qty: 1 }],
+      reason: "استبدال",
+    });
+
+    expect(ret.returnNo).toMatch(/^RTN-/);
+    expect(ret.totalMinor).toBe(1 * 10000);
+    expect(ret.items.length).toBe(1);
+    expect(ret.items[0].productId).toBe(p.id);
+
+    // stock restored by 1
+    expect(getProduct(db, owner, p.id).stockQty).toBe(7); // 10 - 4 + 1
+
+    // movement recorded as 'return'
+    const movements = listStockMovements(db, owner, { productId: p.id });
+    expect(movements.some((m) => m.movementType === "return" && m.delta === 1)).toBe(true);
+
+    // listStoreReturns shows it
+    const listed = listStoreReturns(db, owner, {});
+    expect(listed.items.some((r) => r.id === ret.id)).toBe(true);
+  });
+
+  it("blocks returning more than the remaining quantity", async () => {
+    const p = await seedProduct({ stockQty: 10, priceMinor: 10000 });
+    const sale = await createSale(db, owner, {
+      items: [{ productId: p.id, qty: 2 }],
+      methodCode: "cash",
+    });
+    const item = getSale(db, owner, sale.id).items[0];
+
+    await returnStoreSale(db, owner, {
+      saleId: sale.id,
+      lines: [{ saleItemId: item.id, qty: 1 }],
+    });
+
+    await expect(
+      returnStoreSale(db, owner, {
+        saleId: sale.id,
+        lines: [{ saleItemId: item.id, qty: 2 }],
+      }),
+    ).rejects.toThrow();
+  });
+
+  it("blocks returns on credit sales", async () => {
+    const m = await member();
+    const p = await seedProduct({ stockQty: 5, priceMinor: 10000 });
+    const sale = await createSale(db, owner, {
+      items: [{ productId: p.id, qty: 1 }],
+      methodCode: "cash",
+      isCredit: true,
+      memberId: m.id,
+    });
+    const item = getSale(db, owner, sale.id).items[0];
+    await expect(
+      returnStoreSale(db, owner, {
+        saleId: sale.id,
+        lines: [{ saleItemId: item.id, qty: 1 }],
+      }),
+    ).rejects.toThrow();
+  });
+
+  it("voiding a sale after a return restocks only unreturned qty", async () => {
+    const p = await seedProduct({ stockQty: 10, priceMinor: 10000 });
+    const sale = await createSale(db, owner, {
+      items: [{ productId: p.id, qty: 3 }],
+      methodCode: "cash",
+    });
+    const item = getSale(db, owner, sale.id).items[0];
+    await returnStoreSale(db, owner, {
+      saleId: sale.id,
+      lines: [{ saleItemId: item.id, qty: 1 }],
+    });
+
+    // stock: 10 - 3 + 1 = 8
+    expect(getProduct(db, owner, p.id).stockQty).toBe(8);
+
+    await voidStoreSale(db, owner, sale.id, "إلغاء");
+    // void restocks the unreturned 2 => 10
+    expect(getProduct(db, owner, p.id).stockQty).toBe(10);
+  });
+
+  it("denies reception from returning", async () => {
+    const p = await seedProduct({ stockQty: 5, priceMinor: 10000 });
+    const sale = await createSale(db, owner, {
+      items: [{ productId: p.id, qty: 1 }],
+      methodCode: "cash",
+    });
+    const item = getSale(db, owner, sale.id).items[0];
+    await expect(
+      returnStoreSale(db, reception, {
+        saleId: sale.id,
+        lines: [{ saleItemId: item.id, qty: 1 }],
+      }),
+    ).rejects.toThrow();
+  });
+});
+
+describe("lost stock", () => {
+  it("loses stock via adjustStock and records a lost movement", async () => {
+    const p = await seedProduct({ stockQty: 10 });
+    await adjustStock(db, owner, {
+      productId: p.id,
+      movementType: "lost",
+      delta: -3,
+      notes: "ضائع",
+    });
+    expect(getProduct(db, owner, p.id).stockQty).toBe(7);
+    const movements = listStockMovements(db, owner, { productId: p.id });
+    expect(movements.some((m) => m.movementType === "lost" && m.delta === -3)).toBe(true);
+  });
+});
+
+describe("store reports", () => {
+  it("daily sales report nets returns", async () => {
+    const p = await seedProduct({ stockQty: 20, priceMinor: 10000, costMinor: 4000 });
+    const sale = await createSale(db, owner, {
+      items: [{ productId: p.id, qty: 2 }],
+      methodCode: "cash",
+    });
+    const item = getSale(db, owner, sale.id).items[0];
+    await returnStoreSale(db, owner, {
+      saleId: sale.id,
+      lines: [{ saleItemId: item.id, qty: 1 }],
+    });
+
+    const day = todayKey();
+    const rows = getDailySalesReport(db, owner, { fromKey: day, toKey: day });
+    const row = rows.find((r) => r.dateKey === day);
+    expect(row).toBeDefined();
+    expect(row!.salesCount).toBe(1);
+    expect(row!.returnsCount).toBe(1);
+    expect(row!.netMinor).toBe(10000); // 2*10000 - 1*10000
+  });
+
+  it("product sales report shows best-seller with net units", async () => {
+    const p = await seedProduct({ stockQty: 20, priceMinor: 10000, costMinor: 4000 });
+    const sale = await createSale(db, owner, {
+      items: [{ productId: p.id, qty: 3 }],
+      methodCode: "cash",
+    });
+    const item = getSale(db, owner, sale.id).items[0];
+    await returnStoreSale(db, owner, {
+      saleId: sale.id,
+      lines: [{ saleItemId: item.id, qty: 1 }],
+    });
+
+    const day = todayKey();
+    const rows = getProductSalesReport(db, owner, { fromKey: day, toKey: day });
+    const row = rows.find((r) => r.productId === p.id);
+    expect(row).toBeDefined();
+    expect(row!.unitsSold).toBe(3);
+    expect(row!.unitsReturned).toBe(1);
+    expect(row!.netUnits).toBe(2);
+  });
+
+  it("stock value aggregates on-hand inventory", async () => {
+    const p = await seedProduct({ stockQty: 10, priceMinor: 10000, costMinor: 4000 });
+    const value = getStockValue(db, owner);
+    expect(value.productCount).toBeGreaterThanOrEqual(1);
+    expect(value.totalCostMinor).toBeGreaterThanOrEqual(10 * 4000);
+    expect(value.potentialRetailMinor).toBeGreaterThanOrEqual(10 * 10000);
+  });
+
+  it("low-stock products flags stocked-at-or-below-min", async () => {
+    await seedProduct({ stockQty: 3, minStockQty: 5 }); // below min
+    await seedProduct({ stockQty: 5, minStockQty: 5 }); // at min
+    await seedProduct({ stockQty: 50, minStockQty: 5 }); // fine
+    const low = listLowStockProducts(db, owner, {});
+    expect(low.length).toBeGreaterThanOrEqual(2);
+  });
+
+  it("denies reception from reports", () => {
+    const day = todayKey();
+    expect(() => getDailySalesReport(db, reception, { fromKey: day, toKey: day })).toThrow();
+    expect(() => getProductSalesReport(db, reception, { fromKey: day, toKey: day })).toThrow();
+    expect(() => getStockValue(db, reception)).toThrow();
+    expect(() => listLowStockProducts(db, reception, {})).toThrow();
   });
 });

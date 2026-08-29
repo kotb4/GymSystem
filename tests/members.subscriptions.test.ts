@@ -11,8 +11,10 @@ import { createPlan } from "@/core/services/plans.service";
 import {
   createSubscription,
   effectiveStatus,
+  freezeSubscription,
   listExpiringSubscriptions,
   listMemberSubscriptions,
+  listSubscriptions,
   updateSubscription,
 } from "@/core/services/subscriptions.service";
 import { addDaysKey, todayKey } from "@/core/dates";
@@ -276,5 +278,111 @@ describe("subscriptions service", () => {
     expect(
       db.count("SELECT COUNT(*) AS c FROM audit_logs WHERE action = 'MEMBER_PURGED'"),
     ).toBe(1);
+  });
+});
+
+describe("members — strict duplicate name enforcement", () => {
+  it("rejects creating a new member with an existing active member name", async () => {
+    await createMember(db, owner, { fullName: "محمد علي", phone: "01011111111" });
+    let err: unknown = null;
+    try {
+      await createMember(db, owner, { fullName: "محمد علي", phone: "01022222222" });
+    } catch (e) {
+      err = e;
+    }
+    expect(err).not.toBeNull();
+    expect((err as { code: string }).code).toBe("CONFLICT");
+    expect((err as { messageKey: string }).messageKey).toBe("errors.nameTaken");
+  });
+
+  it("allows the same name to be reused after the original is hard-purged", async () => {
+    const a = await createMember(db, owner, { fullName: "اسم مكرر", phone: "01011111111" });
+    const { trashMember, purgeMember, listTrashedMembers } = await import(
+      "@/core/services/members.service"
+    );
+    await trashMember(db, owner, a.id, "اختبار");
+    expect(listTrashedMembers(db, owner)).toHaveLength(1);
+    await purgeMember(db, owner, a.id);
+    // After purge the row is gone, so the name is reusable
+    const b = await createMember(db, owner, { fullName: "اسم مكرر", phone: "01022222222" });
+    expect(b.id).not.toBe(a.id);
+  });
+
+  it("rejects updating a member name to a duplicate of another active member", async () => {
+    const a = await createMember(db, owner, { fullName: "الاسم الأول", phone: "01011111111" });
+    const b = await createMember(db, owner, { fullName: "الاسم الثاني", phone: "01022222222" });
+    let err: unknown = null;
+    try {
+      await updateMember(db, owner, b.id, { fullName: "الاسم الأول" });
+    } catch (e) {
+      err = e;
+    }
+    expect(err).not.toBeNull();
+    expect((err as { code: string }).code).toBe("CONFLICT");
+    expect((err as { messageKey: string }).messageKey).toBe("errors.nameTaken");
+    // 'a' was not changed
+    const aAfter = db.first<{ full_name: string }>("SELECT full_name FROM members WHERE id = ?", [a.id]);
+    expect(aAfter?.full_name).toBe("الاسم الأول");
+  });
+
+  it("allows updating a member name to its own current value (no-op edit)", async () => {
+    const a = await createMember(db, owner, { fullName: "نفس الاسم", phone: "01011111111" });
+    const updated = await updateMember(db, owner, a.id, { fullName: "نفس الاسم" });
+    expect(updated.fullName).toBe("نفس الاسم");
+  });
+});
+
+describe("listSubscriptions — memberId filter", () => {
+  it("returns only the requested member's subscriptions", async () => {
+    const { listSubscriptions } = await import("@/core/services/subscriptions.service");
+    const a = await member({ fullName: `عضو-أ-${Math.random()}` });
+    const b = await member({ fullName: `عضو-ب-${Math.random()}` });
+    await createSubscription(db, owner, { memberId: a.id, planId: (await createPlan(db, owner, { name: `خطة أ-${Math.random()}`, durationDays: 30, price: 100 })).id });
+    await createSubscription(db, owner, { memberId: b.id, planId: (await createPlan(db, owner, { name: `خطة ب-${Math.random()}`, durationDays: 30, price: 200 })).id });
+    const all = listSubscriptions(db, owner, { pageSize: 100 });
+    expect(all.total).toBe(2);
+    const onlyA = listSubscriptions(db, owner, { pageSize: 100, memberId: a.id });
+    expect(onlyA.total).toBe(1);
+    expect(onlyA.items[0].memberId).toBe(a.id);
+    const onlyB = listSubscriptions(db, owner, { pageSize: 100, memberId: b.id });
+    expect(onlyB.total).toBe(1);
+    expect(onlyB.items[0].memberId).toBe(b.id);
+  });
+});
+
+describe("listSubscriptions — frozen vs suspended", () => {
+  it("filters frozen separately from suspended-without-freeze", async () => {
+    const frozenMember = await member({ fullName: `مجمد-${Math.random()}` });
+    const suspendedMember = await member({ fullName: `موقوف-${Math.random()}` });
+    const frozenPlan = await createPlan(db, owner, {
+      name: `خطة تجميد-${Math.random()}`,
+      durationDays: 30,
+      price: 100,
+    });
+    const suspendedPlan = await createPlan(db, owner, {
+      name: `خطة إيقاف-${Math.random()}`,
+      durationDays: 30,
+      price: 100,
+    });
+    const frozenSub = await createSubscription(db, owner, {
+      memberId: frozenMember.id,
+      planId: frozenPlan.id,
+    });
+    const suspendedSub = await createSubscription(db, owner, {
+      memberId: suspendedMember.id,
+      planId: suspendedPlan.id,
+    });
+    await freezeSubscription(db, owner, frozenSub.id, {
+      endDate: addDaysKey(todayKey(), 3),
+      reason: "سفر",
+    });
+    db.run("UPDATE member_subscriptions SET status = 'suspended', frozen_at = NULL WHERE id = ?", [
+      suspendedSub.id,
+    ]);
+
+    const frozen = listSubscriptions(db, owner, { pageSize: 100, effective: "frozen" });
+    expect(frozen.items.map((s) => s.id)).toEqual([frozenSub.id]);
+    const suspended = listSubscriptions(db, owner, { pageSize: 100, effective: "suspended" });
+    expect(suspended.items.map((s) => s.id)).toEqual([suspendedSub.id]);
   });
 });

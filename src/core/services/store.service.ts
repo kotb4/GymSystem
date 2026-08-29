@@ -323,7 +323,7 @@ function insertMovement(
   db: Db,
   input: {
     productId: string;
-    movementType: "stock_in" | "sale" | "manual_adjust" | "damage" | "count_correction";
+    movementType: "stock_in" | "sale" | "manual_adjust" | "damage" | "count_correction" | "return" | "lost";
     delta: number;
     resultQty: number;
     unitCostMinor?: number | null;
@@ -340,7 +340,7 @@ function insertMovement(
       input.delta,
       input.resultQty,
       input.unitCostMinor ?? null,
-      input.saleRefId ? "store_sales" : null,
+      (input.saleRefId || input.movementType === "return") ? ((input.movementType === "return") ? "store_returns" : "store_sales") : null,
       input.saleRefId ?? null,
       input.notes ?? null,
       null,
@@ -355,7 +355,7 @@ export async function adjustStock(
   actor: ServiceActor,
   input: {
     productId: string;
-    movementType: "stock_in" | "manual_adjust" | "damage" | "count_correction";
+    movementType: "stock_in" | "manual_adjust" | "damage" | "count_correction" | "lost";
     delta: number;
     unitCostMinor?: number | null;
     notes?: string | null;
@@ -397,9 +397,11 @@ export interface CreateSaleInput {
 }
 
 export interface StoreSaleItem {
+  id: string;
   productId: string;
   productName: string;
   qty: number;
+  returnedQty: number;
   unitPriceMinor: number;
   lineTotalMinor: number;
 }
@@ -451,9 +453,11 @@ export function getSale(db: Db, actor: ServiceActor, saleId: string): StoreSale 
   const items = db
     .all<Row>("SELECT * FROM store_sale_items WHERE sale_id = ?", [saleId])
     .map<StoreSaleItem>((it) => ({
+      id: str(it.id),
       productId: str(it.product_id),
       productName: str(it.product_name_snapshot),
       qty: num(it.qty),
+      returnedQty: num(it.returned_qty),
       unitPriceMinor: num(it.unit_price_minor),
       lineTotalMinor: num(it.line_total_minor),
     }));
@@ -623,8 +627,9 @@ export async function voidStoreSale(db: Db, actor: ServiceActor, saleId: string,
   await db.transaction(async () => {
     for (const it of items) {
       const pid = String(it.product_id);
-      const qty = Number(it.qty);
-      const newQty = guardAndApply(db, pid, qty); // restock on void
+      const qty = Number(it.qty) - num(it.returned_qty); // restock only unreturned qty on void
+      if (qty <= 0) continue;
+      const newQty = guardAndApply(db, pid, qty);
       insertMovement(db, {
         productId: pid,
         movementType: "count_correction",
@@ -639,6 +644,7 @@ export async function voidStoreSale(db: Db, actor: ServiceActor, saleId: string,
       [trimmed, actor.userId, stamp(), saleId],
     );
     if (num(sale.is_credit) !== 1 && num(sale.total_minor) > 0) {
+      const returnedMinor = num(db.scalar("SELECT COALESCE(SUM(total_minor),0) FROM store_returns WHERE sale_id = ?", [saleId]));
       insertLedgerEntry(db, {
         entryType: "reversal_payment",
         refTable: "store_sales",
@@ -646,7 +652,7 @@ export async function voidStoreSale(db: Db, actor: ServiceActor, saleId: string,
         memberId: sale.member_id == null ? null : String(sale.member_id),
         methodCode: str(sale.method_code),
         direction: -1,
-        amountMinor: num(sale.total_minor),
+        amountMinor: Math.max(0, num(sale.total_minor) - returnedMinor),
         occurredAt: stamp(),
         actor,
         box: "store",
@@ -668,7 +674,8 @@ export async function unvoidStoreSale(db: Db, actor: ServiceActor, saleId: strin
   await db.transaction(async () => {
     for (const it of items) {
       const pid = str(it.product_id);
-      const qty = Number(it.qty);
+      const qty = Number(it.qty) - num(it.returned_qty); // re-deduct only unreturned qty on unvoid
+      if (qty <= 0) continue;
       const newQty = guardAndApply(db, pid, -qty);
       insertMovement(db, {
         productId: pid,
@@ -692,6 +699,238 @@ export async function unvoidStoreSale(db: Db, actor: ServiceActor, saleId: strin
     recordAudit(db, actor, "SALE_RESTORED", "store_sale", saleId, {});
   });
 }
+
+// ------------------------------ returns -----------------------------------
+
+export interface StoreReturnItemRow {
+  id: string;
+  returnId: string;
+  saleItemId: string;
+  productId: string;
+  productName: string;
+  qty: number;
+  unitPriceMinor: number;
+  unitCostMinor: number;
+  lineTotalMinor: number;
+}
+
+export interface StoreReturnRow {
+  id: string;
+  returnNo: string;
+  saleId: string;
+  saleNo: string;
+  memberId: string | null;
+  memberName: string | null;
+  itemsTotalMinor: number;
+  discountMinor: number;
+  totalMinor: number;
+  reason: string | null;
+  box: string;
+  createdBy: string;
+  createdAt: string;
+  items: StoreReturnItemRow[];
+}
+
+const RETURN_SELECT =
+  "SELECT r.*, s.sale_no AS sale_no, m.full_name AS member_name FROM store_returns r JOIN store_sales s ON s.id = r.sale_id LEFT JOIN members m ON m.id = s.member_id";
+
+function mapReturnHead(r: Row): Omit<StoreReturnRow, "items"> {
+  return {
+    id: str(r.id),
+    returnNo: str(r.return_no),
+    saleId: str(r.sale_id),
+    saleNo: str(r.sale_no),
+    memberId: r.member_id == null ? null : str(r.member_id),
+    memberName: r.member_name == null ? null : str(r.member_name),
+    itemsTotalMinor: num(r.items_total_minor),
+    discountMinor: num(r.discount_minor),
+    totalMinor: num(r.total_minor),
+    reason: r.reason == null ? null : str(r.reason),
+    box: str(r.box),
+    createdBy: str(r.created_by),
+    createdAt: str(r.created_at),
+  };
+}
+
+export function getStoreReturn(db: Db, actor: ServiceActor, returnId: string): StoreReturnRow {
+  requirePermission(actor, "store.view");
+  const head = db.first<Row>(`${RETURN_SELECT} WHERE r.id = ?`, [returnId]);
+  if (!head) throw errNotFound("errors.store.returnNotFound");
+  const items = db
+    .all<Row>("SELECT * FROM store_return_items WHERE return_id = ?", [returnId])
+    .map<StoreReturnItemRow>((it) => ({
+      id: str(it.id),
+      returnId: str(it.return_id),
+      saleItemId: str(it.sale_item_id),
+      productId: str(it.product_id),
+      productName: str(it.product_name_snapshot),
+      qty: num(it.qty),
+      unitPriceMinor: num(it.unit_price_minor),
+      unitCostMinor: num(it.unit_cost_minor),
+      lineTotalMinor: num(it.line_total_minor),
+    }));
+  return { ...mapReturnHead(head), items };
+}
+
+export interface ReturnListQuery {
+  fromKey?: string;
+  toKey?: string;
+  search?: string;
+  page?: number;
+  pageSize?: number;
+}
+
+export function listStoreReturns(db: Db, actor: ServiceActor, query: ReturnListQuery = {}) {
+  requirePermission(actor, "store.view");
+  const page = Math.max(1, query.page ?? 1);
+  const pageSize = Math.min(100, Math.max(1, query.pageSize ?? 20));
+  const conditions: string[] = [];
+  const params: Num[] = [];
+  const search = query.search?.trim();
+  if (search) {
+    conditions.push("(r.return_no LIKE ? OR s.sale_no LIKE ? OR m.full_name LIKE ? OR m.member_code LIKE ?)");
+    params.push(`%${search}%`, `%${search}%`, `%${search}%`, `%${search}%`);
+  }
+  if (query.fromKey) {
+    conditions.push("r.created_at >= ?");
+    params.push(`${query.fromKey} 00:00:00`);
+  }
+  if (query.toKey) {
+    conditions.push("r.created_at <= ?");
+    params.push(`${query.toKey} 23:59:59`);
+  }
+  const join = "JOIN store_sales s ON s.id = r.sale_id LEFT JOIN members m ON m.id = s.member_id";
+  const where = conditions.length > 0 ? `WHERE ${conditions.join(" AND ")}` : "";
+  const total = db.count(`SELECT COUNT(*) FROM store_returns r ${join} ${where}`, params);
+  const rows = db.all<Row>(
+    `${RETURN_SELECT} ${where} ORDER BY r.created_at DESC LIMIT ? OFFSET ?`,
+    [...params, pageSize, (page - 1) * pageSize],
+  );
+  return { items: rows.map(mapReturnHead), total };
+}
+
+export interface ReturnLineInput {
+  saleItemId: string;
+  qty: number;
+}
+
+export interface CreateReturnInput {
+  saleId: string;
+  lines: ReturnLineInput[];
+  discountMinor?: number;
+  reason?: string | null;
+}
+
+/**
+ * Line-item sales return. Restocks the returned quantity, marks `returned_qty`
+ * on the original sale item (immutable over-return guard), and reverses the
+ * already-recorded store revenue through a refund ledger entry keyed to the
+ * return. Returns are only allowed on completed, non-credit sales so the cash /
+ * ledger truth stays unambiguous.
+ */
+export async function returnStoreSale(db: Db, actor: ServiceActor, input: CreateReturnInput): Promise<StoreReturnRow> {
+  requirePermission(actor, "store.return");
+  const sale = db.first<Row>("SELECT * FROM store_sales WHERE id = ? AND status = 'completed'", [input.saleId]);
+  if (!sale) throw errNotFound("errors.store.saleNotFound");
+  if (num(sale.is_credit) === 1) throw errValidation("errors.store.returnCreditNotAllowed");
+  assertDepartmentAccess(actor, sale.member_id == null ? actor.department! : memberDepartmentById(db, String(sale.member_id)));
+
+  const lines = input.lines.filter((l) => Number(l.qty) > 0);
+  if (lines.length === 0) throw errValidation("errors.store.emptyReturn");
+
+  const ts = stamp();
+  const linesPrepared = lines.map((l) => {
+    const it = db.first<Row>("SELECT * FROM store_sale_items WHERE id = ? AND sale_id = ?", [l.saleItemId, input.saleId]);
+    if (!it) throw errNotFound("errors.store.saleItemNotFound");
+    const qty = Math.floor(Number(l.qty));
+    if (qty <= 0) throw errValidation("errors.store.qtyInvalid");
+    const alreadyReturned = num(it.returned_qty);
+    const remaining = num(it.qty) - alreadyReturned;
+    if (qty > remaining) {
+      throw errValidation("errors.store.returnExceedsQty", {
+        product: str(it.product_name_snapshot),
+        remaining,
+      });
+    }
+    return {
+      saleItemId: str(it.id),
+      productId: str(it.product_id),
+      productName: str(it.product_name_snapshot),
+      qty,
+      unitPriceMinor: num(it.unit_price_minor),
+      unitCostMinor: num(it.unit_cost_minor),
+      lineTotalMinor: num(it.unit_price_minor) * qty,
+      lineCostMinor: num(it.unit_cost_minor) * qty,
+    };
+  });
+
+  const itemsTotalMinor = linesPrepared.reduce((s, l) => s + l.lineTotalMinor, 0);
+  const discountMinor = Math.min(Math.max(0, Math.round(input.discountMinor ?? 0)), itemsTotalMinor);
+  const totalMinor = itemsTotalMinor - discountMinor;
+  if (totalMinor < 0) throw errValidation("errors.finance.invalidAmount");
+
+  const returnId = crypto.randomUUID();
+
+  await db.transaction(async () => {
+    db.run(
+      "INSERT INTO counters (name, value) VALUES ('store_return_no', 1000)\nON CONFLICT(name) DO UPDATE SET value = value + 1",
+    );
+    const seq = Number(db.scalar("SELECT value FROM counters WHERE name = 'store_return_no'") ?? 1000);
+    const returnNo = `RTN-${String(seq).padStart(6, "0")}`;
+
+    db.run(
+      "INSERT INTO store_returns (id, sale_id, return_no, amount_minor, items_total_minor, discount_minor, total_minor, reason, created_by, created_at, box)\nVALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'store')",
+      [
+        returnId, input.saleId, returnNo, totalMinor, itemsTotalMinor, discountMinor, totalMinor,
+        input.reason?.trim() || null, actor.userId, ts,
+      ],
+    );
+
+    for (const l of linesPrepared) {
+      db.run(
+        "INSERT INTO store_return_items (id, return_id, sale_item_id, product_id, product_name_snapshot, qty, unit_price_minor, unit_cost_minor, line_total_minor)\nVALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
+        [crypto.randomUUID(), returnId, l.saleItemId, l.productId, l.productName, l.qty, l.unitPriceMinor, l.unitCostMinor, l.lineTotalMinor],
+      );
+      db.run("UPDATE store_sale_items SET returned_qty = returned_qty + ? WHERE id = ?", [l.qty, l.saleItemId]);
+      const newQty = guardAndApply(db, l.productId, l.qty);
+      insertMovement(db, {
+        productId: l.productId,
+        movementType: "return",
+        delta: l.qty,
+        resultQty: newQty,
+        unitCostMinor: l.unitCostMinor,
+        saleRefId: returnId,
+      });
+    }
+
+    // Reverse the store-sale revenue that is being returned (box = store so the
+    // treasury expected-cash computation accounts for the refund).
+    if (totalMinor > 0) {
+      insertLedgerEntry(db, {
+        entryType: "refund",
+        refTable: "store_returns",
+        refId: returnId,
+        memberId: sale.member_id == null ? null : String(sale.member_id),
+        methodCode: str(sale.method_code),
+        direction: -1,
+        amountMinor: totalMinor,
+        occurredAt: ts,
+        actor,
+        box: "store",
+      });
+    }
+
+    recordAudit(db, actor, "STORE_RETURN_CREATED", "store_return", returnId, {
+      returnNo,
+      saleNo: str(sale.sale_no),
+      totalMinor,
+      lines: linesPrepared.length,
+    });
+  });
+
+  return getStoreReturn(db, actor, returnId);
+}
+
 // --------------------- store debts (separate from gym debts) --------------
 
 export interface StoreDebtRow {
@@ -846,14 +1085,22 @@ export function getStoreStats(
     "SELECT COUNT(*) AS cnt, COALESCE(SUM(total_minor),0) AS rev, COALESCE(SUM(cost_total_minor),0) AS cost\nFROM store_sales WHERE status = 'completed' AND sold_at BETWEEN ? AND ?",
     [from, to],
   );
+  const returns = db.first<Row>(
+    "SELECT COALESCE(SUM(total_minor),0) AS rev, COALESCE(SUM(COALESCE((SELECT SUM(unit_cost_minor * qty) FROM store_return_items WHERE return_id = store_returns.id), 0)),0) AS cost\nFROM store_returns WHERE created_at BETWEEN ? AND ?",
+    [from, to],
+  );
   const credit = db.first<Row>(
     "SELECT COUNT(*) AS cnt, COALESCE(SUM(original_minor - paid_minor),0) AS rem\nFROM store_debts WHERE status = 'open'",
   );
   const lowStock = Number(
     db.scalar("SELECT COUNT(*) FROM products WHERE is_active = 1 AND stock_qty <= min_stock_qty") ?? 0,
   );
-  const revenueMinor = num(agg?.rev);
-  const costMinor = num(agg?.cost);
+  const saleRev = num(agg?.rev);
+  const saleCost = num(agg?.cost);
+  const returnRev = num(returns?.rev);
+  const returnCost = num(returns?.cost);
+  const revenueMinor = saleRev - returnRev;
+  const costMinor = saleCost - returnCost;
   return {
     salesCount: num(agg?.cnt),
     revenueMinor,
@@ -863,4 +1110,200 @@ export function getStoreStats(
     creditOpenMinor: num(credit?.rem),
     lowStockCount: lowStock,
   };
+}
+
+// ------------------------------ reports ----------------------------------
+
+export interface DailySalesRow {
+  dateKey: string;
+  salesCount: number;
+  revenueMinor: number;
+  costMinor: number;
+  returnsCount: number;
+  returnsMinor: number;
+  netMinor: number;
+  grossProfitMinor: number;
+}
+
+/** Daily sales aggregation (sales − returns) for a date range. */
+export function getDailySalesReport(
+  db: Db,
+  actor: ServiceActor,
+  range: { fromKey: string; toKey: string },
+): DailySalesRow[] {
+  requirePermission(actor, "store.profit");
+  const from = `${range.fromKey} 00:00:00`;
+  const to = `${range.toKey} 23:59:59`;
+  const rows = db.all<Row>(
+    `SELECT substr(s.sold_at, 1, 10) AS date_key,
+            COUNT(*) AS sales_count,
+            COALESCE(SUM(s.total_minor), 0) AS revenue_minor,
+            COALESCE(SUM(s.cost_total_minor), 0) AS cost_minor
+     FROM store_sales s
+     WHERE s.status = 'completed' AND s.sold_at BETWEEN ? AND ?
+     GROUP BY date_key
+     ORDER BY date_key`,
+    [from, to],
+  );
+  const returnRows = db.all<Row>(
+    `SELECT substr(r.created_at, 1, 10) AS date_key,
+            COUNT(DISTINCT r.id) AS returns_count,
+            COALESCE(SUM(r.total_minor), 0) AS returns_minor,
+            SUM((SELECT COALESCE(SUM(ri.unit_cost_minor * ri.qty), 0) FROM store_return_items ri WHERE ri.return_id = r.id)) AS returns_cost
+     FROM store_returns r
+     WHERE r.created_at BETWEEN ? AND ?
+     GROUP BY date_key`,
+    [from, to],
+  );
+  const returnByDay = new Map<string, { count: number; minor: number; cost: number }>();
+  for (const r of returnRows) {
+    returnByDay.set(str(r.date_key), {
+      count: num(r.returns_count),
+      minor: num(r.returns_minor),
+      cost: num(r.returns_cost),
+    });
+  }
+  const days = new Map<string, DailySalesRow>();
+  for (const r of rows) {
+    const dateKey = str(r.date_key);
+    const ret = returnByDay.get(dateKey);
+    days.set(dateKey, {
+      dateKey,
+      salesCount: num(r.sales_count),
+      revenueMinor: num(r.revenue_minor),
+      costMinor: num(r.cost_minor),
+      returnsCount: ret?.count ?? 0,
+      returnsMinor: ret?.minor ?? 0,
+      netMinor: num(r.revenue_minor) - (ret?.minor ?? 0),
+      grossProfitMinor: num(r.revenue_minor) - (ret?.minor ?? 0) - (num(r.cost_minor) - (ret?.cost ?? 0)),
+    });
+  }
+  for (const [dateKey, ret] of returnByDay) {
+    if (!days.has(dateKey)) {
+      days.set(dateKey, {
+        dateKey,
+        salesCount: 0,
+        revenueMinor: 0,
+        costMinor: 0,
+        returnsCount: ret.count,
+        returnsMinor: ret.minor,
+        netMinor: -ret.minor,
+        grossProfitMinor: -ret.minor + ret.cost,
+      });
+    }
+  }
+  return [...days.values()].sort((a, b) => a.dateKey.localeCompare(b.dateKey));
+}
+
+export interface ProductSalesRow {
+  productId: string;
+  productName: string;
+  categoryName: string | null;
+  unitsSold: number;
+  unitsReturned: number;
+  netUnits: number;
+  revenueMinor: number;
+  costMinor: number;
+  grossProfitMinor: number;
+}
+
+/** Per-product sales ranking (net of returns), best-sellers first. */
+export function getProductSalesReport(
+  db: Db,
+  actor: ServiceActor,
+  range: { fromKey: string; toKey: string },
+): ProductSalesRow[] {
+  requirePermission(actor, "store.profit");
+  const from = `${range.fromKey} 00:00:00`;
+  const to = `${range.toKey} 23:59:59`;
+  const sold = db.all<Row>(
+    `SELECT si.product_id,
+            COALESCE((SELECT p.name FROM products p WHERE p.id = si.product_id), MAX(si.product_name_snapshot)) AS product_name,
+            (SELECT pc.name_ar FROM products p2 LEFT JOIN product_categories pc ON pc.id = p2.category_id WHERE p2.id = si.product_id) AS category_name,
+            COALESCE(SUM(si.qty), 0) AS units_sold,
+            COALESCE(SUM(si.line_total_minor), 0) AS revenue_minor,
+            COALESCE(SUM(si.unit_cost_minor * si.qty), 0) AS cost_minor
+     FROM store_sale_items si
+     JOIN store_sales s ON s.id = si.sale_id
+     WHERE s.status = 'completed' AND s.sold_at BETWEEN ? AND ?
+     GROUP BY si.product_id`,
+    [from, to],
+  );
+  const returned = db.all<Row>(
+    `SELECT si2.product_id AS product_id,
+            COALESCE(SUM(ri.qty), 0) AS units_returned,
+            COALESCE(SUM(ri.line_total_minor), 0) AS rev_returned,
+            COALESCE(SUM(ri.unit_cost_minor * ri.qty), 0) AS cost_returned
+     FROM store_return_items ri
+     JOIN store_returns r2 ON r2.id = ri.return_id
+     JOIN store_sale_items si2 ON si2.id = ri.sale_item_id
+     WHERE r2.created_at BETWEEN ? AND ?
+     GROUP BY si2.product_id`,
+    [from, to],
+  );
+  const retByProduct = new Map<string, { units: number; rev: number; cost: number }>();
+  for (const r of returned) {
+    retByProduct.set(str(r.product_id), {
+      units: num(r.units_returned),
+      rev: num(r.rev_returned),
+      cost: num(r.cost_returned),
+    });
+  }
+  return sold
+    .map((r) => {
+      const ret = retByProduct.get(str(r.product_id));
+      const revenue = num(r.revenue_minor) - (ret?.rev ?? 0);
+      const cost = num(r.cost_minor) - (ret?.cost ?? 0);
+      const unitsSold = num(r.units_sold);
+      const unitsReturned = ret?.units ?? 0;
+      return {
+        productId: str(r.product_id),
+        productName: str(r.product_name),
+        categoryName: r.category_name == null ? null : str(r.category_name),
+        unitsSold,
+        unitsReturned,
+        netUnits: unitsSold - unitsReturned,
+        revenueMinor: revenue,
+        costMinor: cost,
+        grossProfitMinor: revenue - cost,
+      };
+    })
+    .sort((a, b) => b.revenueMinor - a.revenueMinor);
+}
+
+export interface StockValueRow {
+  totalCostMinor: number;
+  potentialRetailMinor: number;
+  potentialGrossProfitMinor: number;
+  productCount: number;
+}
+
+export function getStockValue(db: Db, actor: ServiceActor): StockValueRow {
+  requirePermission(actor, "store.profit");
+  const row = db.first<Row>(
+    "SELECT COUNT(*) AS cnt, COALESCE(SUM(stock_qty * cost_minor),0) AS cost, COALESCE(SUM(stock_qty * price_minor),0) AS retail\nFROM products WHERE is_active = 1",
+  );
+  const cost = num(row?.cost);
+  const retail = num(row?.retail);
+  return {
+    totalCostMinor: cost,
+    potentialRetailMinor: retail,
+    potentialGrossProfitMinor: retail - cost,
+    productCount: num(row?.cnt),
+  };
+}
+
+/** Low-stock products (stock at or below minimum), optionally a count-only form. */
+export function listLowStockProducts(
+  db: Db,
+  actor: ServiceActor,
+  query: { limit?: number; includeInactive?: boolean } = {},
+): Array<ProductPublic> {
+  requirePermission(actor, "store.profit");
+  const limit = Math.min(200, Math.max(1, query.limit ?? 100));
+  const rows = db.all<Row>(
+    `${PRODUCT_SELECT} WHERE p.is_active = 1 AND p.stock_qty <= p.min_stock_qty ORDER BY (p.stock_qty - p.min_stock_qty) ASC LIMIT ?`,
+    [limit],
+  );
+  return rows.map(mapProduct);
 }

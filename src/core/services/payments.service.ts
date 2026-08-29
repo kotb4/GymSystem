@@ -544,6 +544,7 @@ export interface PaymentListQuery {
   status?: PaymentStatus | "all";
   methodCode?: string;
   createdBy?: string;
+  memberId?: string;
   subscriptionId?: string | null;
   minAmountMinor?: number;
   maxAmountMinor?: number;
@@ -588,6 +589,10 @@ export function listPayments(
   if (query.subscriptionId) {
     conditions.push("p.subscription_id = ?");
     params.push(query.subscriptionId);
+  }
+  if (query.memberId) {
+    conditions.push("p.member_id = ?");
+    params.push(query.memberId);
   }
   if (query.minAmountMinor !== undefined) {
     conditions.push("p.net_amount_minor >= ?");

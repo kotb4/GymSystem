@@ -2,7 +2,22 @@
 
 Primary AI engineering instruction file. Every AI agent working in this repository MUST read this file first and follow it exactly.
 
-Supplementary context lives in `docs/ai/` (detailed architecture, database, business rules, security, development, testing, roadmap) and `.ai/` (project notes, decisions, audits).
+The repository files are the persistent memory shared between coding agents. **Chat history is NOT part of the project's source of truth.** A new agent (OpenCode, Cursor, Claude Code, or any other) must be able to continue the project from the repository files alone.
+
+**Mandatory reading order before any substantive work:**
+
+1. `AGENTS.md` (this file) — the contract.
+2. `.ai/project.md` — long-form project profile.
+3. `.ai/current-state.md` — live dev-state handoff (where the previous agent stopped, what to do next).
+4. `.ai/tasks.md` — task history & roadmap (active / completed / blocked / discovered-followup).
+5. `.ai/decisions.md` — Architecture Decision Record (when relevant).
+6. Inspect the actual source code before trusting documentation. The docs may lag behind the code by a commit; the code is the source of truth.
+
+Shared context layout:
+
+- `.ai/` — short AI-oriented reference (project / current-state / tasks / decisions / quick-reference architecture & business rules). Maintained by agents.
+- `docs/ai/` — long-form human-readable architecture, database, business rules, security, development, testing, roadmap. Maintained by agents and value-level auto-synced (`scripts/sync-docs.mjs`).
+- `.opencode/agents/`, `.opencode/commands/` — OpenCode-specific entry points (agents, commands) that all read+write the SAME `.ai/` files; never an OpenCode-only memory.
 
 ---
 
@@ -72,21 +87,21 @@ server/                     Local backend (owns the database)
 src/
   api/                      Frontend client: fetch/RPC wrappers + shared types
   core/
-    services/               ALL business logic (28 files, backend-only)
-    permissions.ts          Roles, 78 permissions, DB-backed grant cache
-    audit-actions.ts        Audit action enum (121 actions)
+    services/               ALL business logic (34 files, backend-only)
+    permissions.ts          Roles, 89 permissions, DB-backed grant cache
+    audit-actions.ts        Audit action enum (144 actions)
     errors.ts               AppError codes + i18n messageKeys
     dates.ts money.ts       Shared primitives (date keys, minor units)
   db/
     engine.ts               Db wrapper: run/all/first/scalar/count/transaction/onDirty
-    migrations.ts           Versioned migrations v1..v9 (applied at every boot)
+    migrations.ts           Versioned migrations v1..v20 (applied at every boot)
     seed.ts                 Optional demo seeding
-  pages/                    23 route pages
+  pages/                    29 route pages
   components/               ui/ layout/ members/ finance/ subscriptions/ cards/ users/ charts/
   contexts/auth-context.tsx Session state + hasPermission()
   routes/                   Route table + permission-gated NAV_ROUTES
   i18n/ar.ts                Arabic dictionary (flat-key lookup)
-tests/                      Vitest suites (node env), createTestDb() helper
+tests/                      Vitest suites (30 files, node env), createTestDb() helper
 scripts/                    build-server.mjs, e2e-smoke.ps1, e2e-audit.ps1,
                             check-rpc-consistency.cjs, windows/start-gymsystem.bat
 ```
@@ -207,14 +222,30 @@ A task is NOT complete merely because code was written. The final report MUST in
 
 If verification could not run (e.g., environment lacks Node), say so explicitly — do not imply success.
 
+**Before finishing, the agent MUST update the shared project state** so the next agent can resume from the repository alone (no chat context required):
+
+- If you started or completed a non-trivial task → record it in `.ai/tasks.md` (active / completed / blocked / discovered-followup).
+- If you made an architectural / product / security / data / API / permission decision → append an ADR to `.ai/decisions.md`.
+- Always update `.ai/current-state.md` to reflect the **current live state**: what was completed, what is in-progress, what remains, files touched, tests run, known issues, next recommended step, and (optionally) the last agent/tool. Keep it concise — the next agent should be able to answer "what happened, where did we stop, what do I do next" by reading this single file.
+
+A task is not complete until `.ai/current-state.md` reflects reality.
+
 ## 10. Documentation References
 
 | Document | When to read |
 | --- | --- |
-| `docs/ai/architecture.md` | Understanding request flow, startup, file layout |
-| `docs/ai/database.md` | Schema, migrations, table structures |
-| `docs/ai/business-rules.md` | Subscription/attendance/finance/store/class rules |
+| `.ai/current-state.md` | First thing after AGENTS.md — live dev-state handoff (what the previous agent was doing, where it stopped) |
+| `.ai/project.md` | Project profile, stack, runtime, major features, known limitations |
+| `.ai/tasks.md` | Task history (active / completed / blocked / discovered-followup) |
+| `.ai/decisions.md` | Architecture Decision Record (ADRs) — only when the decision affects architecture, DB, security, permissions, business logic, data lifecycle, API/RPC, or major UI |
+| `.ai/architecture.md` | Short AI-reference for request flow, startup, file layout |
+| `.ai/business-rules.md` | Short AI-reference for subscription/attendance/finance/store/class rules |
+| `docs/ai/architecture.md` | Long-form human-readable architecture, request flow, startup, file layout |
+| `docs/ai/database.md` | Long-form schema, migrations, table structures (value-level auto-synced) |
+| `docs/ai/business-rules.md` | Long-form subscription/attendance/finance/store/class rules |
 | `docs/ai/security.md` | Auth, sessions, authorization, RPC whitelist, file handling |
 | `docs/ai/development.md` | How to build, test, run, debug |
 | `docs/ai/testing.md` | Test architecture, test patterns, test counts |
 | `docs/ai/roadmap.md` | Planned vs implemented features |
+
+The two files of the same name (e.g. `.ai/architecture.md` vs `docs/ai/architecture.md`) are NOT duplicates — the `.ai/` one is a short AI quick-reference, the `docs/ai/` one is the full long-form. Use `.ai/` first when starting work, `docs/ai/` when you need the full picture.

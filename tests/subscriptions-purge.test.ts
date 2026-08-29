@@ -67,7 +67,10 @@ async function subWithMoney(price = 500) {
 describe("subscriptions hard-delete (purgeSubscription)", () => {
   it("removes the subscription with its payments/refunds/ledger/freezes", async () => {
     const { sub, payment } = await subWithMoney(500);
-    await freezeSubscription(db, owner, sub.id, {});
+    const subEnd = (
+      db.first<{ end_date: string }>("SELECT end_date FROM member_subscriptions WHERE id = ?", [sub.id])!
+    ).end_date;
+    await freezeSubscription(db, owner, sub.id, { endDate: subEnd });
 
     const ledgerBefore = db.count(
       "SELECT COUNT(*) AS c FROM financial_ledger WHERE ref_table = 'payments' AND ref_id = ?",

@@ -46,6 +46,8 @@ export const PERMS = [
   "expenses.attachments",
   "cash.open",
   "cash.close",
+  "cash.daily_close",
+  "cash.daily_reopen",
   "reports.view",
   "reports.export",
   "store.view",
@@ -56,6 +58,7 @@ export const PERMS = [
   "store.void_sale",
   "store.inventory",
   "store.profit",
+  "store.return",
   "classes.view",
   "classes.manage",
   "classes.checkin",
@@ -85,6 +88,15 @@ export const PERMS = [
   "hr.approve_leaves",
   "hr.activity_view",
   "hr.employee_checkin",
+  "reception.view",
+  "leads.view",
+  "leads.manage",
+  "trials.view",
+  "trials.create",
+  "trials.manage",
+  "packages.view",
+  "packages.create",
+  "packages.edit",
 ] as const;
 
 export type Permission = (typeof PERMS)[number];
@@ -129,6 +141,8 @@ const MANAGER_PERMS: readonly Permission[] = [
   "expenses.attachments",
   "cash.open",
   "cash.close",
+  "cash.daily_close",
+  "cash.daily_reopen",
   "reports.view",
   "reports.export",
   "store.view",
@@ -139,6 +153,7 @@ const MANAGER_PERMS: readonly Permission[] = [
   "store.void_sale",
   "store.inventory",
   "store.profit",
+  "store.return",
   "classes.view",
   "classes.manage",
   "classes.checkin",
@@ -163,6 +178,15 @@ const MANAGER_PERMS: readonly Permission[] = [
   "audit.view",
   "settings.view",
   "settings.edit",
+  "reception.view",
+  "leads.view",
+  "leads.manage",
+  "trials.view",
+  "trials.create",
+  "trials.manage",
+  "packages.view",
+  "packages.create",
+  "packages.edit",
 ];
 
 const RECEPTION_PERMS: readonly Permission[] = [
@@ -173,6 +197,7 @@ const RECEPTION_PERMS: readonly Permission[] = [
   "cards.register",
   "cards.assign",
   "plans.view",
+  "packages.view",
   "subscriptions.view",
   "subscriptions.create",
   "checkin.create",
@@ -181,6 +206,7 @@ const RECEPTION_PERMS: readonly Permission[] = [
   "payments.create",
   "cash.open",
   "cash.close",
+  "cash.daily_close",
   "store.view",
   "store.sell",
   "store.credit",
@@ -191,6 +217,7 @@ const RECEPTION_PERMS: readonly Permission[] = [
   "crm.send",
   "hr.view",
   "hr.employee_checkin",
+  "reception.view",
 ];
 
 const TRAINER_PERMS: readonly Permission[] = [

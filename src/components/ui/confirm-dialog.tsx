@@ -8,7 +8,7 @@ import { Modal } from "./modal";
 export interface ConfirmDialogProps {
   open: boolean;
   title: string;
-  message: string;
+  message: ReactNode;
   confirmLabel?: string;
   tone?: "danger" | "primary";
   icon?: ReactNode;

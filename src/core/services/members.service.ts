@@ -11,7 +11,7 @@ import {
 const MEMBER_STATUSES = ["active", "inactive", "suspended", "archived"] as const;
 export type MemberStatus = (typeof MEMBER_STATUSES)[number];
 
-const EMAIL_RE = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+export const EMAIL_RE = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
 export const PHONE_RE = /^[0-9+\-\s()]{6,20}$/;
 
 export interface MemberRow extends Row {
@@ -212,6 +212,10 @@ function resolveValues(base: NormalizedMemberValues, patch: MemberInput): Normal
 
 function assertValidValues(db: Db, values: NormalizedMemberValues, excludeId?: string): void {
   if (values.fullName === "") throw errValidation("errors.nameRequired");
+  const nameExisting = excludeId
+    ? db.first("SELECT id FROM members WHERE full_name = ? AND id != ?", [values.fullName, excludeId])
+    : db.first("SELECT id FROM members WHERE full_name = ?", [values.fullName]);
+  if (nameExisting) throw errConflict("errors.nameTaken", { name: values.fullName });
   if (values.phone && !PHONE_RE.test(values.phone)) throw errValidation("errors.phoneInvalid");
   if (values.phone) {
     const existing = excludeId
@@ -440,7 +444,7 @@ export function listMembers(
     }
     case "frozen":
       conditions.push(
-        "EXISTS (SELECT 1 FROM member_subscriptions s WHERE s.member_id = m.id AND s.status = 'suspended')",
+        "EXISTS (SELECT 1 FROM member_subscriptions s WHERE s.member_id = m.id AND s.status = 'suspended' AND s.frozen_at IS NOT NULL)",
       );
       break;
     case "renewed":

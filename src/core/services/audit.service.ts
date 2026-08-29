@@ -33,7 +33,7 @@ interface AuditLogRow extends Row {
   created_at: string;
 }
 
-function toAuditItem(row: AuditLogRow): AuditLogItem {
+export function toAuditItem(row: AuditLogRow): AuditLogItem {
   let metadata: Record<string, unknown> | null = null;
   if (row.metadata) {
     try {

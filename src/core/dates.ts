@@ -41,6 +41,14 @@ export function parseDateKey(key: string): Date {
   return new Date(parts[0], parts[1] - 1, parts[2]);
 }
 
+export function safeParseDateKey(key: string | null | undefined): Date | null {
+  if (!key || typeof key !== "string") return null;
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(key)) return null;
+  const parts = key.split("-").map(Number);
+  if (parts.some((p) => Number.isNaN(p))) return null;
+  return new Date(parts[0], parts[1] - 1, parts[2]);
+}
+
 export function addDaysKey(key: string, days: number): string {
   const date = parseDateKey(key);
   date.setDate(date.getDate() + days);
@@ -54,6 +62,18 @@ export function calcSubscriptionEndDate(startKey: string, durationDays: number):
 export function diffDaysKeys(fromKey: string, toKey: string): number {
   const from = parseDateKey(fromKey);
   const to = parseDateKey(toKey);
+  const utcFrom = Date.UTC(from.getFullYear(), from.getMonth(), from.getDate());
+  const utcTo = Date.UTC(to.getFullYear(), to.getMonth(), to.getDate());
+  return Math.round((utcTo - utcFrom) / 86_400_000);
+}
+
+export function safeDiffDaysKeys(
+  fromKey: string | null | undefined,
+  toKey: string | null | undefined,
+): number | null {
+  const from = safeParseDateKey(fromKey);
+  const to = safeParseDateKey(toKey);
+  if (!from || !to) return null;
   const utcFrom = Date.UTC(from.getFullYear(), from.getMonth(), from.getDate());
   const utcTo = Date.UTC(to.getFullYear(), to.getMonth(), to.getDate());
   return Math.round((utcTo - utcFrom) / 86_400_000);

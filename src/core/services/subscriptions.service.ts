@@ -1,4 +1,5 @@
 ﻿import {
+  addDaysKey,
   calcSubscriptionEndDate,
   diffDaysKeys,
   isValidDateKey,
@@ -16,6 +17,7 @@ import {
   memberDepartmentById,
 } from "./department";
 import { getPlanRow } from "./plans.service";
+import { getPackageRow, type PackageRow } from "./packages.service";
 import { insertLedgerEntry } from "./payments.service";
 
 export type SubscriptionRowStatus = "active" | "suspended" | "cancelled";
@@ -38,6 +40,16 @@ export interface SubscriptionRow extends Row {
   created_by: string | null;
   created_at: string;
   updated_at: string;
+  package_id: string | null;
+  package_name: string | null;
+  package_model: "time" | "visit" | "hybrid" | null;
+  package_duration_days: number | null;
+  package_price: number | null;
+  package_visit_limit: number | null;
+  package_unlimited_visits: number;
+  package_freeze_allowance_days: number;
+  package_allowed_freezes: number;
+  package_pt_sessions: number;
 }
 
 export type SubscriptionKind = "time" | "sessions" | "open";
@@ -68,6 +80,8 @@ export interface CreateSubscriptionInput {
   startDate?: string;
   price?: number;
   notes?: string | null;
+  /** When set, the package's full config is snapshotted onto the new row. */
+  packageId?: string;
 }
 
 export interface EffectiveStatusInput {
@@ -170,7 +184,21 @@ export async function createSubscription(
   if (member.status === "archived") throw errConflict("errors.memberArchived");
   assertDepartmentAccess(actor, member.department);
 
-  const plan = getPlanRow(db, input.planId);
+  // Resolve an optional package; a package subscription uses the package's
+  // synthetic membership_plans row as its legacy plan token so every existing
+  // JOIN keeps working, while the full package config is snapshotted below.
+  let packageRow: PackageRow | null = null;
+  let effectivePlanId = input.planId;
+  if (input.packageId) {
+    packageRow = getPackageRow(db, input.packageId);
+    if (!packageRow) throw errNotFound("errors.packageNotFound");
+    if (Number(packageRow.is_active) !== 1) throw errValidation("errors.packageInactive");
+    const synthetic = packageRow.synthetic_plan_id;
+    if (!synthetic) throw errValidation("errors.packageNotFound");
+    effectivePlanId = synthetic;
+  }
+
+  const plan = getPlanRow(db, effectivePlanId);
   if (!plan) throw errNotFound("errors.planNotFound");
   if (Number(plan.is_active) !== 1) throw errValidation("errors.planInactive");
 
@@ -182,11 +210,10 @@ export async function createSubscription(
       ? Math.max(0, input.price)
       : Number(plan.price);
   const kind = (plan.kind ?? "time") as "time" | "sessions" | "open";
+  const unlimitedVisits = packageRow != null && Number(packageRow.unlimited_visits) === 1;
   const sessionsTotal =
-    kind === "sessions"
-      ? Number(plan.sessions_count ?? 0)
-      : null;
-  if (kind === "sessions" && (!sessionsTotal || sessionsTotal <= 0)) {
+    kind === "sessions" && !unlimitedVisits ? Number(plan.sessions_count ?? 0) : null;
+  if (kind === "sessions" && !unlimitedVisits && (!sessionsTotal || sessionsTotal <= 0)) {
     throw errValidation("errors.planSessionsInvalid");
   }
 
@@ -201,11 +228,14 @@ export async function createSubscription(
   const id = crypto.randomUUID();
   await db.transaction(async () => {
     db.run(
-      "INSERT INTO member_subscriptions (id, member_id, plan_id, start_date, end_date, price, status, sessions_total, sessions_used, notes, created_by, created_at, updated_at)\nVALUES (?, ?, ?, ?, ?, ?, 'active', ?, 0, ?, ?, ?, ?)",
+      `INSERT INTO member_subscriptions (id, member_id, plan_id, start_date, end_date, price, status, sessions_total, sessions_used, notes, created_by, created_at, updated_at,
+        package_id, package_name, package_model, package_duration_days, package_price, package_visit_limit, package_unlimited_visits, package_freeze_allowance_days, package_allowed_freezes, package_pt_sessions)
+VALUES (?, ?, ?, ?, ?, ?, 'active', ?, 0, ?, ?, ?, ?,
+        ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
       [
         id,
         input.memberId,
-        input.planId,
+        effectivePlanId,
         startDate,
         endDate,
         price,
@@ -214,6 +244,16 @@ export async function createSubscription(
         actor.userId,
         nowStamp(),
         nowStamp(),
+        packageRow?.id ?? null,
+        packageRow?.name ?? null,
+        packageRow?.model ?? null,
+        packageRow ? Number(packageRow.duration_days) : null,
+        packageRow ? Number(packageRow.price) : null,
+        packageRow && packageRow.visit_limit != null ? Number(packageRow.visit_limit) : null,
+        packageRow ? Number(packageRow.unlimited_visits) : 0,
+        packageRow ? Number(packageRow.freeze_allowance_days ?? 0) : 0,
+        packageRow ? Number(packageRow.allowed_freezes ?? 0) : 0,
+        packageRow ? Number(packageRow.pt_sessions ?? 0) : 0,
       ],
     );
     recordAudit(db, actor, "SUBSCRIPTION_CREATED", "subscription", id, {
@@ -221,6 +261,7 @@ export async function createSubscription(
       planName: plan.name,
       startDate,
       endDate,
+      ...(packageRow ? { packageId: packageRow.id } : {}),
     });
   });
 
@@ -393,6 +434,7 @@ export interface SubscriptionListQuery {
   page?: number;
   pageSize?: number;
   effective?: "all" | EffectiveSubscriptionStatus;
+  memberId?: string;
 }
 
 export interface SubscriptionWithMember extends Subscription {
@@ -421,9 +463,16 @@ export function listSubscriptions(
   } else if (query.effective === "active") {
     conditions.push("s.status = 'active' AND s.start_date <= ? AND s.end_date >= ?");
     params.push(today, today);
-  } else if (query.effective === "suspended" || query.effective === "cancelled") {
-    conditions.push("s.status = ?");
-    params.push(query.effective);
+  } else if (query.effective === "frozen") {
+    conditions.push("s.status = 'suspended' AND s.frozen_at IS NOT NULL");
+  } else if (query.effective === "suspended") {
+    conditions.push("s.status = 'suspended' AND s.frozen_at IS NULL");
+  } else if (query.effective === "cancelled") {
+    conditions.push("s.status = 'cancelled'");
+  }
+  if (query.memberId) {
+    conditions.push("s.member_id = ?");
+    params.push(query.memberId);
   }
 
   const scope = departmentScopeCondition(actor, "m");
@@ -487,20 +536,32 @@ export function countActiveSubscriptions(db: Db): number {
 export interface FreezeInfo {
   id: string;
   subscriptionId: string;
+  startDate: string;
+  endDate: string;
+  durationDays: number;
   frozenAt: string;
   expectedResumeDate: string | null;
   actualResumeDate: string | null;
   reason: string | null;
+  notes: string | null;
+  createdBy: string;
+  createdAt: string;
 }
 
 function toFreezeInfo(row: Row): FreezeInfo {
   return {
     id: String(row.id),
     subscriptionId: String(row.subscription_id),
+    startDate: String(row.start_date),
+    endDate: String(row.end_date),
+    durationDays: Number(row.duration_days ?? 0),
     frozenAt: String(row.frozen_at),
     expectedResumeDate: row.expected_resume_date == null ? null : String(row.expected_resume_date),
     actualResumeDate: row.actual_resume_date == null ? null : String(row.actual_resume_date),
     reason: row.reason == null ? null : String(row.reason),
+    notes: row.notes == null ? null : String(row.notes),
+    createdBy: String(row.created_by),
+    createdAt: String(row.created_at),
   };
 }
 
@@ -521,14 +582,14 @@ export function listSubscriptionFreezes(db: Db, actor: ServiceActor, subscriptio
 
 /**
  * Freezes an active in-window subscription. The original record is preserved;
- * when the configurable rule freeze_extends_expiry = 1 the remaining days are
- * added to end_date on resume (centralized here, not in UI code).
+ * the new expiry date is automatically calculated based on actual frozen duration
+ * when unfreezing (manual unfreeze always extends; auto-unfreeze respects setting).
  */
 export async function freezeSubscription(
   db: Db,
   actor: ServiceActor,
   subscriptionId: string,
-  input: { expectedResumeDate?: string | null; reason?: string | null } = {},
+  input: { startDate?: string | null; endDate: string; reason?: string | null; notes?: string | null } = { endDate: "" },
 ): Promise<Subscription> {
   requirePermission(actor, "subscriptions.freeze");
   const row = getSubscriptionRow(db, subscriptionId);
@@ -536,41 +597,102 @@ export async function freezeSubscription(
   if (row.status === "cancelled") throw errValidation("errors.subscriptionCancelled");
   if (row.status === "suspended") throw errConflict("errors.subscriptionAlreadyFrozen");
   assertSubMemberAccess(db, actor, row.member_id);
+
   const today = todayKey();
+
+  // Validate subscription is in active window
   if (row.start_date > today || row.end_date < today) {
     throw errValidation("errors.freezeWindowInvalid");
   }
-  let expectedResumeDate: string | null = input.expectedResumeDate?.trim() || null;
-  if (expectedResumeDate) {
-    if (!isValidDateKey(expectedResumeDate)) throw errValidation("errors.invalidDate");
-    if (expectedResumeDate <= today) throw errValidation("errors.freezeResumeInvalid");
-    if (expectedResumeDate > row.end_date) throw errValidation("errors.freezeResumeAfterEnd");
+
+  // Package freeze limits: enforce allowed freeze COUNT and cumulative frozen
+  // DAYS allowance captured at purchase time (history-safe snapshot).
+  const allowedFreezes = Number(row.package_allowed_freezes ?? 0);
+  const allowanceDays = Number(row.package_freeze_allowance_days ?? 0);
+  if (allowedFreezes > 0 || allowanceDays > 0) {
+    const freezesSoFar = db.count(
+      "SELECT COUNT(*) FROM subscription_freezes WHERE subscription_id = ?",
+      [subscriptionId],
+    );
+    if (allowedFreezes > 0 && freezesSoFar >= allowedFreezes) {
+      throw errValidation("errors.freezeMaxReached", { max: allowedFreezes });
+    }
+    if (allowanceDays > 0 && Number(row.frozen_days ?? 0) >= allowanceDays) {
+      throw errValidation("errors.freezeAllowanceExhausted", { days: allowanceDays });
+    }
+  }
+
+  // Validate input dates
+  const startDate = (input.startDate?.trim() || today);
+  if (!isValidDateKey(startDate)) throw errValidation("errors.freezeStartDateInvalid");
+  if (startDate < row.start_date) throw errValidation("errors.freezeStartDateInvalid");
+  if (startDate > row.end_date) throw errValidation("errors.freezeStartDateInvalid");
+
+  const endDate = input.endDate?.trim();
+  if (!endDate) throw errValidation("errors.freezeEndDateInvalid");
+  if (!isValidDateKey(endDate)) throw errValidation("errors.freezeEndDateInvalid");
+  if (endDate < startDate) throw errValidation("errors.freezeEndDateInvalid");
+  if (endDate > row.end_date) throw errValidation("errors.freezeEndDateInvalid");
+
+  const durationDays = diffDaysKeys(startDate, endDate) + 1;
+  if (durationDays <= 0) throw errValidation("errors.freezeDurationInvalid");
+
+  // Check for overlapping freezes (only open freezes with actual_resume_date IS NULL)
+  const overlapFreeze = db.first<{ id: string }>(
+    `SELECT id FROM subscription_freezes
+     WHERE subscription_id = ? AND actual_resume_date IS NULL
+     AND NOT (end_date < ? OR start_date > ?)
+     LIMIT 1`,
+    [subscriptionId, startDate, endDate]
+  );
+  if (overlapFreeze) {
+    throw errValidation("errors.freezeOverlap");
   }
 
   const freezeId = crypto.randomUUID();
   await db.transaction(async () => {
     db.run(
-      "INSERT INTO subscription_freezes (id, subscription_id, frozen_at, expected_resume_date, reason, created_by, created_at)\nVALUES (?, ?, ?, ?, ?, ?, ?)",
-      [freezeId, subscriptionId, nowStamp(), expectedResumeDate, input.reason?.trim() || null, actor.userId, nowStamp()],
+      `INSERT INTO subscription_freezes (id, subscription_id, frozen_at, expected_resume_date, reason, created_by, created_at,
+        start_date, end_date, duration_days, notes)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+      [
+        freezeId,
+        subscriptionId,
+        nowStamp(),
+        endDate,
+        input.reason?.trim() || null,
+        actor.userId,
+        nowStamp(),
+        startDate,
+        endDate,
+        durationDays,
+        input.notes?.trim() || null,
+      ],
     );
     db.run(
       "UPDATE member_subscriptions SET status = 'suspended', frozen_at = ?, resume_date = ?, updated_at = ? WHERE id = ?",
-      [nowStamp(), expectedResumeDate, nowStamp(), subscriptionId],
+      [nowStamp(), endDate, nowStamp(), subscriptionId],
     );
     recordAudit(db, actor, "SUBSCRIPTION_FROZEN", "subscription", subscriptionId, {
       reason: input.reason?.trim() || null,
-      expectedResumeDate,
+      startDate,
+      endDate,
+      durationDays,
+      notes: input.notes?.trim() || null,
     });
   });
 
   return withPlanInfo(db, getSubscriptionRow(db, subscriptionId)!, today);
 }
 
-/** Resumes a frozen subscription; extends end_date by frozen days per configured rule. */
+/** Resumes a frozen subscription; extends end_date by actual frozen duration.
+ * Manual unfreeze always extends; auto-unfreeze (check-in) respects freeze_extends_expiry setting.
+ */
 export async function unfreezeSubscription(
   db: Db,
   actor: ServiceActor,
   subscriptionId: string,
+  options: { isAutoUnfreeze?: boolean } = {},
 ): Promise<Subscription> {
   requirePermission(actor, "subscriptions.freeze");
   const row = getSubscriptionRow(db, subscriptionId);
@@ -578,37 +700,40 @@ export async function unfreezeSubscription(
   if (row.status !== "suspended") throw errConflict("errors.subscriptionNotFrozen");
   assertSubMemberAccess(db, actor, row.member_id);
 
-  const openFreeze = db.first<{ id: string }>(
-    "SELECT id FROM subscription_freezes WHERE subscription_id = ? AND actual_resume_date IS NULL ORDER BY created_at DESC LIMIT 1",
+  const openFreeze = db.first<{ id: string; start_date: string; duration_days: number }>(
+    "SELECT id, start_date, duration_days FROM subscription_freezes WHERE subscription_id = ? AND actual_resume_date IS NULL ORDER BY created_at DESC LIMIT 1",
     [subscriptionId],
   );
 
+  const today = todayKey();
+
   await db.transaction(async () => {
     let endDate = row.end_date;
-    const extendsExpirySetting = db.first<{ value: string }>(
-      "SELECT value FROM settings WHERE key = 'freeze_extends_expiry'",
-    )?.value;
-    const extendsExpiry = extendsExpirySetting == null || extendsExpirySetting === "1";
     if (openFreeze) {
-      if (extendsExpiry) {
-        const freezeRow = db.first<{ frozen_at: string }>(
-          "SELECT frozen_at FROM subscription_freezes WHERE id = ?",
-          [openFreeze.id],
-        );
-        if (freezeRow) {
-          const frozenDays = Math.max(0, diffDaysKeys(freezeRow.frozen_at.slice(0, 10), todayKey()));
-          if (frozenDays > 0) {
-            endDate = calcSubscriptionEndDate(endDate, frozenDays);
-            db.run(
-              "UPDATE member_subscriptions SET end_date = ?, frozen_days = frozen_days + ? WHERE id = ?",
-              [endDate, frozenDays, subscriptionId],
-            );
-          }
+      // Calculate actual frozen days: from freeze start_date to today (capped at planned duration)
+      const actualFrozenDays = Math.max(0, Math.min(
+        diffDaysKeys(openFreeze.start_date, today) + 1,
+        Number(openFreeze.duration_days ?? 0)
+      ));
+      if (actualFrozenDays > 0) {
+        // Manual unfreeze always extends; auto-unfreeze only if setting enabled
+        const extendsExpirySetting = db.first<{ value: string }>(
+          "SELECT value FROM settings WHERE key = 'freeze_extends_expiry'",
+        )?.value;
+        const extendsExpiry = extendsExpirySetting == null || extendsExpirySetting === "1";
+        const shouldExtend = options.isAutoUnfreeze ? extendsExpiry : true;
+
+        if (shouldExtend) {
+          endDate = addDaysKey(endDate, actualFrozenDays);
+          db.run(
+            "UPDATE member_subscriptions SET end_date = ?, frozen_days = frozen_days + ? WHERE id = ?",
+            [endDate, actualFrozenDays, subscriptionId],
+          );
         }
       }
       db.run(
         "UPDATE subscription_freezes SET actual_resume_date = ? WHERE id = ?",
-        [todayKey(), openFreeze.id],
+        [today, openFreeze.id],
       );
     }
     db.run(
@@ -617,10 +742,12 @@ export async function unfreezeSubscription(
     );
     recordAudit(db, actor, "SUBSCRIPTION_UNFROZEN", "subscription", subscriptionId, {
       extendedEndDate: endDate,
+      actualFrozenDays: openFreeze ? Math.max(0, Math.min(diffDaysKeys(openFreeze.start_date, today) + 1, Number(openFreeze.duration_days ?? 0))) : 0,
+      isAutoUnfreeze: !!options.isAutoUnfreeze,
     });
   });
 
-  return withPlanInfo(db, getSubscriptionRow(db, subscriptionId)!, todayKey());
+  return withPlanInfo(db, getSubscriptionRow(db, subscriptionId)!, today);
 }
 
 export interface RenewResult {
@@ -667,6 +794,7 @@ export async function renewSubscription(
     startDate,
     price: input.price !== undefined ? input.price : undefined,
     notes: input.notes ?? row.notes,
+    packageId: row.package_id ?? undefined,
   });
 
   return {

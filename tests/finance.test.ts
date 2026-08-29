@@ -88,7 +88,7 @@ beforeEach(async () => {
 
 async function newMember(name = "عضو مالي") {
   return createMember(db, owner, {
-    fullName: name,
+    fullName: `${name}-${Math.floor(Math.random() * 1e9)}`,
     phone: `010${String(Math.floor(Math.random() * 1e8)).padStart(8, "0")}`,
   });
 }
@@ -1141,5 +1141,44 @@ describe("reports and dashboard", () => {
     expect(listPayments(db, owner, { subscriptionId: sub.id }).total).toBe(1);
     expect(listPayments(db, owner, { subscriptionId: sub.id, status: "paid" })).toMatchObject({ total: 0 });
     expect(getPaymentById(db, owner, second.id).createdByName).toBe("الاستقبال");
+  });
+
+  it("listPayments filters by memberId when provided", async () => {
+    const aMember = await newMember("عضو أ");
+    const aPlan = await createPlan(db, owner, {
+      name: `خطة أ-${Math.floor(Math.random() * 1e9)}`,
+      durationDays: 30,
+      price: 500,
+    });
+    const aSub = await createSubscription(db, owner, { memberId: aMember.id, planId: aPlan.id });
+    await recordPayment(db, owner, {
+      memberId: aMember.id,
+      subscriptionId: aSub.id,
+      baseAmountMinor: 50_000,
+      paidAmountMinor: 50_000,
+      methodCode: "cash",
+    });
+    const bMember = await newMember("عضو ب");
+    const bPlan = await createPlan(db, owner, {
+      name: `خطة ب-${Math.floor(Math.random() * 1e9)}`,
+      durationDays: 30,
+      price: 700,
+    });
+    const bSub = await createSubscription(db, owner, { memberId: bMember.id, planId: bPlan.id });
+    await recordPayment(db, owner, {
+      memberId: bMember.id,
+      subscriptionId: bSub.id,
+      baseAmountMinor: 70_000,
+      paidAmountMinor: 70_000,
+      methodCode: "cash",
+    });
+    const all = listPayments(db, owner, { pageSize: 100 });
+    expect(all.total).toBe(2);
+    const onlyA = listPayments(db, owner, { pageSize: 100, memberId: aMember.id });
+    expect(onlyA.total).toBe(1);
+    expect(onlyA.items[0].memberId).toBe(aMember.id);
+    const onlyB = listPayments(db, owner, { pageSize: 100, memberId: bMember.id });
+    expect(onlyB.total).toBe(1);
+    expect(onlyB.items[0].memberId).toBe(bMember.id);
   });
 });

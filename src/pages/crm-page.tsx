@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useState, type ChangeEvent } from "react";
+import { useSearchParams } from "react-router-dom";
 import { RefreshCw, Send } from "lucide-react";
 import { useAuth } from "@/contexts/auth-context";
 import { useT } from "@/i18n";
@@ -19,6 +20,8 @@ import { Tabs } from "@/components/ui/tabs";
 import { DataTable, type Column } from "@/components/ui/table";
 import { EmptyState } from "@/components/ui/empty-state";
 import { MemberPickerModal } from "@/components/members/member-picker-modal";
+import { LeadsTab } from "@/pages/leads-tab";
+import { TrialsTab } from "@/pages/trials-tab";
 
 const STATUS_OPTIONS: Array<{ value: string; key: string }> = [
   { value: "all", key: "common.all" },
@@ -39,18 +42,33 @@ function statusVariant(s: CrmStatus) {
 
 export function CrmPage() {
   const t = useT();
-  const [tab, setTab] = useState("queue");
+  const { hasPermission } = useAuth();
+  const [params] = useSearchParams();
+  const initial = () => {
+    const q = params.get("tab");
+    if (q && ["trials", "leads"].includes(q) && !hasPermission("trials.view")) return "leads";
+    if (q && ["trials", "leads"].includes(q)) return q;
+    return "queue";
+  };
+  const [tab, setTab] = useState(initial);
+  const tabItems = [
+    { value: "queue", label: t("crmPage.tabQueue") },
+    { value: "compose", label: t("crmPage.tabCompose") },
+    { value: "templates", label: t("crmPage.tabTemplates") },
+  ];
+  if (hasPermission("trials.view")) {
+    tabItems.unshift({ value: "trials", label: t("trialsTab.title") });
+  }
+  if (hasPermission("leads.view")) {
+    tabItems.unshift({ value: "leads", label: t("leadsTab.title") });
+  }
   return (
     <div className="space-y-4">
       <Card>
         <CardHeader title={t("crmPage.title")} />
         <div className="px-5 pb-1">
           <Tabs
-            items={[
-              { value: "queue", label: t("crmPage.tabQueue") },
-              { value: "compose", label: t("crmPage.tabCompose") },
-              { value: "templates", label: t("crmPage.tabTemplates") },
-            ]}
+            items={tabItems}
             value={tab}
             onChange={setTab}
           />
@@ -59,6 +77,8 @@ export function CrmPage() {
       {tab === "queue" && <QueueTab />}
       {tab === "compose" && <ComposeTab onQueued={() => setTab("queue")} />}
       {tab === "templates" && <TemplatesTab />}
+      {tab === "leads" && <LeadsTab />}
+      {tab === "trials" && <TrialsTab />}
     </div>
   );
 }

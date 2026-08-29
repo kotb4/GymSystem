@@ -4,11 +4,11 @@ import { useT } from "@/i18n";
 import { useToast } from "@/components/ui/toast";
 import { describeError } from "@/utils/app-error";
 import { todayKey } from "@/core/dates";
-import { api, type Plan } from "@/api";
+import { api, type Package, type Plan } from "@/api";
 
 
 import type { PublicMember } from "@/core/services/members.service";
-import { computeDiscount, formatMinor, toMinor } from "@/core/money";
+import { computeDiscount, formatMinor, minorToMajor, toMinor } from "@/core/money";
 import { cn } from "@/utils/cn";
 import { Modal } from "@/components/ui/modal";
 import { Button } from "@/components/ui/button";
@@ -29,6 +29,8 @@ export function SubscriptionFormModal({ open, onClose, onSaved, presetMember }: 
   const { toast } = useToast();
   const [plans, setPlans] = useState<Plan[]>([]);
   const [planId, setPlanId] = useState("");
+  const [pkgList, setPkgList] = useState<Package[]>([]);
+  const [packageId, setPackageId] = useState("");
   const [price, setPrice] = useState("");
   const [startDate, setStartDate] = useState(todayKey());
   const [member, setMember] = useState<PublicMember | null>(null);
@@ -55,9 +57,16 @@ export function SubscriptionFormModal({ open, onClose, onSaved, presetMember }: 
     setCustomPrice(false);
     void (async () => {
       try {
-        const activePlans = await api.plans.list(false);
-        const typed = activePlans as unknown as Plan[];
+        const [activePlans, packagesRes] = await Promise.all([
+          api.plans.list(false),
+          api.packages.list(false),
+        ]);
+        const pkgList = packagesRes as unknown as Package[];
+        setPkgList(pkgList);
+        const syntheticIds = new Set<string>(pkgList.map((p) => p.syntheticPlanId ?? "").filter(Boolean));
+        const typed = (activePlans as unknown as Plan[]).filter((p) => !syntheticIds.has(p.id));
         setPlans(typed);
+        setPackageId("");
         const first = typed[0];
         setPlanId(first?.id ?? "");
         setPrice(first ? String(first.price) : "");
@@ -69,9 +78,17 @@ export function SubscriptionFormModal({ open, onClose, onSaved, presetMember }: 
   }, [open, presetMember, actor, t]);
 
   const onPlanChange = (nextId: string) => {
+    setPackageId("");
     setPlanId(nextId);
     const plan = plans.find((p) => p.id === nextId);
     if (plan) setPrice(String(plan.price));
+  };
+
+  const onPkgChange = (nextId: string) => {
+    setPlanId("");
+    setPackageId(nextId);
+    const pkg = pkgList.find((p) => p.id === nextId);
+    if (pkg) setPrice(minorToMajor(pkg.price).toString());
   };
 
   const baseMinor = toMinor(price === "" ? "0" : price);
@@ -111,7 +128,9 @@ export function SubscriptionFormModal({ open, onClose, onSaved, presetMember }: 
 
   const onSubmit = async (e: FormEvent) => {
     e.preventDefault();
-    if (!actor || !member || !planId) return;
+    const selectedPkg = packageId ? pkgList.find((p) => p.id === packageId) : undefined;
+    const effectivePlanId = selectedPkg ? (selectedPkg.syntheticPlanId ?? "") : planId;
+    if (!actor || !member || (!effectivePlanId && !packageId)) return;
     if (discountError && payMode !== "later") {
       setError(discountError);
       return;
@@ -122,9 +141,10 @@ export function SubscriptionFormModal({ open, onClose, onSaved, presetMember }: 
     try {
       const created = await api.subscriptions.create({
         memberId: member.id,
-        planId,
+        planId: effectivePlanId,
         startDate,
-        price: price === "" ? undefined : Number(price),
+        price: packageId ? undefined : price === "" ? undefined : Number(price),
+        ...(packageId ? { packageId } : {}),
       });
       if (payMode !== "later" && hasPermission("payments.create") && paidNowMinor > 0) {
         try {
@@ -168,7 +188,7 @@ export function SubscriptionFormModal({ open, onClose, onSaved, presetMember }: 
               type="submit"
               form="sub-form"
               loading={submitting}
-              disabled={submitting || !member || !planId}
+              disabled={submitting || !member || (!planId && !packageId)}
             >
               {t("common.save")}
             </Button>
@@ -196,6 +216,21 @@ export function SubscriptionFormModal({ open, onClose, onSaved, presetMember }: 
               )}
             </button>
           </div>
+          {pkgList.length > 0 && (
+            <Select
+              label={t("packages.tabPackages")}
+              value={packageId}
+              onChange={(e) => onPkgChange(e.target.value)}
+              disabled={submitting}
+              options={[
+                { value: "", label: `${t("common.select")}…` },
+                ...pkgList.map((p) => ({
+                  value: p.id,
+                  label: `${p.name} — ${p.durationDays} ${t("common.days")} — ${formatMinor(p.price)}`,
+                })),
+              ]}
+            />
+          )}
           <Select
             label={t("subs.pickPlan")}
             value={planId}

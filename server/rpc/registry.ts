@@ -6,6 +6,7 @@ import type { Exposed } from "./helpers";
 import { members } from "./members.rpc";
 import { subscriptions } from "./subscriptions.rpc";
 import { plans } from "./plans.rpc";
+import { packages } from "./packages.rpc";
 import { cards } from "./cards.rpc";
 import { attendance } from "./attendance.rpc";
 import { audit } from "./audit.rpc";
@@ -29,7 +30,12 @@ import { employeesHr } from "./employees-hr.rpc";
 import { inbody } from "./inbody.rpc";
 import { crm } from "./crm.rpc";
 import { permissions } from "./permissions.rpc";
+import { reception } from "./reception.rpc";
+import { lead } from "./lead.rpc";
+import { trials } from "./trials.rpc";
 import { dev } from "./dev.rpc";
+import { memberProfile } from "./member-profile.rpc";
+import { dailyClosing } from "./daily-closing.rpc";
 
 /**
  * The frontend never touches SQLite. It calls whitelisted service functions
@@ -41,6 +47,7 @@ export const REGISTRY: Record<string, Record<string, Exposed>> = {
   members,
   subscriptions,
   plans,
+  packages,
   cards,
   attendance,
   audit,
@@ -64,7 +71,12 @@ export const REGISTRY: Record<string, Record<string, Exposed>> = {
   inbody,
   crm,
   permissions,
+  reception,
+  lead,
+  trials,
   dev,
+  memberProfile,
+  dailyClosing,
 };
 
 export interface SerializedError {

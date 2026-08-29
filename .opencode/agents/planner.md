@@ -11,8 +11,8 @@ You are the PLANNER agent for Yassen Mohamed Kotb | 01288536381 (yassen), an Ara
 
 ## Mandatory process
 
-1. Read `AGENTS.md` at the repository root first.
-2. Read `.ai/architecture.md` and `.ai/business-rules.md` for verified context.
+1. Read `AGENTS.md` at the repository root first (mandatory reading order + cross-agent handoff rules).
+2. Read `.ai/current-state.md` to know where the previous agent stopped, then `.ai/architecture.md` and `.ai/business-rules.md` for verified context.
 3. Inspect the ACTUAL code involved: services in `src/core/services/`, registry in `server/rpc.ts`, schema in `src/db/migrations.ts`, frontend pages/components under `src/pages/` and `src/components/`, API wrappers in `src/api/index.ts`.
 4. Trace database relationships that the change touches (foreign keys, UNIQUE constraints, CHECK constraints).
 5. Check existing tests in `tests/` for behavior already covered.

@@ -1,4 +1,4 @@
-﻿import { addDaysKey, diffDaysKeys, nowStamp, secondsBetweenStamps, todayKey, calcSubscriptionEndDate } from "@/core/dates";
+﻿import { addDaysKey, nowStamp, secondsBetweenStamps, todayKey } from "@/core/dates";
 import { errNotFound } from "@/core/errors";
 import { requirePermission, type ServiceActor } from "@/core/permissions";
 import type { Db, Row } from "@/db/engine";
@@ -6,6 +6,8 @@ import { recordAudit } from "./audit.service";
 import { getCardByBarcode } from "./cards.service";
 import { readSetting, SETTING_KEYS } from "./settings.service";
 import { getMemberRowById } from "./members.service";
+import { activeTrialForMember } from "./trials.service";
+import { unfreezeSubscription } from "./subscriptions.service";
 
 export type CheckInDenialReason =
   | "CARD_UNKNOWN"
@@ -72,15 +74,17 @@ interface ActiveSubRow extends Row {
  * Finds the subscription that authorizes attendance today.
  * time/open plans authorize by date window; session plans additionally
  * require remaining sessions (enforced in the service layer, not just UI).
+ * Exported so the reception eligibility lookup reuses the same rule.
  */
-function findActiveSubscription(db: Db, memberId: string, today: string): ActiveSubRow | null {
+export function findActiveSubscription(db: Db, memberId: string, today: string): ActiveSubRow | null {
   const rows = db.all<ActiveSubRow>(
     "SELECT s.id, s.end_date, p.name AS plan_name, p.kind AS plan_kind, s.sessions_total, s.sessions_used\nFROM member_subscriptions s\nJOIN membership_plans p ON p.id = s.plan_id\nWHERE s.member_id = ? AND s.status = 'active' AND s.start_date <= ? AND s.end_date >= ?\nORDER BY (CASE WHEN p.kind = 'sessions' THEN 0 ELSE 1 END), s.end_date DESC",
     [memberId, today, today],
   );
   for (const row of rows) {
     if ((row.plan_kind ?? "time") === "sessions") {
-      const remaining = Number(row.sessions_total ?? 0) - Number(row.sessions_used ?? 0);
+      if (row.sessions_total == null) return row;
+      const remaining = Number(row.sessions_total) - Number(row.sessions_used ?? 0);
       if (remaining > 0) return row;
       continue;
     }
@@ -150,48 +154,64 @@ export async function recordCheckIn(
       [member.id, today, today],
     );
     if (frozenSub) {
-      const openFreeze = db.first<{ id: string; frozen_at: string }>(
-        "SELECT id, frozen_at FROM subscription_freezes WHERE subscription_id = ? AND actual_resume_date IS NULL ORDER BY created_at DESC LIMIT 1",
-        [frozenSub.id],
-      );
-      let endDate = frozenSub.end_date;
-      const extendsExpirySetting = readSetting(db, SETTING_KEYS.freezeExtendsExpiry);
-      const extendsExpiry = extendsExpirySetting == null || extendsExpirySetting === "1";
-      if (openFreeze && extendsExpiry) {
-        const frozenDays = Math.max(0, diffDaysKeys(openFreeze.frozen_at.slice(0, 10), today));
-        if (frozenDays > 0) {
-          endDate = calcSubscriptionEndDate(endDate, frozenDays);
-        }
-      }
-      await db.transaction(async () => {
-        if (openFreeze) {
-          db.run(
-            "UPDATE subscription_freezes SET actual_resume_date = ? WHERE id = ?",
-            [today, openFreeze.id],
-          );
-        }
-        db.run(
-          "UPDATE member_subscriptions SET status = 'active', end_date = ?, frozen_at = NULL, resume_date = NULL, updated_at = ? WHERE id = ?",
-          [endDate, nowStamp(), frozenSub.id],
-        );
-        if (openFreeze && extendsExpiry) {
-          const frozenDays = Math.max(0, diffDaysKeys(openFreeze.frozen_at.slice(0, 10), today));
-          if (frozenDays > 0) {
-            db.run(
-              "UPDATE member_subscriptions SET frozen_days = frozen_days + ? WHERE id = ?",
-              [frozenDays, frozenSub.id],
-            );
-          }
-        }
-        recordAudit(db, actor, "SUBSCRIPTION_UNFROZEN", "subscription", frozenSub.id, {
-          reason: "auto-unfreeze on check-in",
-          autoResumeDate: today,
-        });
-      });
+      // Use the centralized unfreeze logic with auto-unfreeze flag
+      await unfreezeSubscription(db, actor, frozenSub.id, { isAutoUnfreeze: true });
       subscription = findActiveSubscription(db, member.id, today);
     }
   }
   if (!subscription) {
+    // No paid subscription: a live trial window is a targeted check-in
+    // authority (business rule: trial users may attend during the trial).
+    const trial = activeTrialForMember(db, member.id, today);
+    if (trial) {
+      const stampNow = nowStamp();
+      const windowSeconds = duplicateWindowSeconds(db);
+      const lastVisit = db.first<AttendanceRow>(
+        "SELECT * FROM attendance WHERE deleted_at IS NULL AND member_id = ? ORDER BY checkin_at DESC LIMIT 1",
+        [member.id],
+      );
+      if (lastVisit) {
+        const secondsAgo = secondsBetweenStamps(stampNow, lastVisit.checkin_at);
+        if (secondsAgo < windowSeconds) {
+          return {
+            kind: "duplicate",
+            secondsAgo,
+            memberName: member.full_name,
+            memberCode: member.member_code,
+          };
+        }
+      }
+      const attendanceId = crypto.randomUUID();
+      await db.transaction(async () => {
+        db.run(
+          "INSERT INTO attendance (id, member_id, card_id, subscription_id, checkin_at, created_by, device_identifier, notes)\nVALUES (?, ?, ?, NULL, ?, ?, ?, ?)",
+          [
+            attendanceId,
+            member.id,
+            card.id,
+            stampNow,
+            actor.userId,
+            input.deviceIdentifier ?? null,
+            `trial:${trial.id}`,
+          ],
+        );
+        recordAudit(db, actor, "CHECKIN_RECORDED", "attendance", attendanceId, {
+          memberCode: member.member_code,
+          barcode,
+          trialId: trial.id,
+        });
+      });
+      return {
+        kind: "success",
+        attendanceId,
+        memberName: member.full_name,
+        memberCode: member.member_code,
+        planName: `trial:${trial.trialType}`,
+        subscriptionEndsAt: trial.endDate,
+        sessionsRemaining: null,
+        outstandingMinor: memberOutstandingMinor(db, member.id),
+      };
+    }
     return {
       kind: "denied",
       reason: "NO_ACTIVE_SUBSCRIPTION",
@@ -204,7 +224,7 @@ export async function recordCheckIn(
     subscription.sessions_total == null ? null : Number(subscription.sessions_total);
   const sessionsRemaining =
     sessionsTotal == null ? null : Math.max(0, sessionsTotal - Number(subscription.sessions_used ?? 0));
-  if (planKind === "sessions" && (sessionsRemaining ?? 0) <= 0) {
+  if (planKind === "sessions" && sessionsTotal != null && (sessionsRemaining ?? 0) <= 0) {
     return {
       kind: "denied",
       reason: "NO_SESSIONS_LEFT",
@@ -245,7 +265,7 @@ export async function recordCheckIn(
         input.deviceIdentifier ?? null,
       ],
     );
-    if (planKind === "sessions") consumeSession(db, subscription.id);
+    if (planKind === "sessions" && sessionsTotal != null) consumeSession(db, subscription.id);
     recordAudit(db, actor, "CHECKIN_RECORDED", "attendance", attendanceId, {
       memberCode: member.member_code,
       barcode,
@@ -260,13 +280,13 @@ export async function recordCheckIn(
     planName: subscription.plan_name,
     subscriptionEndsAt: subscription.end_date,
     sessionsRemaining:
-      planKind === "sessions" ? (sessionsRemaining ?? 0) - 1 : null,
+      planKind === "sessions" && sessionsTotal != null ? (sessionsRemaining ?? 0) - 1 : null,
     outstandingMinor: memberOutstandingMinor(db, member.id),
   };
 }
 
 /** Money still owed by this member (active-subscription balance + open store debts). */
-function memberOutstandingMinor(db: Db, memberId: string): number {
+export function memberOutstandingMinor(db: Db, memberId: string): number {
   const subs = Number(
     db.scalar(
       `WITH paid AS (

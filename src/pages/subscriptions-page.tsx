@@ -25,6 +25,7 @@ import { Modal } from "@/components/ui/modal";
 import { ConfirmDialog } from "@/components/ui/confirm-dialog";
 import { SubscriptionFormModal } from "@/components/subscriptions/subscription-form-modal";
 import { PlanFormModal } from "@/components/subscriptions/plan-form-modal";
+import { FreezeSubscriptionModal } from "@/components/subscriptions/freeze-subscription-modal";
 
 const EFFECTIVE_OPTIONS = ["all", "active", "upcoming", "expired", "suspended", "frozen", "cancelled"] as const;
 
@@ -47,6 +48,7 @@ export function SubscriptionsPage() {
   const [undoCancelTarget, setUndoCancelTarget] = useState<SubscriptionWithMember | null>(null);
   const [purgeTarget, setPurgeTarget] = useState<SubscriptionWithMember | null>(null);
   const [detailsTarget, setDetailsTarget] = useState<SubscriptionWithMember | null>(null);
+  const [freezeTarget, setFreezeTarget] = useState<SubscriptionWithMember | null>(null);
   const [freezeHistory, setFreezeHistory] = useState<FreezeInfo[]>([]);
   const [busy, setBusy] = useState(false);
   const [reloadTick, setReloadTick] = useState(0);
@@ -134,17 +136,6 @@ export function SubscriptionsPage() {
     }
   };
 
-  const doFreeze = async (sub: SubscriptionWithMember) => {
-    try {
-      await api.subscriptions.freeze(sub.id);
-      toast("success", t("subs.suspendedToast"));
-      reload();
-      setPage(1);
-    } catch (err) {
-      toast("error", describeError(err, t));
-    }
-  };
-
   interface Row {
     id: string;
     memberId: string;
@@ -195,9 +186,11 @@ export function SubscriptionsPage() {
 
   const today = todayKey();
   const rows: Row[] = data.items.map((s) => {
-    const totalDays = diffDaysKeys(s.startDate, s.endDate) + 1;
+    const totalDays = s.startDate && s.endDate ? diffDaysKeys(s.startDate, s.endDate) + 1 : 0;
     const eff = s.effectiveStatus;
-    const remainingDays = eff === "active" ? Math.max(0, diffDaysKeys(today, s.endDate) + 1) : eff === "expired" ? 0 : totalDays;
+    const remainingDays = eff === "active" && s.endDate
+      ? Math.max(0, diffDaysKeys(today, s.endDate) + 1)
+      : eff === "expired" ? 0 : totalDays;
     return {
       id: s.id,
       memberId: s.memberId,
@@ -249,7 +242,9 @@ export function SubscriptionsPage() {
       header: t("subs.period"),
       render: (row) => (
         <span dir="ltr" className="tabnum text-subtle">
-          {formatDateShort(parseDateKey(row.startDate))} ← {formatDateShort(parseDateKey(row.endDate))}
+          {row.startDate ? formatDateShort(parseDateKey(row.startDate)) : "—"}
+          {" ← "}
+          {row.endDate ? formatDateShort(parseDateKey(row.endDate)) : "—"}
         </span>
       ),
     },
@@ -405,7 +400,7 @@ export function SubscriptionsPage() {
           <button
             type="button"
             aria-label={t("subs.freeze")}
-            onClick={() => { const sub = findSub(row.id); if (sub) void doFreeze(sub); }}
+            onClick={() => { const sub = findSub(row.id); if (sub) setFreezeTarget(sub); }}
             className="grid size-8 place-items-center rounded-lg text-faint transition-colors hover:bg-cyan/10 hover:text-cyan"
             title={t("subs.freeze")}
           >
@@ -516,6 +511,12 @@ export function SubscriptionsPage() {
 
       <SubscriptionFormModal open={subModalOpen} onClose={() => setSubModalOpen(false)} onSaved={reload} />
       <PlanFormModal open={planModalOpen} onClose={() => setPlanModalOpen(false)} onSaved={reloadPlans} plan={editPlan} />
+      <FreezeSubscriptionModal
+        open={freezeTarget !== null}
+        onClose={() => setFreezeTarget(null)}
+        onSaved={() => { reload(); setPage(1); }}
+        subscription={freezeTarget as SubscriptionWithMember}
+      />
 
       <ConfirmDialog
         open={Boolean(cancelTarget)}
@@ -565,8 +566,8 @@ export function SubscriptionsPage() {
       >
         {detailsTarget && (() => {
           const sub = detailsTarget;
-          const totalDays = diffDaysKeys(sub.startDate, sub.endDate) + 1;
-          const remainingDays = diffDaysKeys(today, sub.endDate) + 1;
+          const totalDays = sub.startDate && sub.endDate ? diffDaysKeys(sub.startDate, sub.endDate) + 1 : 0;
+          const remainingDays = sub.endDate ? diffDaysKeys(today, sub.endDate) + 1 : 0;
           const eff = sub.effectiveStatus;
           return (
             <div className="space-y-4">
@@ -587,43 +588,50 @@ export function SubscriptionsPage() {
                 <div className="flex justify-between"><span className="text-subtle">{t("common.status")}</span><Badge variant={subStatusMeta(t, eff).variant} dot>{subStatusMeta(t, eff).label}</Badge></div>
               </div>
 
-              <div>
-                <h4 className="text-sm font-bold mb-2 flex items-center gap-2"><Snowflake className="size-4 text-cyan" />{t("subs.freezeHistory")}</h4>
-                {freezeHistory.length === 0 ? (
-                  <p className="text-sm text-faint">{t("subs.freezeHistoryEmpty")}</p>
-                ) : (
-                  <div className="space-y-2">
-                    {freezeHistory.map((f) => {
-                      const isExpired = eff === "expired" || eff === "cancelled";
-                      const resumeDate = f.actualResumeDate ?? (isExpired ? sub.endDate : f.expectedResumeDate) ?? null;
-                      return (
-                      <div key={f.id} className="rounded-lg bg-white/5 p-3 text-sm space-y-1">
-                        <div className="flex justify-between">
-                          <span className="text-subtle">{t("subs.freezeFrom")}</span>
-                          <span className="tabnum">{f.frozenAt.slice(0, 10)}</span>
-                        </div>
-                        <div className="flex justify-between">
-                          <span className="text-subtle">{t("subs.freezeTo")}</span>
-                          <span className="tabnum">{resumeDate ?? t("subs.freezeNotResumed")}</span>
-                        </div>
-                        {resumeDate && (
+                <div>
+                  <h4 className="text-sm font-bold mb-2 flex items-center gap-2"><Snowflake className="size-4 text-cyan" />{t("subs.freezeHistory")}</h4>
+                  {freezeHistory.length === 0 ? (
+                    <p className="text-sm text-faint">{t("subs.freezeHistoryEmpty")}</p>
+                  ) : (
+                    <div className="space-y-2">
+                      {freezeHistory.map((f) => {
+                        return (
+                        <div key={f.id} className="rounded-lg bg-white/5 p-3 text-sm space-y-1">
+                          <div className="flex justify-between">
+                            <span className="text-subtle">{t("subs.freezeFrom")}</span>
+                            <span className="tabnum">{f.startDate}</span>
+                          </div>
+                          <div className="flex justify-between">
+                            <span className="text-subtle">{t("subs.freezeTo")}</span>
+                            <span className="tabnum">{f.endDate}</span>
+                          </div>
                           <div className="flex justify-between">
                             <span className="text-subtle">{t("subs.freezeDuration")}</span>
-                            <span className="tabnum">{diffDaysKeys(f.frozenAt.slice(0, 10), resumeDate) + 1} {t("subs.daysUnit")}</span>
+                            <span className="tabnum">{f.durationDays} {t("subs.daysUnit")}</span>
                           </div>
-                        )}
-                        {f.reason && (
-                          <div className="flex justify-between">
-                            <span className="text-subtle">{t("subs.freezeReason")}</span>
-                            <span className="text-subtle text-xs">{f.reason}</span>
-                          </div>
-                        )}
-                      </div>
-                      );
-                    })}
-                  </div>
-                )}
-              </div>
+                          {f.actualResumeDate && (
+                            <div className="flex justify-between">
+                              <span className="text-subtle">{t("subs.unfreeze")}</span>
+                              <span className="tabnum">{f.actualResumeDate}</span>
+                            </div>
+                          )}
+                          {f.reason && (
+                            <div className="flex justify-between">
+                              <span className="text-subtle">{t("subs.freezeReason")}</span>
+                              <span className="text-subtle text-xs">{f.reason}</span>
+                            </div>
+                          )}
+                          {f.notes && (
+                            <div className="text-subtle text-xs leading-relaxed border-t border-line pt-1.5 mt-1.5">
+                              {f.notes}
+                            </div>
+                          )}
+                        </div>
+                        );
+                      })}
+                    </div>
+                  )}
+                </div>
             </div>
           );
         })()}

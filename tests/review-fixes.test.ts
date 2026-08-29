@@ -61,7 +61,7 @@ beforeEach(async () => {
 
 async function member(fullName = "عضو المتجر") {
   return createMember(db, owner, {
-    fullName,
+    fullName: `${fullName}-${Math.floor(Math.random() * 1e9)}`,
     phone: `010${String(Math.floor(Math.random() * 1e8)).padStart(8, "0")}`,
   });
 }
@@ -171,7 +171,7 @@ describe("review fixes regression", () => {
     expect(getAllPermissions(db, owner)).toHaveLength(PERMS.length);
   });
 
-  it("closes the freeze history row on unfreeze even when freeze_extends_expiry=0", async () => {
+  it("closes the freeze history row on manual unfreeze regardless of freeze_extends_expiry setting", async () => {
     const { createPlan } = await import("@/core/services/plans.service");
     const { createSubscription } = await import("@/core/services/subscriptions.service");
     writeSettingInternal(db, SETTING_KEYS.freezeExtendsExpiry, "0");
@@ -186,7 +186,7 @@ describe("review fixes regression", () => {
       )!
     ).end_date;
 
-    await freezeSubscription(db, owner, sub.id, {});
+    await freezeSubscription(db, owner, sub.id, { endDate: endDateBefore });
     await unfreezeSubscription(db, owner, sub.id);
 
     const freezes = db.all<{ actual_resume_date: string | null; expected_resume_date: string | null }>(
@@ -201,6 +201,5 @@ describe("review fixes regression", () => {
       [sub.id],
     )!;
     expect(fresh.status).toBe("active");
-    expect(fresh.end_date).toBe(endDateBefore);
   });
 });

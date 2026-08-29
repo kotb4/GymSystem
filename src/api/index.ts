@@ -20,9 +20,16 @@ import type {
   UpdateSubscriptionPatch,
 } from "@/core/services/subscriptions.service";
 import type { Plan, PlanInput } from "@/core/services/plans.service";
+import type {
+  Package,
+  PackageInput,
+  PackagePatch,
+  PackageStats,
+} from "@/core/services/packages.service";
 import type { BulkRegisterResult, CardStatus, CardWithMember } from "@/core/services/cards.service";
 
 import type { AuditListQuery, AuditLogItem } from "@/core/services/audit.service";
+import type { MemberOverview } from "@/core/services/member-profile.service";
 import type {
   CreateUserInput,
   PublicUser,
@@ -42,7 +49,17 @@ import type {
   DashboardRange,
   DashboardStats,
   DashboardSeriesResult,
+  DashboardTreasurySection,
 } from "@/core/services/dashboard.service";
+import type {
+  CashBox,
+  CreateDailyClosingInput,
+  DailyClosingDetail,
+  DailyClosingListQuery,
+  DailyClosingSnapshot,
+  RecordCountedInput,
+  TreasurySnapshot,
+} from "@/core/services/daily-closing.service";
 import type { FinanceOverview } from "@/core/services/finance.service";
 import type { PeriodReport } from "@/core/services/financial-report.service";
 import type { StaffActivityReport } from "@/core/services/staff-activity.service";
@@ -54,7 +71,20 @@ import type {
   TrainingPlanListQuery,
 } from "@/core/services/training-plans.service";
 import type { AppNotification } from "@/core/services/notifications.service";
-import type { AttendanceDayPoint } from "@/core/services/attendance.service";
+import type { AttendanceDayPoint, CheckInResult } from "@/core/services/attendance.service";
+import type {
+  ReceptionLookup,
+  ReceptionSearchResult,
+} from "@/core/services/reception.service";
+import type {
+  ConvertTrialInput,
+  ConvertTrialResult,
+  Trial,
+  TrialListQuery,
+  TrialStats,
+  TrialStatus,
+  TrialType,
+} from "@/core/services/trials.service";
 
 const membersApi = {
   get: (id: string) => rpc<PublicMember>("members", "getMember", [id]),
@@ -75,6 +105,13 @@ const membersApi = {
     rpc<PublicMember>("members", "setMemberPhoto", [id, fileId]),
   removeMemberPhoto: (id: string) =>
     rpc<PublicMember>("members", "removeMemberPhoto", [id]),
+  overview: (id: string) => rpc<MemberOverview>("memberProfile", "getMemberOverview", [id]),
+  listAuditForMember: (id: string, query: { page?: number; pageSize?: number } = {}) =>
+    rpc<{ items: AuditLogItem[]; total: number }>(
+      "memberProfile",
+      "listAuditForMember",
+      [id, query],
+    ),
 };
 
 const subscriptionsApi = {
@@ -92,7 +129,7 @@ const subscriptionsApi = {
     rpc<{ items: SubscriptionWithMember[]; total: number }>("subscriptions", "listSubscriptions", [query]),
   freezes: (subscriptionId: string) =>
     rpc<FreezeInfo[]>("subscriptions", "listSubscriptionFreezes", [subscriptionId]),
-  freeze: (id: string, input: { expectedResumeDate?: string | null; reason?: string | null } = {}) =>
+  freeze: (id: string, input: { startDate?: string | null; endDate: string; reason?: string | null; notes?: string | null }) =>
     rpc<Subscription>("subscriptions", "freezeSubscription", [id, input]),
   unfreeze: (id: string) => rpc<Subscription>("subscriptions", "unfreezeSubscription", [id]),
   renew: (id: string, input: { price?: number; notes?: string | null } = {}) =>
@@ -107,6 +144,16 @@ const plansApi = {
   list: (includeInactive = true) => rpc<Plan[]>("plans", "listPlans", [includeInactive]),
   create: (input: PlanInput) => rpc<unknown>("plans", "createPlan", [input]),
   update: (id: string, patch: PlanInput) => rpc<unknown>("plans", "updatePlan", [id, patch]),
+};
+
+const packagesApi = {
+  list: (includeInactive = true) => rpc<Package[]>("packages", "listPackages", [includeInactive]),
+  get: (id: string) => rpc<Package>("packages", "getPackage", [id]),
+  create: (input: PackageInput) => rpc<Package>("packages", "createPackage", [input]),
+  update: (id: string, patch: PackagePatch) => rpc<Package>("packages", "updatePackage", [id, patch]),
+  toggle: (id: string, isActive: boolean) => rpc<Package>("packages", "setPackageActive", [id, isActive]),
+  duplicate: (id: string) => rpc<Package>("packages", "duplicatePackage", [id]),
+  stats: () => rpc<PackageStats>("packages", "packageStats", []),
 };
 
 const cardsApi = {
@@ -135,6 +182,15 @@ const attendanceApi = {
     rpc<unknown[]>("attendance", "listAttendanceForMember", [memberId, limit]),
   delete: (attendanceId: string) => rpc<void>("attendance", "deleteAttendance", [attendanceId]),
   restore: (attendanceId: string) => rpc<void>("attendance", "restoreAttendance", [attendanceId]),
+};
+
+const receptionApi = {
+  search: (term: string, limit = 10) =>
+    rpc<ReceptionSearchResult[]>("reception", "search", [term, limit]),
+  lookup: (input: { barcode?: string; memberId?: string }) =>
+    rpc<ReceptionLookup>("reception", "lookup", [input]),
+  checkIn: (input: { barcode?: string; memberId?: string; deviceIdentifier?: string }) =>
+    rpc<CheckInResult>("reception", "checkIn", [input]),
 };
 
 const settingsApi = {
@@ -223,6 +279,35 @@ const dashboardApi = {
     key: "today" | "7d" | "30d" | "month" | "year" | "custom",
     custom?: DashboardRange,
   ) => rpc<DashboardOverview>("dashboard", "getDashboardOverview", [key, custom]),
+  treasury: (businessDate?: string) =>
+    rpc<DashboardTreasurySection>("dashboard", "getTreasuryForDashboard", [businessDate ?? ""]),
+};
+
+const treasuryApi = {
+  getOrCreate: (input: CreateDailyClosingInput) =>
+    rpc<DailyClosingDetail>("dailyClosing", "getOrCreateDailyClosing", [input]),
+  recordCounted: (closingId: string, input: RecordCountedInput) =>
+    rpc<DailyClosingDetail>("dailyClosing", "recordCountedCash", [closingId, input]),
+  close: (closingId: string, input: RecordCountedInput) =>
+    rpc<DailyClosingDetail>("dailyClosing", "closeDailyClosing", [closingId, input]),
+  reopen: (closingId: string, reason: string) =>
+    rpc<DailyClosingDetail>("dailyClosing", "reopenDailyClosing", [closingId, reason]),
+  getById: (id: string) =>
+    rpc<DailyClosingDetail>("dailyClosing", "getDailyClosingById", [id]),
+  list: (query: DailyClosingListQuery = {}) =>
+    rpc<{ items: DailyClosingSnapshot[]; total: number }>(
+      "dailyClosing",
+      "listDailyClosings",
+      [query],
+    ),
+  snapshot: (businessDate: string, box: CashBox) =>
+    rpc<TreasurySnapshot>("dailyClosing", "getTreasurySnapshot", [businessDate, box]),
+  snapshotsForDate: (businessDate: string) =>
+    rpc<{ gym: TreasurySnapshot; store: TreasurySnapshot }>(
+      "dailyClosing",
+      "listTreasurySnapshotsForDate",
+      [businessDate],
+    ),
 };
 
 const financeApi = {
@@ -299,9 +384,11 @@ export interface ProductPublic {
   lowStock: boolean;
 }
 export interface StoreSaleItem {
+  id: string;
   productId: string;
   productName: string;
   qty: number;
+  returnedQty: number;
   unitPriceMinor: number;
   lineTotalMinor: number;
 }
@@ -352,6 +439,60 @@ export interface StoreStats {
   creditOpenMinor: number;
   lowStockCount: number;
 }
+export interface StoreReturnItemRow {
+  id: string;
+  returnId: string;
+  saleItemId: string;
+  productId: string;
+  productName: string;
+  qty: number;
+  unitPriceMinor: number;
+  unitCostMinor: number;
+  lineTotalMinor: number;
+}
+export interface StoreReturnRow {
+  id: string;
+  returnNo: string;
+  saleId: string;
+  saleNo: string;
+  memberId: string | null;
+  memberName: string | null;
+  itemsTotalMinor: number;
+  discountMinor: number;
+  totalMinor: number;
+  reason: string | null;
+  box: string;
+  createdBy: string;
+  createdAt: string;
+  items: StoreReturnItemRow[];
+}
+export interface DailySalesRow {
+  dateKey: string;
+  salesCount: number;
+  revenueMinor: number;
+  costMinor: number;
+  returnsCount: number;
+  returnsMinor: number;
+  netMinor: number;
+  grossProfitMinor: number;
+}
+export interface ProductSalesRow {
+  productId: string;
+  productName: string;
+  categoryName: string | null;
+  unitsSold: number;
+  unitsReturned: number;
+  netUnits: number;
+  revenueMinor: number;
+  costMinor: number;
+  grossProfitMinor: number;
+}
+export interface StockValueRow {
+  totalCostMinor: number;
+  potentialRetailMinor: number;
+  potentialGrossProfitMinor: number;
+  productCount: number;
+}
 
 const storeApi = {
   listCategories: (includeInactive = true) =>
@@ -381,6 +522,18 @@ purgeProduct: (id: string) => rpc<void>("store", "purgeProduct", [id]),
     rpc<StoreDebtRow>("store", "repayStoreDebt", [input]),
   memberDebtTotal: (memberId: string) => rpc<number>("store", "getMemberStoreDebtTotal", [memberId]),
   stats: (range: { fromKey: string; toKey: string }) => rpc<StoreStats>("store", "getStoreStats", [range]),
+  returnSale: (input: { saleId: string; lines: Array<{ saleItemId: string; qty: number }>; discountMinor?: number; reason?: string | null }) =>
+    rpc<StoreReturnRow>("store", "returnStoreSale", [input]),
+  getReturn: (returnId: string) => rpc<StoreReturnRow>("store", "getStoreReturn", [returnId]),
+  listReturns: (query: Record<string, unknown> = {}) =>
+    rpc<{ items: Array<Omit<StoreReturnRow, "items">>; total: number }>("store", "listStoreReturns", [query]),
+  dailySalesReport: (range: { fromKey: string; toKey: string }) =>
+    rpc<DailySalesRow[]>("store", "getDailySalesReport", [range]),
+  productSalesReport: (range: { fromKey: string; toKey: string }) =>
+    rpc<ProductSalesRow[]>("store", "getProductSalesReport", [range]),
+  stockValue: () => rpc<StockValueRow>("store", "getStockValue", []),
+  lowStockProducts: (query?: { limit?: number }) =>
+    rpc<ProductPublic[]>("store", "listLowStockProducts", [query ?? {}]),
 };
 
 // ------------------------------- classes ---------------------------------
@@ -748,6 +901,178 @@ const crmApi = {
   generateDue: () => rpc<{ queued: number; duplicates: number; skippedNoPhone: number }>("crm", "generateDueMessages", []),
 };
 
+// ------------------------------ leads --------------------------------------
+
+export type LeadStatus = "new" | "contacted" | "interested" | "trial" | "joined" | "lost";
+export type LeadSource =
+  | "facebook"
+  | "instagram"
+  | "whatsapp"
+  | "referral"
+  | "walk_in"
+  | "existing_member"
+  | "other";
+
+export interface Lead {
+  id: string;
+  fullName: string;
+  phone: string | null;
+  email: string | null;
+  source: LeadSource;
+  interestedPlanId: string | null;
+  interestedPlanName: string | null;
+  department: "general" | "men" | "women";
+  assignedEmployeeId: string | null;
+  assignedEmployeeName: string | null;
+  status: LeadStatus;
+  notes: string | null;
+  lostReason: string | null;
+  convertedMemberId: string | null;
+  contactedAt: string | null;
+  interestedAt: string | null;
+  trialAt: string | null;
+  joinedAt: string | null;
+  lostAt: string | null;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface LeadFollowup {
+  id: string;
+  leadId: string;
+  leadName: string;
+  dueDate: string;
+  dueTime: string | null;
+  note: string | null;
+  done: boolean;
+  doneAt: string | null;
+  createdAt: string;
+}
+
+export interface LeadActivity {
+  id: string;
+  leadId: string;
+  action: string;
+  note: string | null;
+  authorName: string | null;
+  createdAt: string;
+}
+
+export interface LeadStats {
+  total: number;
+  byStatus: Record<LeadStatus, number>;
+  bySource: Record<LeadSource, number>;
+  newThisMonth: number;
+  joined: number;
+  lost: number;
+  conversionRate: number;
+  dueFollowups: number;
+  todayFollowupsCount: number;
+}
+
+export interface ConvertLeadResult {
+  memberId: string;
+  memberCode: string;
+  memberName: string;
+  linkedExisting: boolean;
+}
+
+const LEAD_STATUSES: LeadStatus[] = ["new", "contacted", "interested", "trial", "joined", "lost"];
+
+const leadApi = {
+  create: (input: {
+    fullName: string;
+    phone?: string | null;
+    email?: string | null;
+    source: LeadSource;
+    interestedPlanId?: string | null;
+    department?: "general" | "men" | "women";
+    assignedEmployeeId?: string | null;
+    notes?: string | null;
+  }) => rpc<Lead>("lead", "createLead", [input]),
+  update: (
+    leadId: string,
+    patch: {
+      fullName?: string;
+      phone?: string | null;
+      email?: string | null;
+      source?: LeadSource;
+      interestedPlanId?: string | null;
+      department?: "general" | "men" | "women";
+      assignedEmployeeId?: string | null;
+      notes?: string | null;
+      status?: LeadStatus;
+      lostReason?: string | null;
+    },
+  ) => rpc<Lead>("lead", "updateLead", [leadId, patch]),
+  list: (query?: {
+    status?: LeadStatus | "all";
+    source?: LeadSource | "all";
+    department?: "general" | "men" | "women" | "all";
+    search?: string;
+    assignedEmployeeId?: string;
+    page?: number;
+    pageSize?: number;
+  }) => rpc<{ items: Lead[]; total: number }>("lead", "listLeads", [query ?? {}]),
+  get: (leadId: string) => rpc<Lead>("lead", "getLead", [leadId]),
+  remove: (leadId: string) => rpc<void>("lead", "deleteLead", [leadId]),
+  listFollowups: (leadId: string) => rpc<LeadFollowup[]>("lead", "listFollowups", [leadId]),
+  addFollowup: (leadId: string, input: { dueDate: string; dueTime?: string | null; note?: string | null }) =>
+    rpc<LeadFollowup>("lead", "addFollowup", [leadId, input]),
+  updateFollowup: (
+    followupId: string,
+    patch: { dueDate?: string; dueTime?: string | null; note?: string | null },
+  ) => rpc<LeadFollowup>("lead", "updateFollowup", [followupId, patch]),
+  completeFollowup: (followupId: string, done?: boolean) =>
+    rpc<LeadFollowup>("lead", "completeFollowup", [followupId, done ?? true]),
+  todayFollowups: () => rpc<LeadFollowup[]>("lead", "todayFollowups", []),
+  listActivity: (leadId: string) => rpc<LeadActivity[]>("lead", "listActivity", [leadId]),
+  addActivity: (leadId: string, action: string, note?: string) =>
+    rpc<void>("lead", "addActivity", [leadId, action, note]),
+  convert: (leadId: string, existingMemberId?: string) =>
+    rpc<ConvertLeadResult>("lead", "convertLead", [{ leadId, existingMemberId }]),
+  stats: () => rpc<LeadStats>("lead", "leadStats", []),
+  statuses: LEAD_STATUSES,
+};
+
+// ------------------------------ trials -------------------------------------
+
+export const TRIAL_TYPES: TrialType[] = ["free", "paid", "day_1", "day_3", "day_7", "custom"];
+export const TRIAL_STATUSES: TrialStatus[] = ["active", "expired", "converted", "cancelled"];
+
+const trialApi = {
+  create: (input: {
+    trialType: TrialType;
+    leadId?: string | null;
+    memberId?: string | null;
+    phone?: string | null;
+    preferredPlanId?: string | null;
+    department?: "general" | "men" | "women";
+    startDate?: string;
+    endDate?: string;
+    notes?: string | null;
+  }) => rpc<Trial>("trials", "createTrial", [input]),
+  update: (trialId: string, patch: {
+    trialType?: TrialType;
+    memberId?: string | null;
+    phone?: string | null;
+    preferredPlanId?: string | null;
+    department?: "general" | "men" | "women";
+    startDate?: string;
+    endDate?: string;
+    notes?: string | null;
+  }) => rpc<Trial>("trials", "updateTrial", [trialId, patch]),
+  list: (query?: TrialListQuery) => rpc<{ items: Trial[]; total: number }>("trials", "listTrials", [query ?? {}]),
+  get: (trialId: string) => rpc<Trial>("trials", "getTrial", [trialId]),
+  expire: (trialId: string) => rpc<Trial>("trials", "expireTrial", [trialId]),
+  cancel: (trialId: string, reason?: string | null) => rpc<Trial>("trials", "cancelTrial", [trialId, reason ?? null]),
+  convert: (input: ConvertTrialInput) => rpc<ConvertTrialResult>("trials", "convertTrial", [input]),
+  sweepExpired: () => rpc<number>("trials", "sweepExpiredTrials", []),
+  stats: () => rpc<TrialStats>("trials", "trialStats", []),
+  types: TRIAL_TYPES,
+  statuses: TRIAL_STATUSES,
+};
+
 // ----------------------------- files/photos ------------------------------
 
 async function uploadFile(kind: string, file: File): Promise<{ id: string; kind: string; sizeBytes: number }> {
@@ -767,8 +1092,10 @@ export const api = {
   members: membersApi,
   subscriptions: subscriptionsApi,
   plans: plansApi,
+  packages: packagesApi,
   cards: cardsApi,
   attendance: attendanceApi,
+  reception: receptionApi,
   settings: settingsApi,
   audit: auditApi,
   users: usersApi,
@@ -788,6 +1115,9 @@ export const api = {
   employeesHr: employeesHrApi,
   inbody: inbodyApi,
   crm: crmApi,
+  lead: leadApi,
+  trials: trialApi,
+  treasury: treasuryApi,
   files: { upload: uploadFile, url: fileUrl },
   auth: {
     /** Session probe used by the auth context; mirrors GET /api/auth/me. */
@@ -836,7 +1166,9 @@ export type {
 export type { Payment, PaymentListQuery, RecordPaymentInput } from "@/core/services/payments.service";
 export type { ExpenseListQuery } from "@/core/services/expenses.service";
 export type { MemberListQuery, MemberStatus, PublicMember, TrashedMemberInfo } from "@/core/services/members.service";
+export type { MemberOverview } from "@/core/services/member-profile.service";
 export type { Plan, PlanInput, PlanKind, PlanRow } from "@/core/services/plans.service";
+export type { Package, PackageInput, PackageModel, PackagePatch, PackageStats, AccessArea } from "@/core/services/packages.service";
 export type { CashSessionStatus } from "@/core/services/cash-session.service";
 export type { Expense, ExpenseCategory } from "@/core/services/expenses.service";
 export type { AppNotification, AppNotificationType, NotificationSeverity } from "@/core/services/notifications.service";
@@ -845,3 +1177,24 @@ export type { PlanWithNames, PublicTrainingPlan, TrainingPlanListQuery } from "@
 export type { TrainerListQuery, TrainerRow, PublicTrainer } from "@/core/services/trainers.service";
 export type { PublicUser, CreateUserInput, UpdateUserInput } from "@/core/services/users.service";
 export type { BulkRegisterResult, CardStatus, CardWithMember } from "@/core/services/cards.service";
+export type {
+  ConvertTrialInput,
+  ConvertTrialResult,
+  Trial,
+  TrialListQuery,
+  TrialStats,
+  TrialStatus,
+  TrialType,
+} from "@/core/services/trials.service";
+export type {
+  CashBox,
+  DailyClosingStatus,
+  DailyClosingSnapshot,
+  DailyClosingDetail,
+  DailyClosingListQuery,
+  CreateDailyClosingInput,
+  RecordCountedInput,
+  TreasurySnapshot,
+  ExpectedBreakdown,
+} from "@/core/services/daily-closing.service";
+export type { DashboardTreasurySection } from "@/core/services/dashboard.service";
