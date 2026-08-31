@@ -7,6 +7,7 @@ import {
   loadPermissionsCache,
 } from "@/core/services/permissions.service";
 import { roleHasPermission } from "@/core/permissions";
+import { updateUser } from "@/core/services/users.service";
 import type { Db } from "@/db/engine";
 import type { ServiceActor } from "@/core/permissions";
 import { createTestDb } from "./helpers/test-db";
@@ -102,5 +103,36 @@ describe("owner absolutism + manager permission control (ADR-007 / migration v7)
     expect(() => setRolePermissions(db, reception, "trainer", [])).toThrow(
       expect.objectContaining({ code: "FORBIDDEN" }),
     );
+  });
+
+  it("blocks a manager from escalating by editing their own role's permissions", () => {
+    loadPermissionsCache(db);
+    expect(() =>
+      setRolePermissions(db, manager, "manager", ["users.manage", "settings.edit"]),
+    ).toThrow(expect.objectContaining({ code: "FORBIDDEN" }));
+    // subordinate roles remain editable
+    expect(() => setRolePermissions(db, manager, "reception", ["members.view"])).not.toThrow();
+  });
+
+  it("blocks a manager from promoting a user to owner via updateUser", async () => {
+    await expect(
+      updateUser(db, manager, (await createUser(db, owner, {
+        username: "cashier",
+        password: "Cashier@2026",
+        fullName: "أمين الصندوق",
+        roleId: "reception",
+      })).id, { roleId: "owner" }),
+    ).rejects.toMatchObject({ code: "FORBIDDEN" });
+  });
+
+  it("blocks a manager from creating an owner user", async () => {
+    await expect(
+      createUser(db, manager, {
+        username: "fakeowner",
+        password: "Fake@2026",
+        fullName: "مالك مزيف",
+        roleId: "owner",
+      }),
+    ).rejects.toMatchObject({ code: "FORBIDDEN" });
   });
 });

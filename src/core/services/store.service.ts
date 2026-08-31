@@ -143,13 +143,18 @@ export async function purgeProduct(
       "SELECT DISTINCT sale_id FROM store_sale_items WHERE product_id = ?",
       [productId],
     );
-    const moved = db.run("DELETE FROM store_sale_items WHERE product_id = ?", [productId]);
-    db.run("DELETE FROM stock_movements WHERE product_id = ?", [productId]);
+    const returned = db.run(
+      "DELETE FROM store_return_items WHERE product_id = ? OR sale_item_id IN (SELECT id FROM store_sale_items WHERE product_id = ?)",
+      [productId, productId],
+    );
+    const sold = db.run("DELETE FROM store_sale_items WHERE product_id = ?", [productId]);
+    const moved = db.run("DELETE FROM stock_movements WHERE product_id = ?", [productId]);
     db.run("DELETE FROM products WHERE id = ?", [productId]);
     recordAudit(db, actor, "PRODUCT_PURGED", "product", productId, {
       name: str(row.name),
       movementsRemoved: Number(moved.changes),
-      saleLinesRemoved: Number(moved.changes),
+      saleLinesRemoved: Number(sold.changes),
+      returnItemsRemoved: Number(returned.changes),
       salesAffected: lines.length,
     });
   });
@@ -450,6 +455,7 @@ export function getSale(db: Db, actor: ServiceActor, saleId: string): StoreSale 
   requirePermission(actor, "store.view");
   const head = db.first<Row>(`${SALE_SELECT} WHERE s.id = ?`, [saleId]);
   if (!head) throw errNotFound("errors.store.saleNotFound");
+  assertDepartmentAccess(actor, head.member_id == null ? null : memberDepartmentById(db, String(head.member_id)));
   const items = db
     .all<Row>("SELECT * FROM store_sale_items WHERE sale_id = ?", [saleId])
     .map<StoreSaleItem>((it) => ({
@@ -490,6 +496,10 @@ export function listSales(db: Db, actor: ServiceActor, query: SaleListQuery = {}
   if (query.toKey) {
     conditions.push("s.sold_at <= ?");
     params.push(`${query.toKey} 23:59:59`);
+  }
+  if (departmentScopeCondition(actor, "m").sql) {
+    conditions.push("(m.department IN (?, 'general') OR m.id IS NULL)");
+    params.push((actor.department ?? "general") as string);
   }
   const where = conditions.length > 0 ? `WHERE ${conditions.join(" AND ")}` : "";
   const total = db.count(`SELECT COUNT(*) FROM store_sales s LEFT JOIN members m ON m.id = s.member_id ${where}`, params);
@@ -614,11 +624,11 @@ export async function voidStoreSale(db: Db, actor: ServiceActor, saleId: string,
   const sale = db.first<Row>("SELECT * FROM store_sales WHERE id = ? AND status = 'completed'", [saleId]);
   if (!sale) throw errNotFound("errors.store.saleNotFound");
   if (num(sale.is_credit) === 1) {
-    const openDebt = db.first<{ paid_minor: number }>(
-      "SELECT paid_minor FROM store_debts WHERE sale_id = ? AND status = 'open'",
+    const debtPayments = db.count(
+      "SELECT COUNT(*) FROM store_debt_payments WHERE debt_id IN (SELECT id FROM store_debts WHERE sale_id = ?)",
       [saleId],
     );
-    if (openDebt && num(openDebt.paid_minor) > 0) {
+    if (debtPayments > 0) {
       throw errConflict("errors.store.debtHasPayments");
     }
   }
@@ -695,6 +705,14 @@ export async function unvoidStoreSale(db: Db, actor: ServiceActor, saleId: strin
         "DELETE FROM financial_ledger WHERE ref_table = 'store_sales' AND ref_id = ? AND entry_type = 'reversal_payment'",
         [saleId],
       );
+    } else if (num(sale.is_credit) === 1) {
+      const existing = db.first("SELECT 1 FROM store_debts WHERE sale_id = ?", [saleId]);
+      if (!existing) {
+        db.run(
+          "INSERT INTO store_debts (id, member_id, sale_id, original_minor, paid_minor, status, created_by, created_at, updated_at)\nVALUES (?, ?, ?, ?, 0, 'open', ?, ?, ?)",
+          [crypto.randomUUID(), sale.member_id == null ? null : String(sale.member_id), saleId, num(sale.total_minor), actor.userId, stamp(), stamp()],
+        );
+      }
     }
     recordAudit(db, actor, "SALE_RESTORED", "store_sale", saleId, {});
   });
@@ -732,7 +750,7 @@ export interface StoreReturnRow {
 }
 
 const RETURN_SELECT =
-  "SELECT r.*, s.sale_no AS sale_no, m.full_name AS member_name FROM store_returns r JOIN store_sales s ON s.id = r.sale_id LEFT JOIN members m ON m.id = s.member_id";
+  "SELECT r.*, s.sale_no AS sale_no, s.member_id AS sale_member_id, m.full_name AS member_name FROM store_returns r JOIN store_sales s ON s.id = r.sale_id LEFT JOIN members m ON m.id = s.member_id";
 
 function mapReturnHead(r: Row): Omit<StoreReturnRow, "items"> {
   return {
@@ -756,6 +774,7 @@ export function getStoreReturn(db: Db, actor: ServiceActor, returnId: string): S
   requirePermission(actor, "store.view");
   const head = db.first<Row>(`${RETURN_SELECT} WHERE r.id = ?`, [returnId]);
   if (!head) throw errNotFound("errors.store.returnNotFound");
+  assertDepartmentAccess(actor, head.sale_member_id == null ? null : memberDepartmentById(db, String(head.sale_member_id)));
   const items = db
     .all<Row>("SELECT * FROM store_return_items WHERE return_id = ?", [returnId])
     .map<StoreReturnItemRow>((it) => ({
@@ -798,6 +817,12 @@ export function listStoreReturns(db: Db, actor: ServiceActor, query: ReturnListQ
   if (query.toKey) {
     conditions.push("r.created_at <= ?");
     params.push(`${query.toKey} 23:59:59`);
+  }
+  // Consistent with returnStoreSale: scope to the actor's department; walk-in
+  // (member-id NULL) returns stay visible to every section.
+  if (departmentScopeCondition(actor, "m").sql) {
+    conditions.push("(m.department IN (?, 'general') OR m.id IS NULL)");
+    params.push((actor.department ?? "general") as string);
   }
   const join = "JOIN store_sales s ON s.id = r.sale_id LEFT JOIN members m ON m.id = s.member_id";
   const where = conditions.length > 0 ? `WHERE ${conditions.join(" AND ")}` : "";
@@ -1086,7 +1111,7 @@ export function getStoreStats(
     [from, to],
   );
   const returns = db.first<Row>(
-    "SELECT COALESCE(SUM(total_minor),0) AS rev, COALESCE(SUM(COALESCE((SELECT SUM(unit_cost_minor * qty) FROM store_return_items WHERE return_id = store_returns.id), 0)),0) AS cost\nFROM store_returns WHERE created_at BETWEEN ? AND ?",
+    "SELECT COALESCE(SUM(r.total_minor),0) AS rev, COALESCE(SUM(COALESCE((SELECT SUM(unit_cost_minor * qty) FROM store_return_items WHERE return_id = r.id), 0)),0) AS cost\nFROM store_returns r JOIN store_sales s ON s.id = r.sale_id WHERE s.status = 'completed' AND r.created_at BETWEEN ? AND ?",
     [from, to],
   );
   const credit = db.first<Row>(
@@ -1150,8 +1175,8 @@ export function getDailySalesReport(
             COUNT(DISTINCT r.id) AS returns_count,
             COALESCE(SUM(r.total_minor), 0) AS returns_minor,
             SUM((SELECT COALESCE(SUM(ri.unit_cost_minor * ri.qty), 0) FROM store_return_items ri WHERE ri.return_id = r.id)) AS returns_cost
-     FROM store_returns r
-     WHERE r.created_at BETWEEN ? AND ?
+     FROM store_returns r JOIN store_sales s ON s.id = r.sale_id
+     WHERE s.status = 'completed' AND r.created_at BETWEEN ? AND ?
      GROUP BY date_key`,
     [from, to],
   );

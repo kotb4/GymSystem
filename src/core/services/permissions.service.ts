@@ -1,4 +1,4 @@
-import { errValidation } from "@/core/errors";
+import { errForbidden, errValidation } from "@/core/errors";
 import {
   ROLES,
   PERMS,
@@ -50,7 +50,11 @@ export function setRolePermissions(
   perms: Permission[],
 ): void {
   requirePermission(actor, "settings.edit");
+  // The owner role is absolute and immutable except by the owner.
   if (roleId === "owner") return;
+  // A non-owner may edit only subordinate roles — never their own role, else a
+  // manager could grant themselves `users.manage` and escalate to owner.
+  if (actor.roleId !== "owner" && roleId === actor.roleId) throw errForbidden();
   if (!ROLES.includes(roleId)) throw errValidation("errors.invalidRole");
 
   for (const perm of perms) {

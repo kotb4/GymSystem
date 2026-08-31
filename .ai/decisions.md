@@ -101,3 +101,31 @@
   3. All work committed in one clean history commit (36a4c7d) after a security scan confirmed no DB dumps, `.env*`, logs, `.gymbak` or secrets are tracked (`.gitignore` excludes them).
   4. Collaboration stays private: collaborators added individually via GitHub repo Settings → Collaborators (invite-only) or `gh api repos/kotb4/GymSystem/collaborators/<username> -X PUT`; repo never made public.
 - Consequences: Source is now version-controlled off-machine; runtime data (SQLite DB, files, backups, sealed env) remains local under `%LOCALAPPDATA%\GymSystem` and is intentionally never committed. LAN/0.0.0.0 default (ADR-010) plus private-collab means the hosted code is code only, never the live database.
+
+## ADR-013: Migration FK toggle at connection level
+- Date: 2026-08-31
+- Status: accepted (code health / correctness)
+- Context: Migration v21 rebuilds `products` + `stock_movements` (DROP/RENAME of tables referenced by other tables) and attempted `PRAGMA foreign_keys = OFF` inside the migration transaction. SQLite ignores `PRAGMA foreign_keys` inside a transaction, so any existing v20 DB with store data crashed with `FOREIGN KEY constraint failed` on upgrade. The migration runner (`applyMigration`) already wraps migrations in `db.transaction()` (BEGIN IMMEDIATE), making the pragma a no-op.
+- Decision: Add a connection-level FK toggle (`Db.setForeignKeys(enabled)`) and a migration flag (`Migration.fkOff: boolean`). In `applyMigration`, if `fkOff` is true, disable FK at the connection level, run the migration transaction, then re-enable FK in a `finally` block. Mark migration v21 with `fkOff: true`. Keeps migrations append-only (never mutate an old migration) while fixing the upgrade path.
+- Consequences: Existing v20 DBs with store data can now upgrade to v21+v22 without FK errors. The pragma is truly off during the DDL, ensuring the rebuild succeeds. FK re-enabled after each migration preserves data integrity. No schema change — only the migration runner logic changed.
+
+## ADR-014: Privilege escalation guards (setRolePermissions, createUser, updateUser)
+- Date: 2026-08-31
+- Status: accepted (security hardening)
+- Context: Two escalation paths: (1) a manager with `settings.edit` could call `setRolePermissions` to grant their own role `users.manage`, then promote to owner via `updateUser`; (2) `createUser`/`updateUser` allowed a non-owner with `users.manage` to create or set `role_id = 'owner'`. The owner role is supposed to be absolute and immutable except by the owner.
+- Decision:
+  - `setRolePermissions` retains `requirePermission(actor, "settings.edit")`, refuses to edit the `owner` role (silent no-op), and refuses to edit the actor's own role unless `actor.roleId === "owner"` (blocks self-escalation). Manager can still edit subordinate roles (reception/trainer) per ADR-007.
+  - `createUser` and `updateUser` reject `roleId === "owner"` when `actor.roleId !== "owner"`.
+- Consequences: The manager permission-control feature (ADR-007) is preserved — managers edit subordinate roles but cannot escalate to owner; the owner role's absolutism is preserved. Regression tests added in `tests/manager-permissions.test.ts`.
+
+## ADR-015: Store reads department-scoped; return reports fixed
+- Date: 2026-08-31
+- Status: accepted (correctness + security)
+- Context: `getSale`, `listSales`, `getStoreReturn`, `listStoreReturns` lacked department scoping (cross-section read). `getStoreStats` / `getDailySalesReport` aggregated returns from sales that could later be voided, overstating revenue. `store_returns` has no `member_id` column, so scoping must go through the sale's member.
+- Decision:
+  - `getSale`, `listSales`: `assertDepartmentAccess` (getter) / list-condition via `departmentScopeCondition` on `store_sales.member_id`; null-member (walk-in) stays visible to every section (`m.department IN (?, 'general') OR m.id IS NULL`).
+  - `getStoreReturn`: post-fetch `assertDepartmentAccess` via the sale's `member_id` (selected as `s.member_id` in `RETURN_SELECT`).
+  - `listStoreReturns`: list-condition via `departmentScopeCondition` on the sale's member (same null-member rule).
+  - `getStoreStats` / `getDailySalesReport`: JOIN `store_returns r` to `store_sales s`, filter `s.status = 'completed'` when aggregating returns.
+  - Fixed the missing `store_return_items.line_cost_minor` bug (compute cost as `unit_cost_minor * qty`).
+- Consequences: Store reads respect the actor's department (walk-in always visible); return analytics only count returns from still-completed sales. No regression; coverage added in `tests/manager-permissions.test.ts` and `tests/migration-upgrade.test.ts`.

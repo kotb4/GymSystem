@@ -603,7 +603,9 @@ export async function purgeMember(db: Db, actor: ServiceActor, memberId: string)
     db.run("DELETE FROM attendance WHERE member_id = ?", [memberId]);
     db.run("DELETE FROM payments WHERE member_id = ?", [memberId]);
     db.run("DELETE FROM store_debts WHERE member_id = ?", [memberId]);
+    db.run("DELETE FROM store_return_items WHERE sale_item_id IN (SELECT id FROM store_sale_items WHERE sale_id IN (SELECT id FROM store_sales WHERE member_id = ?))", [memberId]);
     db.run("DELETE FROM store_sale_items WHERE sale_id IN (SELECT id FROM store_sales WHERE member_id = ?)", [memberId]);
+    db.run("DELETE FROM store_returns WHERE sale_id IN (SELECT id FROM store_sales WHERE member_id = ?)", [memberId]);
     db.run("DELETE FROM store_sales WHERE member_id = ?", [memberId]);
     db.run("DELETE FROM member_subscriptions WHERE member_id = ?", [memberId]);
     db.run("DELETE FROM cards WHERE member_id = ?", [memberId]);

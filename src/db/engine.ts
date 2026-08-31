@@ -66,6 +66,15 @@ export class Db {
     this.touch();
   }
 
+  /**
+   * Toggles the connection-level FOREIGN KEYS pragma. Must be called OUTSIDE a
+   * transaction — SQLite ignores `PRAGMA foreign_keys` inside a transaction.
+   * Used by table-rebuild migrations that must DROP/RENAME a referenced table.
+   */
+  setForeignKeys(enabled: boolean): void {
+    this.driver.exec(`PRAGMA foreign_keys = ${enabled ? "ON" : "OFF"}`);
+  }
+
   transaction<TResult>(fn: () => TResult | Promise<TResult>): Awaited<TResult> {
     this.txDepth += 1;
     if (this.txDepth === 1) this.driver.exec("BEGIN IMMEDIATE");

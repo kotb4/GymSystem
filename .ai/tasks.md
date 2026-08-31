@@ -16,6 +16,24 @@
 - Tests: `tests/store.test.ts` grew 17 → 28 (returns partial/full, over-return guard, credit-sale blocked, void-after-return no double-restock, `lost` movement, daily/product/stock-value/low-stock reports, report perm denials). 3 harness tests updated 20 → 22 for the new migrations (`foundation.smoke`, `part4-backup`, `restore-authz`).
 - Verification: `npm test` 384/384, `npm run typecheck` clean, `npm run typecheck:server` clean, `npm run build` OK (pre-existing seed.ts `import.meta` CJS esbuild warning is non-fatal), `node scripts/check-rpc-consistency.cjs` ok. Browser UI NOT manually verified this session.
 
+## TASK-015: Review-fix batch (security + bugs from 2026-08-31 full review)
+- Status: done (2026-08-31)
+- Goal: remediate the findings of the full project code+security review issued at end of TASK-014.
+- Changes:
+  - **CRITICAL — migration v21 FK pragma no-op (upgrade blocker).** v21 rebuilt `products` + `stock_movements` (DROP/RENAME referenced tables) and tried to disable FK inside the transaction. SQLite ignores `PRAGMA foreign_keys` inside a transaction, so any DB on v20 that had store data crashed with `FOREIGN KEY constraint failed` on upgrade. Fix: `Db.setForeignKeys(enabled)` toggles the pragma at the **connection** level; `applyMigration` toggles off before the transaction and back on in `finally` for any migration with `fkOff: true` (currently only v21). v22 untouched.
+  - **purgeProduct FK** when product has return history: now deletes `store_return_items` (by product or by sale_item) before `store_sale_items` and the product; also fixed `movementsRemoved` audit field (was set to sale-line count).
+  - **purgeMember FK** when member has store returns: now deletes `store_return_items` and `store_returns` (by sale_id) before `store_sale_items` and `store_sales`.
+  - **unvoidStoreSale credit-debt loss:** if a void deleted the `store_debts` row for a credit sale, unvoid now recreates it (with the original member and `paid_minor=0`, status `open`) if missing.
+  - **Privilege escalation (setRolePermissions):** a non-owner (e.g. manager) could call `setRolePermissions` (gated by `settings.edit`) to grant their own role `users.manage` and then promote to owner. Fix: `setRolePermissions` requires `settings.edit`, refuses to touch the `owner` role, and refuses to edit the actor's own role unless the actor is owner. Manager still edits subordinate roles (reception/trainer) per ADR-007.
+  - **Privilege escalation (createUser / updateUser):** a non-owner with `users.manage` could create or promote a user to `owner`. Fix: both functions reject `roleId === "owner"` when `actor.roleId !== "owner"`.
+  - **Void settled-credit-debt bypass:** `voidStoreSale` only checked `paid_minor > 0` on the *open* debt, so a fully-paid credit sale (status `paid`, no open debt) could be voided leaving debt-payment history. Fix: now blocks void when **any** `store_debt_payments` exist for the sale's debts.
+  - **Reports counting returns from later-voided sales:** `getStoreStats` and `getDailySalesReport` aggregated `store_returns` without checking the parent sale is still `completed`. Fix: both now JOIN `store_sales` and filter `s.status = 'completed'`.
+  - **Department scoping on store reads:** `getSale`/`listSales`/`getStoreReturn`/`listStoreReturns` previously ignored the actor's department. `getStoreReturn` and `getSale` use `assertDepartmentAccess` on the sale's member department; the list queries add a `(m.department IN (?, 'general') OR m.id IS NULL)` condition so walk-in (null-member) records stay visible to every section. `RETURN_SELECT` now also selects `s.member_id AS sale_member_id` because `store_returns` has no `member_id` column.
+  - **ReportsTab default date range UTC bug:** `new Date().toISOString().slice(0, 10)` produces yesterday in timezones ahead of UTC. Replaced with `todayKey()` / `addDaysKey(todayKey(), -29)` from `@/core/dates` (local). Unused `dateKey` import removed (`noUnusedLocals`).
+- Tests: `tests/migration-upgrade.test.ts` (new) seeds a v20 schema with store data, runs migrations 21+22, asserts success, data preserved, and FK still enforced afterwards. `tests/manager-permissions.test.ts` grew 5 → 8 (added: manager self-role edit blocked, manager cannot promote to owner via `updateUser`, manager cannot create an owner). All 388/388 tests pass.
+- Verification: `npm test` 388/388, `npm run typecheck` clean, `npm run typecheck:server` clean, `npm run build` OK, `node scripts/check-rpc-consistency.cjs` ok.
+- ADR: see `.ai/decisions.md` ADR-013 (migration FK toggle at connection level), ADR-014 (permission editor / owner-promotion guards), ADR-015 (store reads department scoping + return reports).
+
 ## TASK-013: Fix bugs from 2026-08-29 full review
 - Status: done (2026-08-29)
 - Fixes:

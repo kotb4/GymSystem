@@ -1,5 +1,5 @@
 ﻿import { hashPassword, assessPasswordStrength } from "@/core/auth/password";
-import { errConflict, errNotFound, errValidation } from "@/core/errors";
+import { errConflict, errForbidden, errNotFound, errValidation } from "@/core/errors";
 import { requirePermission, ROLES, type RoleId, type ServiceActor } from "@/core/permissions";
 import { nowStamp } from "@/core/dates";
 import type { Db, Row } from "@/db/engine";
@@ -100,6 +100,7 @@ export function listUsers(db: Db, actor: ServiceActor): PublicUser[] {
 
 export async function createUser(db: Db, actor: ServiceActor, input: CreateUserInput): Promise<PublicUser> {
   requirePermission(actor, "users.manage");
+  if (input.roleId === "owner" && actor.roleId !== "owner") throw errForbidden();
   const fullName = input.fullName.trim();
   const email = input.email?.trim() || null;
   assertValidNewUser({ ...input, fullName, email });
@@ -138,6 +139,9 @@ export async function updateUser(
   if (email && !EMAIL_RE.test(email)) throw errValidation("errors.emailInvalid");
   const roleId = patch.roleId ?? row.role_id;
   if (!ROLES.includes(roleId)) throw errValidation("errors.roleInvalid");
+
+  // Only the owner may grant or revoke the owner role (privilege-escalation guard).
+  if (roleId === "owner" && actor.roleId !== "owner") throw errForbidden();
 
   if (
     row.role_id === "owner" &&

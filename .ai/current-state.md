@@ -1,64 +1,57 @@
 # Current Development State
 
-- **Last updated:** 2026-08-29
-- **Current objective:** TASK-014 Store POS + inventory upgrade (returns, lost stock, reports)
-- **Status:** implementation + automated verification complete; browser manual check pending
+- **Last updated:** 2026-08-31
+- **Current objective:** Store POS + review fixes completed; ready for manual UI verification + commit
+- **Status:** TASK-014 (store POS) and TASK-015 (review remediation) both done — all verification green
 - **Last agent/tool:** opencode (this session)
 
 ## Active tasks
 
-- TASK-014 is implemented and verified at the code/test/typecheck/build level. Only manual browser verification of the Returns/Reports tabs remains (no running server confirmed this session).
+- None open. TASK-014 (store POS upgrade) and TASK-015 (review-security/bug fix batch) both complete. Next: manual UI verification of the Store Returns/Reports tabs, optional `npm run sync:docs`, then commit.
 
 ## What was most recently completed (handoff context)
 
-Store module upgraded to full POS + inventory management:
+### TASK-015 — Review-security + bug fix batch (2026-08-31)
+1. **Migration v21 FK blocker (CRITICAL)** — `PRAGMA foreign_keys = OFF` was issued *inside* the migration transaction (a no-op in SQLite), so any v20 DB with store data crashed with `FOREIGN KEY constraint failed` on upgrade. Added `Db.setForeignKeys(enabled)` + `Migration.fkOff`; `applyMigration` toggles FK off/on at the connection level around the rebuild. Verified by new `tests/migration-upgrade.test.ts` (seeds v20 store data, runs 21+22, asserts success + data preserved + FK still enforced).
+2. **`purgeProduct`** now deletes `store_return_items` (by product or sale-item) before `store_sale_items` and fixes the `movementsRemoved` audit count; **`purgeMember`** now deletes `store_return_items` + `store_returns` before `store_sale_items`/`store_sales`. Both previously threw FK errors when returns existed.
+3. **`unvoidStoreSale`** now recreates the `store_debts` row for credit sales (the void had deleted it permanently).
+4. **Privilege escalation closed:**
+   - `setRolePermissions` requires `settings.edit` **and** refuses to touch `owner` and **refuses to edit the actor's own role unless owner** — manager can still edit subordinate roles (ADR-007).
+   - `createUser` / `updateUser` reject `roleId === "owner"` for non-owner actors.
+5. **`voidStoreSale` credit-settled bypass** — now blocks void when any `store_debt_payments` exist for the sale's debts (not just open-debt paid_minor).
+6. **`getStoreStats` / `getDailySalesReport`** now JOIN `store_sales s` and only count returns whose sale is still `status='completed'`.
+7. **Department scoping** — `getSale`, `listSales`, `getStoreReturn`, `listStoreReturns` now enforce the actor's department (walk-in null-member records stay visible to every section). `RETURN_SELECT` now selects `s.member_id AS sale_member_id` because `store_returns` has no direct `member_id` column.
+8. **`ReportsTab` default dates** now use `todayKey()` / `addDaysKey(todayKey(), -29)` (local) instead of UTC `toISOString()`.
 
-1. **Line-item sales returns** — `returnStoreSale` (migration v22 + `store_return_items`): guards over-return via `store_sale_items.returned_qty`, restocks via movement type `return`, reverses store revenue via a ledger `refund` entry (`refTable=store_returns`, `direction:-1`, box store), writes `RTN-` numbered returns, records `STORE_RETURN_CREATED` audit. Return `no` via `counters.store_return_no`.
-2. **"Lost" stock** — `adjustStock` accepts `lost` movement type; new `lost` in the stock modal.
-3. **Reports** — `getDailySalesReport`, `getProductSalesReport` (best-sellers net of returns), `getStockValue`, `listLowStockProducts`; new **Returns** and **Reports** tabs in the Store page.
-4. **Stats** — `getStoreStats` now nets returns out of revenue/profit.
-5. **Void semantics** — `voidStoreSale`/`unvoidStoreSale` restock/reverse only unreturned qty to avoid double-restock.
+### TASK-014 — Store POS + inventory upgrade (2026-08-29)
+Line-item sales returns (`store_returns`/`store_return_items`, migration v22), `lost` stock movement, store reports (daily sales, product best-sellers, stock value, gross profit, low-stock), Returns/Reports tabs in the Store page, netted stats. Fixed a missing `store_return_items.line_cost_minor` bug (compute as `unit_cost_minor * qty`).
 
 ## Verification (this session)
 
-- `npm test` — 384/384 pass across 30 files (was 373; store grew 17 → 28)
-- `npm run typecheck` — clean
-- `npm run typecheck:server` — clean
-- `npm run build` — OK (pre-existing seed.ts `import.meta` esbuild CJS warning is non-fatal; server bundle written)
-- `node scripts/check-rpc-consistency.cjs` — ok (no client calls missing)
-- 3 harness tests updated 20 → 22 for new migrations v21+v22: `tests/foundation.smoke.test.ts`, `tests/part4-backup.test.ts`, `tests/restore-authz.test.ts`
+- `npm test` — **388/388** pass in 31 files (was 384; +1 migration-upgrade test, +3 manager-permissions tests → 8 total).
+- `npm run typecheck` — clean; `npm run typecheck:server` — clean.
+- `npm run build` — OK (pre-existing seed.ts `import.meta` CJS esbuild warning is non-fatal).
+- `node scripts/check-rpc-consistency.cjs` — ok (no client calls missing from registry).
 
-## Key fixes landed during this session
+## Files changed (TASK-015 review batch)
 
-- `store_return_items` has NO `line_cost_minor` column (migration v22 defines `unit_cost_minor`/`line_total_minor`); `getStoreStats` + `getDailySalesReport` previously referenced the missing column → now compute cost as `unit_cost_minor * qty` in SQL.
-- Frontend `t()` mistargets corrected: `t("common.apply")` → `t("rpt.apply")`; added `common.noPermission` to the `common` section (it previously only existed under the dashboard section); added `store.emptyReturn` UI key.
-
-## What remains / Next recommended step
-
-1. Hard-refresh the running app and manually verify the Store → **Returns** and **Reports** tabs (create a sale → return a line → confirm stock restock, low-stock alert, daily/product/stock-value reports render in RTL).
-2. Optionally run `npm run sync:docs` (or let the pre-commit hook) to refresh the migration version / permission count facts (now v22 / 90 permissions — check exact counts before committing).
-3. Working tree contains a large amount of prior uncommitted work (HR, dashboard cockpit, leads/trials/reception/packages/member-profile, daily-closing). Nothing reverted; commit only what's intended.
-
-## Files changed (TASK-014)
-
-- `src/db/migrations.ts` — v22 appended (store returns + `store.return` permission); v21 (pre-existing) rebuilt products/stock_movements + store_returns + returned_qty + allow_negative_stock.
-- `src/core/services/store.service.ts` — returns, reports, lost, netted stats, void-unreturned logic.
-- `src/core/permissions.ts` — `store.return` in PERMS + MANAGER_PERMS.
-- `src/core/audit-actions.ts` — `STORE_RETURN_CREATED`.
-- `server/rpc/store.rpc.ts`, `src/api/index.ts` — RPC + API wiring + types.
-- `src/i18n/ar.ts` — `common.noPermission`, `store.emptyReturn`, `store.return` perm label, `errors.store.*`, store report/movement UI keys.
-- `src/pages/store-page.tsx` — Returns/Reports tabs, ReturnModal, lost movement, movement-label i18n.
-- `tests/store.test.ts` — 11 new cases.
-- `tests/foundation.smoke.test.ts`, `tests/part4-backup.test.ts`, `tests/restore-authz.test.ts` — migration-version assertions 20 → 22.
+- `src/db/migrations.ts` — `Migration.fkOff`, `applyMigration` FK toggle, v21 uses the guarded path (no pragma-in-tx).
+- `src/db/engine.ts` — `Db.setForeignKeys(enabled)`.
+- `src/core/services/store.service.ts` — purge FK order, void/unvoid debt handling, reports completed-sales filter, `assertDepartmentAccess`/scoping on reads, `RETURN_SELECT` member_id.
+- `src/core/services/members.service.ts` — purgeMember return cleanup.
+- `src/core/services/permissions.service.ts` — self-role / owner-role guard in `setRolePermissions`.
+- `src/core/services/users.service.ts` — owner-promotion guards in `createUser`/`updateUser`.
+- `src/pages/store-page.tsx` — `ReportsTab` local date keys.
+- `tests/migration-upgrade.test.ts` — NEW. `tests/manager-permissions.test.ts` — +3 cases.
 
 ## Database changes
 
-- New migration **v22** (`store_return_items`, store_returns columns/unique index, `store.return` permission + manager grant). v21 also present in the working tree (not yet committed).
+- **None** (no new migration; the v21 fix changes how the *runner* runs migrations, not the schema).
 
 ## Known issues / follow-ups
 
-- Browser/manual verification of the new Store tabs not yet done (no running server confirmed this session).
-- `sync:docs` facts (migration v count / permission count) should be regenerated before committing.
+- Manual browser verification of the Store **Returns** and **Reports** tabs not yet done (no running server confirmed this session).
+- Department scoping on the remaining CPU lists (attendance, card/search endpoints) still needs a follow-up pass per the reviewer report — not part of the store-fix batch.
 
 ## Blockers
 

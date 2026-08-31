@@ -6,6 +6,7 @@ import { useToast } from "@/components/ui/toast";
 import { describeError } from "@/utils/app-error";
 import { api, type ProductPublic, type StoreSale, type StoreDebtRow, type StockMovementRow, type StoreReturnRow, type DailySalesRow, type ProductSalesRow, type StockValueRow } from "@/api";
 import { formatMinor } from "@/core/money";
+import { addDaysKey, todayKey } from "@/core/dates";
 import { Card, CardHeader } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -794,11 +795,9 @@ function MovementsTab() {
 function ReportsTab() {
   const t = useT();
   const { hasPermission } = useAuth();
-  const defaultFrom = new Date();
-  defaultFrom.setDate(defaultFrom.getDate() - 29);
-  const today = new Date().toISOString().slice(0, 10);
-  const [fromKey, setFromKey] = useState(defaultFrom.toISOString().slice(0, 10));
-  const [toKey, setToKey] = useState(today);
+  const defaultFrom = addDaysKey(todayKey(), -29);
+  const [fromKey, setFromKey] = useState(defaultFrom);
+  const [toKey, setToKey] = useState(todayKey());
   const [daily, setDaily] = useState<DailySalesRow[]>([]);
   const [products, setProducts] = useState<ProductSalesRow[]>([]);
   const [stockValue, setStockValue] = useState<StockValueRow | null>(null);

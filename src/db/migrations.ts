@@ -6,6 +6,11 @@ export interface Migration {
   version: number;
   statements: string[];
   callback?: (db: Db) => void;
+  /** When true, FOREIGN KEY enforcement is disabled at the connection level
+   * around this migration (needed for table-rebuild DROP/RENAME that reference
+   * other tables). SQLite ignores `PRAGMA foreign_keys` inside a transaction,
+   * so it is toggled before/after the migration transaction. */
+  fkOff?: boolean;
 }
 
 const BASE_TS = "2026-01-01 00:00:00";
@@ -485,11 +490,9 @@ function buildMigrations(): Migration[] {
     {
       version: 21,
       statements: [],
+      fkOff: true,
       callback: (db) => {
-        db.exec("PRAGMA foreign_keys = OFF");
-        db.exec(
-          "CREATE TABLE products_v21 (\n  id TEXT PRIMARY KEY,\n  name TEXT NOT NULL,\n  category_id TEXT REFERENCES product_categories(id),\n  sku TEXT UNIQUE,\n  barcode TEXT UNIQUE,\n  cost_minor INTEGER NOT NULL DEFAULT 0 CHECK (cost_minor >= 0),\n  price_minor INTEGER NOT NULL CHECK (price_minor >= 0),\n  stock_qty REAL NOT NULL DEFAULT 0,\n  min_stock_qty REAL NOT NULL DEFAULT 0 CHECK (min_stock_qty >= 0),\n  supplier_name TEXT,\n  is_active INTEGER NOT NULL DEFAULT 1 CHECK (is_active IN (0, 1)),\n  created_by TEXT REFERENCES users(id),\n  created_at TEXT NOT NULL,\n  updated_at TEXT NOT NULL\n)",
-        );
+        db.exec("CREATE TABLE products_v21 (\n  id TEXT PRIMARY KEY,\n  name TEXT NOT NULL,\n  category_id TEXT REFERENCES product_categories(id),\n  sku TEXT UNIQUE,\n  barcode TEXT UNIQUE,\n  cost_minor INTEGER NOT NULL DEFAULT 0 CHECK (cost_minor >= 0),\n  price_minor INTEGER NOT NULL CHECK (price_minor >= 0),\n  stock_qty REAL NOT NULL DEFAULT 0,\n  min_stock_qty REAL NOT NULL DEFAULT 0 CHECK (min_stock_qty >= 0),\n  supplier_name TEXT,\n  is_active INTEGER NOT NULL DEFAULT 1 CHECK (is_active IN (0, 1)),\n  created_by TEXT REFERENCES users(id),\n  created_at TEXT NOT NULL,\n  updated_at TEXT NOT NULL\n)");
         db.exec("INSERT INTO products_v21 SELECT * FROM products");
         db.exec("DROP TABLE products");
         db.exec("ALTER TABLE products_v21 RENAME TO products");
@@ -519,7 +522,6 @@ function buildMigrations(): Migration[] {
         );
         db.exec("CREATE INDEX IF NOT EXISTS idx_store_returns_sale ON store_returns(sale_id)");
         db.exec("INSERT OR IGNORE INTO settings (key, value) VALUES ('allow_negative_stock', '0')");
-        db.exec("PRAGMA foreign_keys = ON");
       },
     },
     {
@@ -570,12 +572,18 @@ export function runMigrations(db: Db): void {
 }
 
 function applyMigration(db: Db, migration: Migration): void {
-  db.transaction(() => {
-    for (const statement of migration.statements) db.exec(statement);
-    if (migration.callback) migration.callback(db);
-    db.run("INSERT INTO schema_migrations (version, applied_at) VALUES (?, ?)", [
-      migration.version,
-      nowStamp(),
-    ]);
-  });
+  const fkOff = migration.fkOff === true;
+  if (fkOff) db.setForeignKeys(false);
+  try {
+    db.transaction(() => {
+      for (const statement of migration.statements) db.exec(statement);
+      if (migration.callback) migration.callback(db);
+      db.run("INSERT INTO schema_migrations (version, applied_at) VALUES (?, ?)", [
+        migration.version,
+        nowStamp(),
+      ]);
+    });
+  } finally {
+    if (fkOff) db.setForeignKeys(true);
+  }
 }
