@@ -27,6 +27,12 @@ import type {
   PackageStats,
 } from "@/core/services/packages.service";
 import type { BulkRegisterResult, CardStatus, CardWithMember } from "@/core/services/cards.service";
+import type {
+  ReferralRow,
+  ReferralStats,
+  ReferralRewardRow,
+  TopReferrerRow,
+} from "@/core/services/referral.service";
 
 import type { AuditListQuery, AuditLogItem } from "@/core/services/audit.service";
 import type { MemberOverview } from "@/core/services/member-profile.service";
@@ -1137,6 +1143,30 @@ export const api = {
     setOverrideDate: (date: string | null) =>
       rpc<string | null>("dev", "setOverrideDate", [date]),
   },
+  referral: {
+    getSettings: () =>
+      rpc<{ rewardType: "free_days" | "credit"; rewardValue: number }>("referral", "getSettings", []),
+    updateSettings: (settings: { rewardType?: "free_days" | "credit"; rewardValue?: number }) =>
+      rpc<{ rewardType: "free_days" | "credit"; rewardValue: number }>("referral", "updateSettings", [settings]),
+    getMemberCode: (memberId: string) =>
+      rpc<string>("referral", "getMemberCode", [memberId]),
+    list: (query: Record<string, unknown> = {}) =>
+      rpc<{ items: ReferralRow[]; total: number }>("referral", "list", [query]),
+    get: (id: string) =>
+      rpc<ReferralRow>("referral", "get", [id]),
+    create: (input: { referrerMemberId: string; referredName: string; referredPhone?: string | null; notes?: string | null }) =>
+      rpc<ReferralRow>("referral", "create", [input]),
+    cancel: (id: string) =>
+      rpc<ReferralRow>("referral", "cancel", [id]),
+    convert: (referralId: string, memberId: string) =>
+      rpc<ReferralRow>("referral", "convert", [referralId, memberId]),
+    stats: (referrerId?: string) =>
+      rpc<ReferralStats>("referral", "stats", [referrerId]),
+    topReferrers: (limit?: number) =>
+      rpc<TopReferrerRow[]>("referral", "topReferrers", [limit]),
+    listRewards: (referrerId?: string) =>
+      rpc<ReferralRewardRow[]>("referral", "listRewards", [referrerId]),
+  },
 };
 
 export default api;
@@ -1198,3 +1228,12 @@ export type {
   ExpectedBreakdown,
 } from "@/core/services/daily-closing.service";
 export type { DashboardTreasurySection } from "@/core/services/dashboard.service";
+export type {
+  ReferralRow,
+  ReferralStats,
+  ReferralRewardRow,
+  ReferralListQuery,
+  ReferralSettings,
+  CreateReferralInput,
+  TopReferrerRow,
+} from "@/core/services/referral.service";

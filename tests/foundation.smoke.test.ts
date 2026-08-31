@@ -16,7 +16,7 @@ describe("database bootstrap", () => {
     expect(db.count("SELECT COUNT(*) FROM permissions")).toBeGreaterThan(20);
     expect(db.count("SELECT COUNT(*) FROM role_permissions")).toBeGreaterThan(20);
     expect(db.scalar("SELECT value FROM counters WHERE name = 'card_barcode'")).toBe(100);
-    expect(db.count("SELECT COUNT(*) FROM schema_migrations")).toBe(22);
+    expect(db.count("SELECT COUNT(*) FROM schema_migrations")).toBe(23);
     expect(db.count("SELECT COUNT(*) FROM payment_methods")).toBeGreaterThan(0);
     expect(db.count("SELECT COUNT(*) FROM trainers")).toBe(0);
     expect(db.count("SELECT COUNT(*) FROM training_plans")).toBe(0);

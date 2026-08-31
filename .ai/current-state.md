@@ -1,57 +1,64 @@
 # Current Development State
 
 - **Last updated:** 2026-08-31
-- **Current objective:** Store POS + review fixes completed; ready for manual UI verification + commit
-- **Status:** TASK-014 (store POS) and TASK-015 (review remediation) both done — all verification green
+- **Current objective:** Member Referral System implemented; committed + pushed to GitHub
+- **Status:** TASK-016 (member referral system) complete — all verification green, committed and pushed
 - **Last agent/tool:** opencode (this session)
 
 ## Active tasks
 
-- None open. TASK-014 (store POS upgrade) and TASK-015 (review-security/bug fix batch) both complete. Next: manual UI verification of the Store Returns/Reports tabs, optional `npm run sync:docs`, then commit.
+- None open. TASK-016 (member referral system) is complete, verified, and pushed. Optional future follow-ups are tracked in `.ai/tasks.md`.
 
 ## What was most recently completed (handoff context)
 
-### TASK-015 — Review-security + bug fix batch (2026-08-31)
-1. **Migration v21 FK blocker (CRITICAL)** — `PRAGMA foreign_keys = OFF` was issued *inside* the migration transaction (a no-op in SQLite), so any v20 DB with store data crashed with `FOREIGN KEY constraint failed` on upgrade. Added `Db.setForeignKeys(enabled)` + `Migration.fkOff`; `applyMigration` toggles FK off/on at the connection level around the rebuild. Verified by new `tests/migration-upgrade.test.ts` (seeds v20 store data, runs 21+22, asserts success + data preserved + FK still enforced).
-2. **`purgeProduct`** now deletes `store_return_items` (by product or sale-item) before `store_sale_items` and fixes the `movementsRemoved` audit count; **`purgeMember`** now deletes `store_return_items` + `store_returns` before `store_sale_items`/`store_sales`. Both previously threw FK errors when returns existed.
-3. **`unvoidStoreSale`** now recreates the `store_debts` row for credit sales (the void had deleted it permanently).
-4. **Privilege escalation closed:**
-   - `setRolePermissions` requires `settings.edit` **and** refuses to touch `owner` and **refuses to edit the actor's own role unless owner** — manager can still edit subordinate roles (ADR-007).
-   - `createUser` / `updateUser` reject `roleId === "owner"` for non-owner actors.
-5. **`voidStoreSale` credit-settled bypass** — now blocks void when any `store_debt_payments` exist for the sale's debts (not just open-debt paid_minor).
-6. **`getStoreStats` / `getDailySalesReport`** now JOIN `store_sales s` and only count returns whose sale is still `status='completed'`.
-7. **Department scoping** — `getSale`, `listSales`, `getStoreReturn`, `listStoreReturns` now enforce the actor's department (walk-in null-member records stay visible to every section). `RETURN_SELECT` now selects `s.member_id AS sale_member_id` because `store_returns` has no direct `member_id` column.
-8. **`ReportsTab` default dates** now use `todayKey()` / `addDaysKey(todayKey(), -29)` (local) instead of UTC `toISOString()`.
+### TASK-016 — Member Referral System (2026-08-31)
+Complete end-to-end referral feature: refer members, track conversion to joined members, grant rewards, per-referrer stats, top-referrers leaderboard, configurable reward settings. Exposed as a new tab in the member profile.
 
-### TASK-014 — Store POS + inventory upgrade (2026-08-29)
-Line-item sales returns (`store_returns`/`store_return_items`, migration v22), `lost` stock movement, store reports (daily sales, product best-sellers, stock value, gross profit, low-stock), Returns/Reports tabs in the Store page, netted stats. Fixed a missing `store_return_items.line_cost_minor` bug (compute as `unit_cost_minor * qty`).
+**Backend:**
+- `src/core/services/referral.service.ts` — full CRUD (create/list/cancel), conversion (`convert` guards already-processed, self-referral, duplicate reward), settings get/update, stats, top referrers.
+- Migration **v23** in `src/db/migrations.ts` — idempotent `ALTER TABLE members ADD COLUMN referral_code` (guarded via `PRAGMA table_info`, matching v22 pattern so legacy-import tests don't break) + 3 tables (`referrals`, `referral_rewards`, `referral_settings`) + `referrals.view`/`referrals.manage` permission + role grant inserts.
+- Permissions `referrals.view` / `referrals.manage` in `PERMS`, `MANAGER_PERMS`, `RECEPTION_PERMS`.
+- Audit actions `REFERRAL_CREATED`/`CONVERTED`/`CANCELLED`/`REWARD_GRANTED`/`REWARD_CANCELLED`.
+- `server/rpc/referral.rpc.ts` + registered in `server/rpc/registry.ts`.
+- `src/api/index.ts` — `referral` wrappers + type exports.
+
+**Frontend:**
+- `src/pages/member-profile/tabs/referrals-tab.tsx` — named export `ReferralsTab`, matches project component conventions.
+- `src/pages/member-profile/types.ts` (`TabKey` += `"referrals"`), `index.tsx` (tab def + conditional render + convert call `api.referral.convert(...)`).
+
+**i18n** (`src/i18n/ar.ts`): full `referral:` block, missing keys (`referral.desc`, `.emptyTitle`, `.emptyDescription`, `.confirmConvert`, `.confirmCancel`), `common.egp`, error keys (`referralNotFound`, `referralSelfReferral`, `referralDuplicateReward`, `referralAlreadyProcessed`), perms labels (`referrals.view`/`referrals.manage`).
+
+**Tests:** `tests/referral.test.ts` (13 cases). Migration-version bumps in `tests/restore-authz.test.ts`, `tests/foundation.smoke.test.ts`, `tests/part4-backup.test.ts` (22→23); `tests/migration-upgrade.test.ts` added a `members` table to its v20 skeleton + comment updated.
+
+**Key fixes during the session:** migration v23 idempotency; `node:crypto` import removed (frontend typecheck has no node types — use global `crypto.randomUUID()`); synchronous `db.transaction(() => …)`; removed unused locals (`noUnusedLocals`); i18n edits handled via temp `.cjs` script (PowerShell node -e corrupts Arabic/CRLF).
 
 ## Verification (this session)
 
-- `npm test` — **388/388** pass in 31 files (was 384; +1 migration-upgrade test, +3 manager-permissions tests → 8 total).
+- `npm test` — **401/401** pass in 32 files (was 388; +13 referral, migration-version bumps).
 - `npm run typecheck` — clean; `npm run typecheck:server` — clean.
 - `npm run build` — OK (pre-existing seed.ts `import.meta` CJS esbuild warning is non-fatal).
-- `node scripts/check-rpc-consistency.cjs` — ok (no client calls missing from registry).
+- `node scripts/check-rpc-consistency.cjs` — ok (no client calls missing from registry; informational list unchanged).
 
-## Files changed (TASK-015 review batch)
+## Files changed (TASK-016 referral system)
 
-- `src/db/migrations.ts` — `Migration.fkOff`, `applyMigration` FK toggle, v21 uses the guarded path (no pragma-in-tx).
-- `src/db/engine.ts` — `Db.setForeignKeys(enabled)`.
-- `src/core/services/store.service.ts` — purge FK order, void/unvoid debt handling, reports completed-sales filter, `assertDepartmentAccess`/scoping on reads, `RETURN_SELECT` member_id.
-- `src/core/services/members.service.ts` — purgeMember return cleanup.
-- `src/core/services/permissions.service.ts` — self-role / owner-role guard in `setRolePermissions`.
-- `src/core/services/users.service.ts` — owner-promotion guards in `createUser`/`updateUser`.
-- `src/pages/store-page.tsx` — `ReportsTab` local date keys.
-- `tests/migration-upgrade.test.ts` — NEW. `tests/manager-permissions.test.ts` — +3 cases.
+- `src/core/services/referral.service.ts` — NEW referral service.
+- `server/rpc/referral.rpc.ts` — NEW RPC; `server/rpc/registry.ts` — registered.
+- `src/api/index.ts` — `referral` wrappers + types.
+- `src/db/migrations.ts` — migration v23 (idempotent ALTER + referrals/referral_rewards/referral_settings + perm inserts).
+- `src/core/permissions.ts` — `referrals.view`/`referrals.manage`; `src/core/audit-actions.ts` — 5 referral audit actions.
+- `src/pages/member-profile/tabs/referrals-tab.tsx` — NEW tab; `types.ts` + `index.tsx` — wiring.
+- `src/i18n/ar.ts` — referral block + error keys + perms labels + `common.egp`.
+- `tests/referral.test.ts` — NEW (13 cases).
+- `tests/restore-authz.test.ts`, `tests/foundation.smoke.test.ts`, `tests/part4-backup.test.ts`, `tests/migration-upgrade.test.ts` — migration version 22→23 updates.
 
 ## Database changes
 
-- **None** (no new migration; the v21 fix changes how the *runner* runs migrations, not the schema).
+- **Migration v23** added (referrals / referral_rewards / referral_settings tables + `members.referral_code` column + `referrals.view`/`referrals.manage` permission rows).
 
 ## Known issues / follow-ups
 
-- Manual browser verification of the Store **Returns** and **Reports** tabs not yet done (no running server confirmed this session).
-- Department scoping on the remaining CPU lists (attendance, card/search endpoints) still needs a follow-up pass per the reviewer report — not part of the store-fix batch.
+- No dedicated referral management page separate from the member-profile tab (rewards/leaderboard live in the same tab). If a standalone Referrals page is desired later, wire `NAV_ROUTES` + a page — current scope is tab-only.
+- Manual browser verification of the Referrals tab not yet done (no running server confirmed this session).
 
 ## Blockers
 

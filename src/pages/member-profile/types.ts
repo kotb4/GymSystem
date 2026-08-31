@@ -10,7 +10,8 @@ export type TabKey =
   | "inbody"
   | "comms"
   | "notes"
-  | "activity";
+  | "activity"
+  | "referrals";
 
 export interface MemberProfileContext {
   member: PublicMember;

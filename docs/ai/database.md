@@ -5,7 +5,7 @@
 - **Engine:** SQLite via Node.js built-in `node:sqlite` (`DatabaseSync`, synchronous)
 - **Location:** `%LOCALAPPDATA%/GymSystem/Database/gym.db`
 - **Pragmas:** `journal_mode=WAL`, `foreign_keys=ON`, `busy_timeout=5000`
-- **Migrations:** Append-only array in `src/db/migrations.ts`, tracked in `schema_migrations` table, applied at boot inside a transaction. Currently **v1 through v22**.
+- **Migrations:** Append-only array in `src/db/migrations.ts`, tracked in `schema_migrations` table, applied at boot inside a transaction. Currently **v1 through v23**.
 - **Total tables:** 43 (including `schema_migrations` created at runtime)
 
 ## Conventions

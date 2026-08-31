@@ -2,6 +2,19 @@
 
 > **Reading order for the next agent:** `AGENTS.md` → `.ai/project.md` → `.ai/current-state.md` → `.ai/tasks.md` → `.ai/decisions.md` (when relevant) → inspect the actual source. The repository files are the persistent memory; chat history is not part of the project.
 
+## TASK-016: Member Referral System
+- Status: done (2026-08-31) — implementation + unit tests + full verification green; committed + pushed
+- Objective: refer members, track conversion to joined members, grant configurable rewards, per-referrer stats + top-referrers leaderboard, as a new tab in the member profile.
+- Migration **v23** (append-only): idempotent `ALTER TABLE members ADD COLUMN referral_code` (guarded via `PRAGMA table_info` so legacy-import tests don't break) + `referrals`, `referral_rewards`, `referral_settings` tables + `referrals.view`/`referrals.manage` permission rows (manager + reception grants).
+- Service (`src/core/services/referral.service.ts`): create/list/cancel referrals, `convert` (guards already-processed, self-referral via matching phone, duplicate reward), settings get/update, stats, top referrers. Rewards recorded in `referral_rewards`; audit actions `REFERRAL_CREATED/CONVERTED/CANCELLED/REWARD_GRANTED/REWARD_CANCELLED`.
+- Permissions: `referrals.view`/`referrals.manage` in `PERMS` + `MANAGER_PERMS` + `RECEPTION_PERMS`.
+- Wiring: `server/rpc/referral.rpc.ts` + `server/rpc/registry.ts`; `src/api/index.ts` (`referral` wrappers + `ReferralRow`/`ReferralStats`/`ReferralRewardRow`/`ReferralListQuery`/`ReferralSettings`/`CreateReferralInput`/`TopReferrerRow`).
+- UI: `src/pages/member-profile/tabs/referrals-tab.tsx` (named export `ReferralsTab`); `TabKey` += `"referrals"`; tab def + conditional render in `index.tsx`.
+- i18n: full `referral:` block, `referral.desc/.emptyTitle/.emptyDescription/.confirmConvert/.confirmCancel`, `common.egp`, `errors.referral{NotFound,SelfReferral,DuplicateReward,AlreadyProcessed}`, perms labels.
+- Session fixes: migration v23 idempotency (matching v22 pattern); removed `node:crypto` import (no node types in frontend tsconfig — rely on global `crypto.randomUUID()`); synchronous `db.transaction(() => …)`; removed unused locals; i18n edits via temp `.cjs` script (PowerShell `node -e` corrupts Arabic/CRLF).
+- Tests: `tests/referral.test.ts` (13 cases incl. perm denials). Migration version bumps 22→23 in `tests/restore-authz.test.ts`, `tests/foundation.smoke.test.ts`, `tests/part4-backup.test.ts`; `tests/migration-upgrade.test.ts` added a `members` table to the v20 skeleton + comment.
+- Verification: `npm test` 401/401, `npm run typecheck` clean, `npm run typecheck:server` clean, `npm run build` OK, `node scripts/check-rpc-consistency.cjs` ok. Browser UI NOT manually verified this session.
+
 ## TASK-014: Store POS + inventory upgrade (returns, lost stock, reports, low-stock)
 - Status: done (2026-08-29) — implementation + unit tests + full verification green
 - Objective: line-item sale returns, "lost" stock, store reports (daily sales, product best-sellers, stock value, gross profit), dusted low-stock lists, net-of-returns stats.

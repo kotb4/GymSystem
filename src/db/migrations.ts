@@ -554,6 +554,32 @@ function buildMigrations(): Migration[] {
         db.run("INSERT OR IGNORE INTO role_permissions (role_id, permission_code) VALUES ('manager', 'store.return')");
       },
     },
+    {
+      version: 23,
+      statements: [],
+      callback: (db: Db) => {
+        // ---- member referral system ----
+        const memberCols = new Set(
+          db.all<{ name: string }>("PRAGMA table_info(members)").map((c) => c.name),
+        );
+        if (!memberCols.has("referral_code"))
+          db.exec("ALTER TABLE members ADD COLUMN referral_code TEXT");
+        db.exec("CREATE TABLE IF NOT EXISTS referrals (\n  id TEXT PRIMARY KEY,\n  referrer_id TEXT NOT NULL REFERENCES members(id),\n  referred_name TEXT NOT NULL,\n  referred_phone TEXT,\n  referred_member_id TEXT REFERENCES members(id),\n  referral_code TEXT NOT NULL,\n  status TEXT NOT NULL DEFAULT 'pending' CHECK (status IN ('pending', 'joined', 'cancelled')),\n  notes TEXT,\n  created_at TEXT NOT NULL,\n  converted_at TEXT\n)");
+        db.run("CREATE INDEX IF NOT EXISTS idx_referrals_referrer ON referrals(referrer_id)");
+        db.run("CREATE INDEX IF NOT EXISTS idx_referrals_status ON referrals(status)");
+        db.exec("CREATE TABLE IF NOT EXISTS referral_rewards (\n  id TEXT PRIMARY KEY,\n  referral_id TEXT NOT NULL REFERENCES referrals(id),\n  referrer_id TEXT NOT NULL REFERENCES members(id),\n  reward_type TEXT NOT NULL CHECK (reward_type IN ('free_days', 'credit')),\n  reward_value INTEGER NOT NULL CHECK (reward_value >= 0),\n  status TEXT NOT NULL DEFAULT 'pending' CHECK (status IN ('pending', 'granted', 'cancelled')),\n  created_at TEXT NOT NULL,\n  granted_at TEXT\n)");
+        db.run("CREATE INDEX IF NOT EXISTS idx_referral_rewards_referrer ON referral_rewards(referrer_id)");
+        db.run("CREATE INDEX IF NOT EXISTS idx_referral_rewards_referral ON referral_rewards(referral_id)");
+        db.exec("CREATE TABLE IF NOT EXISTS referral_settings (\n  key TEXT PRIMARY KEY,\n  value TEXT NOT NULL\n)");
+        db.run("INSERT OR IGNORE INTO referral_settings (key, value) VALUES ('reward_type', 'free_days')");
+        db.run("INSERT OR IGNORE INTO referral_settings (key, value) VALUES ('reward_value', '7')");
+        db.run("INSERT OR IGNORE INTO permissions (code) VALUES ('referrals.view')");
+        db.run("INSERT OR IGNORE INTO permissions (code) VALUES ('referrals.manage')");
+        db.run("INSERT OR IGNORE INTO role_permissions (role_id, permission_code) VALUES ('manager', 'referrals.view')");
+        db.run("INSERT OR IGNORE INTO role_permissions (role_id, permission_code) VALUES ('manager', 'referrals.manage')");
+        db.run("INSERT OR IGNORE INTO role_permissions (role_id, permission_code) VALUES ('reception', 'referrals.view')");
+      },
+    },
   ];
 }
 

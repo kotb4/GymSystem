@@ -19,6 +19,7 @@ describe("store migration v21 upgrade path", () => {
     const db = new Db(new NodeSqliteDriver());
     db.setForeignKeys(false); // build v20 skeleton without FK friction
     db.exec("CREATE TABLE users (id TEXT PRIMARY KEY, full_name TEXT)");
+    db.exec("CREATE TABLE members (id TEXT PRIMARY KEY, full_name TEXT)");
     db.exec("CREATE TABLE product_categories (id TEXT PRIMARY KEY, name_ar TEXT)");
     db.exec(
       "CREATE TABLE products (\n  id TEXT PRIMARY KEY,\n  name TEXT NOT NULL,\n  category_id TEXT REFERENCES product_categories(id),\n  sku TEXT UNIQUE,\n  barcode TEXT UNIQUE,\n  cost_minor INTEGER NOT NULL DEFAULT 0 CHECK (cost_minor >= 0),\n  price_minor INTEGER NOT NULL CHECK (price_minor >= 0),\n  stock_qty REAL NOT NULL DEFAULT 0,\n  min_stock_qty REAL NOT NULL DEFAULT 0 CHECK (min_stock_qty >= 0),\n  supplier_name TEXT,\n  is_active INTEGER NOT NULL DEFAULT 1 CHECK (is_active IN (0, 1)),\n  created_by TEXT REFERENCES users(id),\n  created_at TEXT NOT NULL,\n  updated_at TEXT NOT NULL\n)",
@@ -37,7 +38,7 @@ describe("store migration v21 upgrade path", () => {
     db.exec("CREATE TABLE role_permissions (role_id TEXT, permission_code TEXT)");
     db.exec("CREATE TABLE schema_migrations (version INTEGER PRIMARY KEY, applied_at TEXT NOT NULL)");
 
-    // Claim versions 1..20 are already applied so runMigrations only applies 21..22.
+    // Claim versions 1..20 are already applied so runMigrations only applies 21..23.
     for (let v = 1; v <= 20; v++) {
       db.run("INSERT INTO schema_migrations (version, applied_at) VALUES (?, '2026-01-01 00:00:00')", [v]);
     }

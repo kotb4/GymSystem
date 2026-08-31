@@ -1,5 +1,16 @@
 # Architecture Decision Log
 
+## ADR-016: Member Referral System (profile tab + configurable rewards)
+- Date: 2026-08-31
+- Status: accepted (product feature)
+- Context: The owner wants to grow the member base by rewarding existing members who refer new ones. Requires tracking referral intents (pending), converting them to joined members, granting a reward, and surfacing per-referrer stats and a leaderboard.
+- Decision:
+  1. **Data model (migration v23):** `members.referral_code` (nullable, generated on first referral, idempotent guarded ALTER); `referrals` (referrer_member_id, referred_name, referred_phone, status pending/joined/cancelled, converted_member_id, converted_at, notes, timestamps); `referral_rewards` (referrer_member_id, referred_member_id, referral_id, reward_amount_minor, reward_type, status granted/cancelled, granted_at); `referral_settings` (reward_amount_minor, reward_type, enabled). Money in integer piastres per project convention.
+  2. **Permissions:** two new codes `referrals.view` (read list/stats) and `referrals.manage` (create/cancel/convert/settings). Granted to manager + reception by default. Owner always passes.
+  3. **Business rules:** self-referral rejected (referred_phone == referrer's own phone); a referral can only be converted once (already-processed rejected); no duplicate reward for a member already converted from a referral; cancel only while pending. Rewards recorded with an audit trail; no ledger/cash impact (reward is a configurable record, not an automatic cash movement). Referrer's `referral_code` auto-generated on first create and reused.
+  4. **UI:** new `ReferralsTab` inside the member profile (list + create + convert + cancel + stats + top referrers + settings). No standalone nav page in this scope.
+- Consequences: Referral metadata and rewards persist across restarts; no destructive changes. Rewards do not touch `financial_ledger`/cash boxes (a future feature may make them real cash movements — would then need a ledger entry per ADR conventions). Standalone Referrals page is a possible follow-up. Browser UI not yet manually verified.
+
 ## ADR-001: Member hard-purge intentionally cascades all history
 - Date: 2026-08-25
 - Status: accepted (product-owner request during UAT)
