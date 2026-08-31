@@ -37,6 +37,7 @@ import { dev } from "./dev.rpc";
 import { memberProfile } from "./member-profile.rpc";
 import { dailyClosing } from "./daily-closing.rpc";
 import { referral } from "./referral.rpc";
+import { loyalty } from "./loyalty.rpc";
 
 /**
  * The frontend never touches SQLite. It calls whitelisted service functions
@@ -79,6 +80,7 @@ export const REGISTRY: Record<string, Record<string, Exposed>> = {
   memberProfile,
   dailyClosing,
   referral,
+  loyalty,
 };
 
 export interface SerializedError {

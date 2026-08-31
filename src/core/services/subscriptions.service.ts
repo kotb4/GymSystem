@@ -18,6 +18,7 @@ import {
 } from "./department";
 import { getPlanRow } from "./plans.service";
 import { getPackageRow, type PackageRow } from "./packages.service";
+import { applyEarnRule } from "./loyalty.service";
 import { insertLedgerEntry } from "./payments.service";
 
 export type SubscriptionRowStatus = "active" | "suspended" | "cancelled";
@@ -796,6 +797,8 @@ export async function renewSubscription(
     notes: input.notes ?? row.notes,
     packageId: row.package_id ?? undefined,
   });
+
+  applyEarnRule(db, actor, row.member_id, "renewal", "member_subscriptions", next.id, { reason: "renewal" });
 
   return {
     previous: withPlanInfo(db, getSubscriptionRow(db, subscriptionId)!, today),

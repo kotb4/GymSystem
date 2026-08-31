@@ -27,6 +27,7 @@ import { CommsTab } from "./tabs/comms-tab";
 import { NotesTab } from "./tabs/notes-tab";
 import { ActivityTab } from "./tabs/activity-tab";
 import { ReferralsTab } from "./tabs/referrals-tab";
+import { LoyaltyTab } from "./tabs/loyalty-tab";
 import { CheckinModal } from "./modals/checkin-modal";
 import { AddNoteModal } from "./modals/add-note-modal";
 import { RecordPaymentModal } from "./modals/record-payment-modal";
@@ -51,6 +52,7 @@ const ALL_TABS: TabDef[] = [
   { key: "notes", labelKey: "members.tabNotes", perm: "members.edit" },
   { key: "activity", labelKey: "members.tabActivity", perm: "audit.view" },
   { key: "referrals", labelKey: "referral.tabReferrals", perm: "referrals.view" },
+  { key: "loyalty", labelKey: "members.tabLoyalty", perm: "loyalty.view" },
 ];
 
 export function MemberProfilePage() {
@@ -195,6 +197,7 @@ export function MemberProfilePage() {
       {tab === "notes" && <NotesTab ctx={ctx} />}
       {tab === "activity" && <ActivityTab ctx={ctx} />}
       {tab === "referrals" && <ReferralsTab ctx={ctx} />}
+      {tab === "loyalty" && <LoyaltyTab ctx={ctx} />}
 
       <MemberFormModal open={editOpen} onClose={() => setEditOpen(false)} onSaved={reload} member={member} />
       <AssignCardModal open={cardModalOpen} onClose={() => setCardModalOpen(false)} onDone={reload} presetMember={member} />

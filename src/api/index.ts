@@ -33,6 +33,17 @@ import type {
   ReferralRewardRow,
   TopReferrerRow,
 } from "@/core/services/referral.service";
+import type {
+  EarnRule,
+  EarnRuleInput,
+  LoyaltyBalance,
+  LoyaltySettings,
+  MemberTransactionPage,
+  MemberTransactionQuery,
+  RedemptionInput,
+  RedemptionItem,
+  RedemptionResult,
+} from "@/core/services/loyalty.service";
 
 import type { AuditListQuery, AuditLogItem } from "@/core/services/audit.service";
 import type { MemberOverview } from "@/core/services/member-profile.service";
@@ -1167,6 +1178,32 @@ export const api = {
     listRewards: (referrerId?: string) =>
       rpc<ReferralRewardRow[]>("referral", "listRewards", [referrerId]),
   },
+  loyalty: {
+    getSettings: () =>
+      rpc<LoyaltySettings>("loyalty", "getSettings", []),
+    updateSettings: (patch: Partial<LoyaltySettings>) =>
+      rpc<LoyaltySettings>("loyalty", "updateSettings", [patch]),
+    getEarnRules: () =>
+      rpc<EarnRule[]>("loyalty", "getEarnRules", []),
+    upsertEarnRule: (input: EarnRuleInput) =>
+      rpc<EarnRule>("loyalty", "upsertEarnRule", [input]),
+    removeEarnRule: (action: string) =>
+      rpc<void>("loyalty", "removeEarnRule", [action]),
+    getRedemptionCatalog: () =>
+      rpc<RedemptionItem[]>("loyalty", "getRedemptionCatalog", []),
+    upsertRedemption: (input: RedemptionInput) =>
+      rpc<RedemptionItem>("loyalty", "upsertRedemption", [input]),
+    setRedemptionActive: (id: string, active: boolean) =>
+      rpc<RedemptionItem>("loyalty", "setRedemptionActive", [id, active]),
+    getMemberBalance: (memberId: string) =>
+      rpc<LoyaltyBalance>("loyalty", "getMemberBalance", [memberId]),
+    listMemberTransactions: (memberId: string, query: MemberTransactionQuery = {}) =>
+      rpc<MemberTransactionPage>("loyalty", "listMemberTransactions", [memberId, query]),
+    adjustPoints: (memberId: string, points: number, reason: string) =>
+      rpc<number>("loyalty", "adjustPoints", [memberId, points, reason]),
+    redeemReward: (memberId: string, rewardId: string) =>
+      rpc<RedemptionResult>("loyalty", "redeemReward", [memberId, rewardId]),
+  },
 };
 
 export default api;
@@ -1237,3 +1274,17 @@ export type {
   CreateReferralInput,
   TopReferrerRow,
 } from "@/core/services/referral.service";
+export type {
+  LoyaltySettings,
+  EarnRule,
+  EarnRuleInput,
+  EarnAction,
+  RewardType,
+  RedemptionItem,
+  RedemptionInput,
+  LoyaltyTransactionRow,
+  LoyaltyBalance,
+  MemberTransactionQuery,
+  MemberTransactionPage,
+  RedemptionResult,
+} from "@/core/services/loyalty.service";

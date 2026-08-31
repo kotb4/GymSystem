@@ -11,7 +11,8 @@ export type TabKey =
   | "comms"
   | "notes"
   | "activity"
-  | "referrals";
+  | "referrals"
+  | "loyalty";
 
 export interface MemberProfileContext {
   member: PublicMember;

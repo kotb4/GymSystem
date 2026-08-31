@@ -8,6 +8,7 @@ import { readSetting, SETTING_KEYS } from "./settings.service";
 import { getMemberRowById } from "./members.service";
 import { activeTrialForMember } from "./trials.service";
 import { unfreezeSubscription } from "./subscriptions.service";
+import { applyEarnRule, loyaltyUsableCreditMinor } from "./loyalty.service";
 
 export type CheckInDenialReason =
   | "CARD_UNKNOWN"
@@ -200,6 +201,7 @@ export async function recordCheckIn(
           barcode,
           trialId: trial.id,
         });
+        applyEarnRule(db, actor, member.id, "checkin", "attendance", attendanceId, { reason: "checkin:trial" });
       });
       return {
         kind: "success",
@@ -270,6 +272,7 @@ export async function recordCheckIn(
       memberCode: member.member_code,
       barcode,
     });
+    applyEarnRule(db, actor, member.id, "checkin", "attendance", attendanceId, { reason: "checkin" });
   });
 
   return {
@@ -308,7 +311,8 @@ export function memberOutstandingMinor(db: Db, memberId: string): number {
       [memberId],
     ) ?? 0,
   );
-  return subs + store;
+  const credit = loyaltyUsableCreditMinor(db, memberId);
+  return Math.max(0, subs + store - credit);
 }
 
 /** Optional check-out; enabled via attendance_checkout_enabled setting. */

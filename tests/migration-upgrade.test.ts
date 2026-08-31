@@ -38,7 +38,7 @@ describe("store migration v21 upgrade path", () => {
     db.exec("CREATE TABLE role_permissions (role_id TEXT, permission_code TEXT)");
     db.exec("CREATE TABLE schema_migrations (version INTEGER PRIMARY KEY, applied_at TEXT NOT NULL)");
 
-    // Claim versions 1..20 are already applied so runMigrations only applies 21..23.
+    // Claim versions 1..20 are already applied so runMigrations only applies 21..24.
     for (let v = 1; v <= 20; v++) {
       db.run("INSERT INTO schema_migrations (version, applied_at) VALUES (?, '2026-01-01 00:00:00')", [v]);
     }

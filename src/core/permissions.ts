@@ -99,6 +99,8 @@ export const PERMS = [
   "packages.edit",
   "referrals.view",
   "referrals.manage",
+  "loyalty.view",
+  "loyalty.manage",
 ] as const;
 
 export type Permission = (typeof PERMS)[number];
@@ -191,6 +193,8 @@ const MANAGER_PERMS: readonly Permission[] = [
   "packages.edit",
   "referrals.view",
   "referrals.manage",
+  "loyalty.view",
+  "loyalty.manage",
 ];
 
 const RECEPTION_PERMS: readonly Permission[] = [
@@ -223,6 +227,7 @@ const RECEPTION_PERMS: readonly Permission[] = [
   "hr.employee_checkin",
   "reception.view",
   "referrals.view",
+  "loyalty.view",
 ];
 
 const TRAINER_PERMS: readonly Permission[] = [

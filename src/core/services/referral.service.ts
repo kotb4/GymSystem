@@ -4,6 +4,7 @@ import { requirePermission, type ServiceActor } from "@/core/permissions";
 import type { Db, Row } from "@/db/engine";
 import { recordAudit } from "./audit.service";
 import { assertDepartmentAccess, memberDepartmentById } from "./department";
+import { applyEarnRule } from "./loyalty.service";
 
 // ───────────────────── helpers ─────────────────────
 
@@ -241,6 +242,7 @@ export function convertReferral(db: Db, actor: ServiceActor, referralId: string,
       rewardType: settings.rewardType,
       rewardValue: settings.rewardValue,
     });
+    applyEarnRule(db, actor, str(referralRow.referrer_id), "referral", "referrals", referralId, { reason: "referral:converted" });
 
     return db.first<Row>(`${REFERRAL_SELECT} WHERE r.id = ?`, [referralId])!;
   });

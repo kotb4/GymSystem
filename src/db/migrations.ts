@@ -580,6 +580,32 @@ function buildMigrations(): Migration[] {
         db.run("INSERT OR IGNORE INTO role_permissions (role_id, permission_code) VALUES ('reception', 'referrals.view')");
       },
     },
+    {
+      version: 24,
+      statements: [],
+      callback: (db: Db) => {
+        // ---- configurable loyalty / rewards system ----
+        db.exec("CREATE TABLE IF NOT EXISTS loyalty_earn_rules (\n  id TEXT PRIMARY KEY,\n  action TEXT NOT NULL UNIQUE,\n  points INTEGER NOT NULL CHECK (points >= 0),\n  enabled INTEGER NOT NULL DEFAULT 1,\n  points_per_minor INTEGER,\n  min_minor INTEGER,\n  created_at TEXT NOT NULL\n)");
+        db.exec("CREATE TABLE IF NOT EXISTS loyalty_redemption_catalog (\n  id TEXT PRIMARY KEY,\n  reward_type TEXT NOT NULL CHECK (reward_type IN ('free_days', 'discount', 'product', 'pt_session', 'custom')),\n  title TEXT NOT NULL,\n  points_cost INTEGER NOT NULL CHECK (points_cost > 0),\n  value_minor INTEGER,\n  days INTEGER,\n  sessions INTEGER,\n  product_id TEXT REFERENCES products(id),\n  active INTEGER NOT NULL DEFAULT 1,\n  created_at TEXT NOT NULL\n)");
+        db.exec("CREATE TABLE IF NOT EXISTS loyalty_transactions (\n  id TEXT PRIMARY KEY,\n  member_id TEXT NOT NULL REFERENCES members(id),\n  delta INTEGER NOT NULL,\n  balance_after INTEGER NOT NULL,\n  kind TEXT NOT NULL CHECK (kind IN ('earn', 'redeem', 'adjust', 'void')),\n  source TEXT NOT NULL CHECK (source IN ('checkin', 'renewal', 'referral', 'store_purchase', 'manual', 'redemption')),\n  reason TEXT,\n  ref_table TEXT,\n  ref_id TEXT,\n  reward_id TEXT REFERENCES loyalty_redemption_catalog(id),\n  points_cost INTEGER,\n  created_by TEXT NOT NULL,\n  created_at TEXT NOT NULL\n)");
+        db.exec("CREATE UNIQUE INDEX IF NOT EXISTS uq_loyalty_tx_source_ref ON loyalty_transactions(source, ref_id) WHERE ref_id IS NOT NULL");
+        db.run("CREATE INDEX IF NOT EXISTS idx_loyalty_tx_member ON loyalty_transactions(member_id)");
+        db.exec("CREATE TABLE IF NOT EXISTS loyalty_credit_transactions (\n  id TEXT PRIMARY KEY,\n  member_id TEXT NOT NULL REFERENCES members(id),\n  loyalty_transaction_id TEXT NOT NULL,\n  reward_id TEXT NOT NULL,\n  amount_minor INTEGER NOT NULL CHECK (amount_minor >= 0),\n  used_minor INTEGER NOT NULL DEFAULT 0 CHECK (used_minor >= 0),\n  status TEXT NOT NULL DEFAULT 'granted' CHECK (status IN ('granted', 'cancelled')),\n  created_by TEXT NOT NULL,\n  created_at TEXT NOT NULL\n)");
+        db.run("CREATE INDEX IF NOT EXISTS idx_loyalty_credit_member ON loyalty_credit_transactions(member_id)");
+        db.exec("CREATE TABLE IF NOT EXISTS loyalty_settings (\n  key TEXT PRIMARY KEY,\n  value TEXT NOT NULL\n)");
+        db.run("INSERT OR IGNORE INTO loyalty_settings (key, value) VALUES ('reward_enabled', '1')");
+        db.run("INSERT OR IGNORE INTO loyalty_settings (key, value) VALUES ('store_points_per_egp', '0')");
+        db.run("INSERT OR IGNORE INTO loyalty_earn_rules (id, action, points, enabled, points_per_minor, min_minor, created_at) VALUES ('rule_checkin', 'checkin', 5, 1, NULL, NULL, '2026-08-31T00:00:00Z')");
+        db.run("INSERT OR IGNORE INTO loyalty_earn_rules (id, action, points, enabled, points_per_minor, min_minor, created_at) VALUES ('rule_renewal', 'renewal', 50, 1, NULL, NULL, '2026-08-31T00:00:00Z')");
+        db.run("INSERT OR IGNORE INTO loyalty_earn_rules (id, action, points, enabled, points_per_minor, min_minor, created_at) VALUES ('rule_referral', 'referral', 100, 1, NULL, NULL, '2026-08-31T00:00:00Z')");
+        db.run("INSERT OR IGNORE INTO loyalty_earn_rules (id, action, points, enabled, points_per_minor, min_minor, created_at) VALUES ('rule_store', 'store_purchase', 10, 1, NULL, 10000, '2026-08-31T00:00:00Z')");
+        db.run("INSERT OR IGNORE INTO permissions (code) VALUES ('loyalty.view')");
+        db.run("INSERT OR IGNORE INTO permissions (code) VALUES ('loyalty.manage')");
+        db.run("INSERT OR IGNORE INTO role_permissions (role_id, permission_code) VALUES ('manager', 'loyalty.view')");
+        db.run("INSERT OR IGNORE INTO role_permissions (role_id, permission_code) VALUES ('manager', 'loyalty.manage')");
+        db.run("INSERT OR IGNORE INTO role_permissions (role_id, permission_code) VALUES ('reception', 'loyalty.view')");
+      },
+    },
   ];
 }
 

@@ -30,6 +30,7 @@ export const NAV_ROUTES: NavRoute[] = [
   { path: "/health", key: "nav.health", permission: "diagnostics.view" },
   { path: "/users", key: "nav.users", permission: "users.view" },
   { path: "/permissions", key: "nav.permissions", permission: "users.view" },
+  { path: "/loyalty", key: "nav.loyalty", permission: "loyalty.manage" },
   { path: "/audit", key: "nav.audit", permission: "audit.view" },
   { path: "/settings", key: "nav.settings", permission: "settings.view" },
 ];

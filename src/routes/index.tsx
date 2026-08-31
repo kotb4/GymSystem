@@ -32,6 +32,7 @@ import { EmployeesPage } from "@/pages/employees-page";
 import { EmployeeCheckInPage } from "@/pages/employee-checkin-page";
 import { CrmPage } from "@/pages/crm-page";
 import { PermissionsPage } from "@/pages/permissions-page";
+import { LoyaltyPage } from "@/pages/loyalty-page";
 import { TreasuryPage } from "@/pages/treasury";
 import { TreasuryPrintPage } from "@/pages/treasury/print";
 
@@ -238,6 +239,14 @@ export function AppRoutes() {
           element={
             <RequirePermission permission="users.view">
               <PermissionsPage />
+            </RequirePermission>
+          }
+        />
+        <Route
+          path="loyalty"
+          element={
+            <RequirePermission permission="loyalty.manage">
+              <LoyaltyPage />
             </RequirePermission>
           }
         />

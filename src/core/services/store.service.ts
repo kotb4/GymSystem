@@ -11,6 +11,7 @@ import {
   departmentScopeCondition,
   memberDepartmentById,
 } from "./department";
+import { applyEarnRule, reverseEarnedPoints } from "./loyalty.service";
 
 type Num = string | number;
 
@@ -612,6 +613,15 @@ export async function createSale(db: Db, actor: ServiceActor, input: CreateSaleI
     }
 
     recordAudit(db, actor, "SALE_CREATED", "store_sale", saleId, { saleNo, totalMinor, credit: isCredit });
+
+    // loyalty points: only member-linked paid (cash) sales earn — not walk-ins,
+    // not credit sales (points on debt would be an abuse vector).
+    if (input.memberId && !isCredit) {
+      applyEarnRule(db, actor, input.memberId, "store_purchase", "store_sales", saleId, {
+        totalMinor,
+        reason: "store_purchase",
+      });
+    }
   });
 
   return getSale(db, actor, saleId);
@@ -672,6 +682,11 @@ export async function voidStoreSale(db: Db, actor: ServiceActor, saleId: string,
       db.run("DELETE FROM store_debts WHERE sale_id = ? AND status = 'open'", [saleId]);
     }
     recordAudit(db, actor, "SALE_VOIDED", "store_sale", saleId, { reason: trimmed });
+
+    // reverse loyalty points earned for the paid member sale, if any
+    if (sale.member_id != null) {
+      reverseEarnedPoints(db, actor, String(sale.member_id), "store_purchase", "store_sales", saleId, `void:${str(sale.sale_no)}`);
+    }
   });
 }
 

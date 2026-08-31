@@ -1,5 +1,17 @@
 # Architecture Decision Log
 
+## ADR-017: Configurable Loyalty/Rewards system
+- Date: 2026-08-31
+- Status: accepted (product feature)
+- Context: The owner wants to reward member activity (check-ins, renewals, referrals, store purchases) with points redeemable for configurable rewards (discount credit, free days, PT sessions, products, custom). Points must be auditable and non-falsifiable from the client, and operators need an admin surface to tune rules and the reward catalog.
+- Decision:
+  1. **Data model (migration v24):** `loyalty_earn_rules` (action, points, points_per_minor, min_minor, enabled), `loyalty_redemption_catalog` (reward_type free_days/discount/product/pt_session/custom, title, points_cost, value_minor, days, sessions, product_id, active), `loyalty_transactions` (member_id, kind earn/redeem/adjust/void, source checkin/renewal/referral/store_purchase/manual/redemption, ref_id, delta_minor, reason, created_*), `loyalty_credit_transactions` (redemption-credit movements when a discount reward is claimed), and dedicated `loyalty_settings` (reward_enabled, store_points_per_egp). Unique partial index `uq_loyalty_tx_source_ref (source, ref_id)` prevents double-award per underlying event (void/reversal path guarded).
+  2. **Permissions:** `loyalty.view` (read balances/transactions/catalog) and `loyalty.manage` (settings/rules/catalog/adjust/redeem). Manager + reception get view; manage is manager/owner. `applyEarnRule`/`earnPoints` are **not** RPC-exposed — hooks live inside each business service (check-in, renewal, referral convert, store paid-cash sale; store void reverses) so clients cannot forge points. A dedicated `loyalty.adjust` fn exists for manual operator corrections under `loyalty.manage`.
+  3. **Redemption credit:** a `discount` reward claims tracked member credit (minor units) that reduces **displayed** outstanding only via `memberOutstandingMinor` in `attendance.service.ts` (`max(0, subs + store - credit)`). It does NOT rewrite `financial_ledger`/payment math; full payments/ledger integration is deferred (would need a ledger entry per ADR conventions if pursued).
+  4. **Store earn scope:** points earned on **paid cash member sales** only (not walk-ins, not credit sales); voiding the sale reverses earned points.
+  5. **UI:** standalone `/loyalty` admin page (`NAV_ROUTES`, `loyalty.manage`) for settings + earn-rule CRUD + reward-catalog CRUD, plus a member-profile `Loyalty` tab (balance/earned/redeemed/adjust/credit cards, transaction table, redeem + adjust modals).
+- Consequences: points ledger is append-only and event-duplicate-guarded; no client one can grant themselves points. Discount redemption currently affects display only, so reports/finance figures remain untouched. Default earn rules seeded in v24 (checkin=5, renewal=50, referral=100, store_purchase=10, min spend 10000 minor). Browser UI not yet manually verified end-to-end.
+
 ## ADR-016: Member Referral System (profile tab + configurable rewards)
 - Date: 2026-08-31
 - Status: accepted (product feature)
