@@ -1,5 +1,5 @@
 ﻿import { useCallback, useEffect, useRef, useState } from "react";
-import { CheckCircle2, ScanLine, ShieldAlert, Trash2, XCircle } from "lucide-react";
+import { ScanLine, ShieldAlert, Trash2, XCircle } from "lucide-react";
 import { useAuth } from "@/contexts/auth-context";
 import { useT } from "@/i18n";
 import { useToast } from "@/components/ui/toast";
@@ -19,6 +19,7 @@ import { Button } from "@/components/ui/button";
 import { BarcodeField } from "@/components/ui/barcode-field";
 import { DataTable, type Column } from "@/components/ui/table";
 import { EmptyState } from "@/components/ui/empty-state";
+import { Avatar } from "@/components/ui/avatar";
 
 export function CheckInPage() {
   const t = useT();
@@ -281,10 +282,16 @@ function SuccessPanel({ result }: { result: Extract<CheckInResult, { kind: "succ
   const left = safeDiffDaysKeys(result.subscriptionEndsAt, todayKey());
   return (
     <div className="animate-pop rounded-2xl border border-neon/40 bg-neon/[0.07] p-5 shadow-glow-sm">
-      <div className="flex items-center gap-3.5">
-        <span aria-hidden className="grid size-12 shrink-0 place-items-center rounded-2xl bg-neon/15 text-neon">
-          <CheckCircle2 className="size-6" />
-        </span>
+      <div className="flex flex-wrap items-center gap-3.5">
+        {result.photoFileId ? (
+          <img
+            src={api.files.url(result.photoFileId)}
+            alt={result.memberName}
+            className="size-14 shrink-0 rounded-2xl object-cover"
+          />
+        ) : (
+          <Avatar name={result.memberName} size="md" />
+        )}
         <div className="min-w-0">
           <p className="truncate text-lg font-extrabold">{t("checkin.successTitle", { name: result.memberName })}</p>
           <p className="text-[13px] text-subtle">{t("checkin.successSub")}</p>

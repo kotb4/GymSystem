@@ -342,9 +342,17 @@ function SearchRow({
         onClick={() => onSelect(result.member.id)}
         className="flex w-full items-center gap-3 rounded-xl px-3 py-3 text-start transition-colors hover:bg-white/[0.04]"
       >
-        <span aria-hidden className="grid size-10 shrink-0 place-items-center rounded-xl bg-white/5 text-faint">
-          <CircleUserRound className="size-5" />
-        </span>
+        {result.member.photoFileId ? (
+          <img
+            src={api.files.url(result.member.photoFileId)}
+            alt={result.member.fullName}
+            className="size-10 shrink-0 rounded-xl object-cover"
+          />
+        ) : (
+          <span aria-hidden className="grid size-10 shrink-0 place-items-center rounded-xl bg-white/5 text-faint">
+            <CircleUserRound className="size-5" />
+          </span>
+        )}
         <span className="min-w-0 flex-1">
           <span className="block truncate font-bold">{result.member.fullName}</span>
           <span className="block text-xs text-subtle">
@@ -385,15 +393,23 @@ function StatusPanel({
       )}
     >
       <div className="flex flex-wrap items-center gap-3.5">
-        <span
-          aria-hidden
-          className={cn(
-            "grid size-12 shrink-0 place-items-center rounded-2xl",
-            valid ? "bg-neon/15 text-neon" : "bg-red/15 text-red",
-          )}
-        >
-          <UserRoundCheck className="size-6" />
-        </span>
+        {member.photoFileId ? (
+          <img
+            src={api.files.url(member.photoFileId)}
+            alt={member.fullName}
+            className="size-14 shrink-0 rounded-2xl object-cover"
+          />
+        ) : (
+          <span
+            aria-hidden
+            className={cn(
+              "grid size-12 shrink-0 place-items-center rounded-2xl",
+              valid ? "bg-neon/15 text-neon" : "bg-red/15 text-red",
+            )}
+          >
+            <UserRoundCheck className="size-6" />
+          </span>
+        )}
         <div className="min-w-0 flex-1">
           <p className="truncate text-lg font-extrabold">{member.fullName}</p>
           <p className="text-[13px] text-subtle">

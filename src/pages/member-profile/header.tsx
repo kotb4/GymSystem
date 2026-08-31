@@ -4,6 +4,7 @@ import {
   Archive,
   ArrowRight,
   Camera,
+  Image as ImageIcon,
   Pencil,
   Undo2,
   X,
@@ -22,6 +23,7 @@ import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card } from "@/components/ui/card";
 import { ConfirmDialog } from "@/components/ui/confirm-dialog";
+import { CameraCapture } from "@/components/ui/camera-capture";
 
 interface MemberHeaderProps {
   member: PublicMember;
@@ -48,6 +50,7 @@ export function MemberHeader({ member, onReload, onEdit }: MemberHeaderProps) {
   const [archiveOpen, setArchiveOpen] = useState(false);
   const [busy, setBusy] = useState(false);
   const [photoBusy, setPhotoBusy] = useState(false);
+  const [cameraOpen, setCameraOpen] = useState(false);
   const fileInputRef = useRef<HTMLInputElement>(null);
 
   const statusMeta = memberStatusMeta(t, member.status);
@@ -68,9 +71,8 @@ export function MemberHeader({ member, onReload, onEdit }: MemberHeaderProps) {
     }
   };
 
-  const onPhotoUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
-    const file = e.target.files?.[0];
-    if (!file || !actor) return;
+  const applyPhotoFile = async (file: File) => {
+    if (!actor) return;
     setPhotoBusy(true);
     try {
       const { id: fileId } = await api.files.upload("member_photo", file);
@@ -81,8 +83,19 @@ export function MemberHeader({ member, onReload, onEdit }: MemberHeaderProps) {
       toast("error", describeError(err, t));
     } finally {
       setPhotoBusy(false);
-      if (fileInputRef.current) fileInputRef.current.value = "";
     }
+  };
+
+  const onPhotoUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+    await applyPhotoFile(file);
+    if (fileInputRef.current) fileInputRef.current.value = "";
+  };
+
+  const onCameraCapture = async (file: File) => {
+    setCameraOpen(false);
+    await applyPhotoFile(file);
   };
 
   const onPhotoRemove = async () => {
@@ -114,6 +127,15 @@ export function MemberHeader({ member, onReload, onEdit }: MemberHeaderProps) {
           )}
           {hasPermission("members.edit") && (
             <div className="absolute -bottom-1 -left-1 flex gap-1">
+              <button
+                type="button"
+                disabled={photoBusy}
+                onClick={() => setCameraOpen(true)}
+                className="grid size-7 place-items-center rounded-lg border border-line bg-card text-subtle transition-colors hover:text-ink disabled:opacity-50"
+                title={t("members.formPhotoCamera")}
+              >
+                <Camera className="size-3.5" />
+              </button>
               <input
                 ref={fileInputRef}
                 type="file"
@@ -128,7 +150,7 @@ export function MemberHeader({ member, onReload, onEdit }: MemberHeaderProps) {
                 className="grid size-7 place-items-center rounded-lg border border-line bg-card text-subtle transition-colors hover:text-ink disabled:opacity-50"
                 title={t("members.formPhoto")}
               >
-                <Camera className="size-3.5" />
+                <ImageIcon className="size-3.5" />
               </button>
               {member.photoFileId && (
                 <button
@@ -231,6 +253,12 @@ export function MemberHeader({ member, onReload, onEdit }: MemberHeaderProps) {
         tone={archived ? "primary" : "danger"}
         loading={busy}
         onConfirm={onArchive}
+      />
+      <CameraCapture
+        open={cameraOpen}
+        onClose={() => setCameraOpen(false)}
+        onCapture={onCameraCapture}
+        captureBusy={photoBusy}
       />
       <button
         type="button"

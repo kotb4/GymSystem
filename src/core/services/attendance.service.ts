@@ -26,6 +26,7 @@ export type CheckInResult =
       attendanceId: string;
       memberName: string;
       memberCode: string;
+      photoFileId: string | null;
       planName: string | null;
       subscriptionEndsAt: string;
       sessionsRemaining?: number | null;
@@ -208,6 +209,7 @@ export async function recordCheckIn(
         attendanceId,
         memberName: member.full_name,
         memberCode: member.member_code,
+        photoFileId: member.photo_file_id,
         planName: `trial:${trial.trialType}`,
         subscriptionEndsAt: trial.endDate,
         sessionsRemaining: null,
@@ -280,6 +282,7 @@ export async function recordCheckIn(
     attendanceId,
     memberName: member.full_name,
     memberCode: member.member_code,
+    photoFileId: member.photo_file_id,
     planName: subscription.plan_name,
     subscriptionEndsAt: subscription.end_date,
     sessionsRemaining:

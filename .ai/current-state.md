@@ -1,66 +1,58 @@
 # Current Development State
 
 - **Last updated:** 2026-08-31
-- **Current objective:** Configurable Loyalty/Rewards system implemented; committed + pushed to GitHub
-- **Status:** TASK-017 (loyalty/rewards system) complete — all verification green, committed and pushed
+- **Current objective:** Member photo display at check-in/reception + webcam capture implemented; committed + pushed to GitHub
+- **Status:** TASK-018 (member photo display + camera capture) complete — all verification green, committed and pushed
 - **Last agent/tool:** opencode (this session)
 
 ## Active tasks
 
-- None open. TASK-017 (loyalty/rewards system) is complete, verified, and pushed. Optional future follow-ups are tracked in `.ai/tasks.md`.
+- None open. TASK-018 (member photo at check-in/reception + camera capture) is complete, verified, and pushed. Earlier TASK-017 (loyalty) is also complete. Optional future follow-ups are tracked in `.ai/tasks.md`.
 
 ## What was most recently completed (handoff context)
 
-### TASK-017 — Configurable Loyalty/Rewards system (2026-08-31)
-Full loyalty points feature: earn points from check-in, renewal, referral conversion, and paid store purchases; configurable earn rules; a redemption reward catalog (discount credit, free days, PT sessions, product, custom); an immutable append-only points ledger guarded against double-award; a member-profile Loyalty tab; and a standalone admin page (`/loyalty`).
+### TASK-018 — Member photo display + camera capture (2026-08-31)
+The member's photo now appears at check-in and on the reception page, and operators can set the photo either by uploading a file or by capturing it live with the webcam.
 
-**Backend:**
-- `src/core/services/loyalty.service.ts` — settings, earn-rule CRUD, redemption-catalog CRUD, `getMemberBalance`, `listMemberTransactions`, `adjustPoints`, `redeemReward`, plus internal `applyEarnRule`/`earnPoints`/`reverseEarnedPoints`. `applyEarnRule`/`earnPoints` are **not** RPC-exposed so clients cannot forge points.
-- Migration **v24** in `src/db/migrations.ts` — `loyalty_earn_rules`, `loyalty_redemption_catalog`, `loyalty_transactions`, `loyalty_credit_transactions`, `loyalty_settings`; `loyalty.view`/`loyalty.manage` permission rows (manager both, reception view); default earn-rule seed; unique partial index `uq_loyalty_tx_source_ref (source, ref_id)`.
-- Earn hooks wired into existing services: attendance (check-in main + trial), subscription renewal, referral convert, store paid-cash `createSale`; store `voidStoreSale` reverses points.
-- Discount redemption integration in `attendance.service.ts` `memberOutstandingMinor`: `max(0, subs + store - loyaltyUsableCreditMinor(db, memberId))` — tracked credit reduces **displayed** outstanding only, NOT `financial_ledger`/payment math (full payments integration deferred per ADR-017).
-- Permissions `loyalty.view`/`loyalty.manage`; new audit actions; `server/rpc/loyalty.rpc.ts` registered in `server/rpc/registry.ts`; `src/api/index.ts` wrappers + type exports.
+Most of the plumbing already existed: `members.photo_file_id` (migration v6), `setMemberPhoto`/`removeMemberPhoto` RPC, `api.files.upload`/`url`, and photo display + file-upload + remove in the member profile header. What was missing and added here:
 
-**Frontend:**
-- `src/pages/member-profile/tabs/loyalty-tab.tsx` — balance/earned/redeemed/credit cards, redeem + adjust modals, transaction table.
-- `src/pages/loyalty-page.tsx` — NEW standalone admin page (settings toggle + earn-rule CRUD + reward-catalog CRUD), registered in `src/routes/index.tsx`, `NAV_ROUTES` (`/loyalty`, `loyalty.manage`), sidebar `Gift` icon.
+**Backend** — `src/core/services/attendance.service.ts`: `CheckInResult` success variant gained `photoFileId: string | null`, populated from the already-loaded `member.photo_file_id` in both the normal and trial success returns. Reception needed no change (its `member` already carried `photoFileId`).
 
-**i18n** (`src/i18n/ar.ts`): full `loyalty:` block, nested `errors.loyalty.*`, perms labels, `members.tabLoyalty`, `nav.loyalty`, admin-page keys.
+**Frontend rendering**:
+- `src/pages/checkin-page.tsx` — `SuccessPanel` shows an `<img>` (or `Avatar` fallback).
+- `src/pages/reception-page.tsx` — `StatusPanel` shows the photo (or icon fallback); `SearchRow` shows a thumbnail (or `CircleUserRound`).
 
-**Tests:** `tests/loyalty.test.ts` (23 cases incl. perm denials, double-award guard, void reversal, redeem credit). Migration-version bumps 23→24 in `tests/restore-authz.test.ts`, `tests/foundation.smoke.test.ts`, `tests/part4-backup.test.ts`.
+**Camera capture** — NEW `src/components/ui/camera-capture.tsx` modal (`getUserMedia` → `<video>` preview → draw-to-`<canvas>` → `File` → standard upload+set flow). Wired into `src/pages/member-profile/header.tsx`: a camera button + the file-pick button, both via shared `applyPhotoFile(file)`. Gated by `members.edit`. Graceful Arabic fallback errors when camera unavailable/denied.
+
+**i18n** — `members.formPhotoCamera`, `members.cameraTitle`, `members.cameraCapture`, `members.cameraDenied`, `members.cameraUnavailable`.
+
+**Secure-context note:** camera works because the app opens on `http://127.0.0.1:8890`. Over plain-HTTP LAN IP (`http://192.168.x.x`) the browser blocks `getUserMedia`; the error message points the operator to file upload.
 
 ## Verification (this session)
 
-- `npm test` — **424/424** pass in 33 files (was 401; +23 loyalty).
+- `npm test` — **424/424** pass in 33 files.
 - `npm run typecheck` — clean; `npm run typecheck:server` — clean.
 - `npm run build` — OK (pre-existing seed.ts `import.meta` CJS esbuild warning is non-fatal).
-- `node scripts/check-rpc-consistency.cjs` — ok (273 registry entries, no client calls missing).
+- `node scripts/check-rpc-consistency.cjs` — ok (273 registry entries, no missing).
 - `npx vitest run tests/i18n-coverage.test.ts` — 3/3 pass.
 
-## Files changed (TASK-017 loyalty)
+## Files changed (TASK-018)
 
-- `src/core/services/loyalty.service.ts` — NEW loyalty service.
-- `server/rpc/loyalty.rpc.ts` — NEW RPC; `server/rpc/registry.ts` — registered.
-- `src/api/index.ts` — `loyalty` wrappers + types.
-- `src/db/migrations.ts` — migration v24.
-- `src/core/permissions.ts` — `loyalty.view`/`loyalty.manage`; `src/core/audit-actions.ts` — loyalty audit actions.
-- `src/core/services/attendance.service.ts` — `memberOutstandingMinor` credit integration + earn hooks.
-- Earn hooks in renewal / referral / store services.
-- `src/pages/member-profile/tabs/loyalty-tab.tsx` — NEW tab; member-profile `types.ts` + `index.tsx` — wiring.
-- `src/pages/loyalty-page.tsx` — NEW admin page; `src/routes/index.tsx` + `src/routes/nav-routes.ts` + `src/components/layout/sidebar.tsx` — route/nav.
-- `src/i18n/ar.ts` — loyalty block + error keys + perms labels + `nav.loyalty`.
-- `tests/loyalty.test.ts` — NEW (23 cases).
-- `tests/restore-authz.test.ts`, `tests/foundation.smoke.test.ts`, `tests/part4-backup.test.ts` — migration version 23→24 updates.
+- `src/core/services/attendance.service.ts` — `CheckInResult.photoFileId` (type + both success returns).
+- `src/pages/checkin-page.tsx` — photo in `SuccessPanel` (+ `Avatar` import; dropped unused `CheckCircle2`).
+- `src/pages/reception-page.tsx` — photo in `StatusPanel` + `SearchRow`.
+- `src/components/ui/camera-capture.tsx` — NEW webcam capture modal.
+- `src/pages/member-profile/header.tsx` — camera button + modal + shared `applyPhotoFile`; image-pick button.
+- `src/i18n/ar.ts` — 5 camera/photo keys.
 
 ## Database changes
 
-- **Migration v24** added (loyalty_earn_rules / loyalty_redemption_catalog / loyalty_transactions / loyalty_credit_transactions / loyalty_settings tables + `loyalty.view`/`loyalty.manage` permission rows + default earn-rule seed).
+- None (photo storage/column/RPC already existed).
 
 ## Known issues / follow-ups
 
-- Discount-redemption credit reduces **displayed** outstanding only; it does not affect `financial_ledger`, payment math, or reports. Full payments/ledger integration is a possible future feature (would require a ledger entry + payment coupling per ADR conventions).
-- Store points only on paid cash member sales (not walk-ins/credit) by design.
-- Manual browser verification of the Loyalty tab + admin page not yet done end-to-end (no running server confirmed this session).
+- Browser camera capture is NOT live-tested this session (needs a real webcam session).
+- If the app is ever accessed over plain-HTTP LAN IP, webcam capture is blocked by the browser (secure-context restriction); file upload still works.
 
 ## Blockers
 

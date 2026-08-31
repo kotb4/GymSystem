@@ -738,6 +738,16 @@ phoneInvalid: "رقم الهاتف غير صالح",
     colDeletedBy: "حذفه",
     colDeleteReason: "السبب",
     formPhoto: "الصورة الشخصية",
+
+    formPhotoCamera: "التقاط صورة بالكاميرا",
+
+    cameraTitle: "التقاط صورة بالكاميرا",
+
+    cameraCapture: "التقاط الصورة",
+
+    cameraDenied: "تعذر تشغيل الكاميرا، تحقق من إذن الوصول أو جرّب الرفع من الملفات",
+
+    cameraUnavailable: "الكاميرا غير متاحة على هذا الجهاز أو الاتصال غير آمن — استخدم الرفع من الملفات",
   },
   plans: {
     tabPlans: "الباقات",

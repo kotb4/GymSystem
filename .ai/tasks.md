@@ -16,6 +16,19 @@
 - Tests: `tests/loyalty.test.ts` (23 cases incl. perm denials, double-award guard, void reversal, redeem credit); migration bumps 23→24 in `tests/restore-authz.test.ts`, `tests/foundation.smoke.test.ts`, `tests/part4-backup.test.ts`.
 - Verification: `npm test` 424/424 (33 files), `npm run typecheck` clean, `npm run typecheck:server` clean, `npm run build` OK (pre-existing seed.ts CJS `import.meta` warning non-fatal), `node scripts/check-rpc-consistency.cjs` ok (273 entries, no missing). Browser UI NOT manually verified end-to-end this session.
 
+## TASK-018: Member photo display (check-in + reception) and camera capture
+- Status: done (2026-08-31) — implementation + full verification green; committed + pushed
+- Objective: show the member's photo when checking them in and on the reception page, and let operators set the photo either by uploading from files or by capturing live via webcam. (Display + file-upload on the member profile header already existed; camera capture + check-in/reception display were missing.)
+- No DB / schema / RPC / permission changes — `members.photo_file_id` (migration v6), `setMemberPhoto`/`removeMemberPhoto` (members.rpc.ts), `api.files.upload/url`, and the profile header upload were all already implemented.
+- Backend: `CheckInResult` success variant gained `photoFileId: string | null` in `src/core/services/attendance.service.ts`, populated from the already-loaded `member.photo_file_id` (both the normal and trial check-in success returns). No change to reception (its `ReceptionLookup.member` already carried `photoFileId` via `PublicMember`).
+- Frontend rendering:
+  - `src/pages/checkin-page.tsx` — `SuccessPanel` now shows an `<img>` of the member's photo (or an `Avatar` initials fallback).
+  - `src/pages/reception-page.tsx` — `StatusPanel` shows the photo (or keeps the icon fallback); `SearchRow` shows a photo thumbnail (or `CircleUserRound` fallback).
+- Camera capture: NEW `src/components/ui/camera-capture.tsx` (modal using `navigator.mediaDevices.getUserMedia` → `<video>` preview → draw-to-`<canvas>` → `File` → reuse the standard `api.files.upload("member_photo", file)` + `api.members.setMemberPhoto` flow). Wired into `src/pages/member-profile/header.tsx`: a camera button (opens the modal) plus the existing image-pick button; both call the shared `applyPhotoFile(file)` helper. Graceful Arabic error fallbacks when the camera is unavailable or access is denied (falls back to file upload). Gated by `members.edit` as before.
+- i18n: `members.formPhotoCamera`, `members.cameraTitle`, `members.cameraCapture`, `members.cameraDenied`, `members.cameraUnavailable`.
+- Secure-context note: camera works because the app opens on `http://127.0.0.1:8890` (secure context). Over a plain-HTTP LAN IP (`http://192.168.x.x`) `getUserMedia` is blocked by the browser — the error message tells the operator to fall back to file upload.
+- Verification: `npm test` 424/424 (33 files), `npm run typecheck` clean, `npm run typecheck:server` clean, `npm run build` OK (pre-existing seed.ts CJS `import.meta` warning non-fatal), `node scripts/check-rpc-consistency.cjs` ok (273 entries), i18n-coverage 3/3. Browser camera capture NOT live-tested this session (needs a real webcam session).
+
 ## TASK-016: Member Referral System
 - Status: done (2026-08-31) — implementation + unit tests + full verification green; committed + pushed
 - Objective: refer members, track conversion to joined members, grant configurable rewards, per-referrer stats + top-referrers leaderboard, as a new tab in the member profile.
