@@ -527,7 +527,7 @@ export function SubscriptionsPage() {
         open={freezeTarget !== null}
         onClose={() => setFreezeTarget(null)}
         onSaved={() => { reload(); setPage(1); }}
-        subscription={freezeTarget as SubscriptionWithMember}
+        subscription={freezeTarget}
       />
 
       <ConfirmDialog

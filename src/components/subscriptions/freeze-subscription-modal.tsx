@@ -13,7 +13,7 @@ interface FreezeSubscriptionModalProps {
   open: boolean;
   onClose: () => void;
   onSaved: () => void;
-  subscription: Subscription;
+  subscription: Subscription | null;
 }
 
 const FREEZE_REASONS: Array<{ value: string; labelKey: string }> = [
@@ -33,8 +33,12 @@ export function FreezeSubscriptionModal({
   const t = useT();
   const { toast } = useToast();
   const { hasPermission } = useAuth();
+
+  const sub = subscription;
+  if (!open || !sub) return null;
+
   const [startDate, setStartDate] = useState(todayKey());
-  const [endDate, setEndDate] = useState(subscription.endDate);
+  const [endDate, setEndDate] = useState(sub.endDate);
   const [reason, setReason] = useState("");
   const [notes, setNotes] = useState("");
   const [submitting, setSubmitting] = useState(false);
@@ -45,7 +49,7 @@ export function FreezeSubscriptionModal({
   useEffect(() => {
     if (!open) return;
     setStartDate(todayKey());
-    setEndDate(subscription.endDate);
+    setEndDate(sub.endDate);
     setReason("");
     setNotes("");
     setError(null);
@@ -53,14 +57,14 @@ export function FreezeSubscriptionModal({
     void (async () => {
       setLoadingHistory(true);
       try {
-        const data = await api.subscriptions.freezes(subscription.id);
+        const data = await api.subscriptions.freezes(sub.id);
         setHistory(data);
       } catch {
       } finally {
         setLoadingHistory(false);
       }
     })();
-  }, [open, subscription.id, subscription.endDate]);
+  }, [open, sub.id, sub.endDate]);
 
   const durationDays = useMemo(() => {
     if (!isValidDateKey(startDate) || !isValidDateKey(endDate)) return 0;
@@ -86,14 +90,14 @@ export function FreezeSubscriptionModal({
       setError(t("errors.freezeEndDateInvalid"));
       return;
     }
-    if (startDate < subscription.startDate || endDate > subscription.endDate) {
+    if (startDate < sub.startDate || endDate > sub.endDate) {
       setError(t("errors.freezeWindowInvalid"));
       return;
     }
     setSubmitting(true);
     setError(null);
     try {
-      await api.subscriptions.freeze(subscription.id, {
+      await api.subscriptions.freeze(sub.id, {
         startDate,
         endDate,
         reason: reason.trim() || null,
@@ -138,8 +142,8 @@ export function FreezeSubscriptionModal({
             dir="ltr"
             value={startDate}
             onChange={(e) => setStartDate(e.target.value)}
-            min={subscription.startDate}
-            max={subscription.endDate}
+            min={sub.startDate}
+            max={sub.endDate}
             disabled={submitting}
             required
           />
@@ -150,7 +154,7 @@ export function FreezeSubscriptionModal({
             value={endDate}
             onChange={(e) => setEndDate(e.target.value)}
             min={startDate}
-            max={subscription.endDate}
+            max={sub.endDate}
             disabled={submitting}
             required
           />

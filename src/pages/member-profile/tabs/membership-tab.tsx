@@ -546,7 +546,7 @@ function SubsCard({ ctx }: TabProps) {
           reload();
           ctx.reload();
         }}
-        subscription={freezeTarget as Subscription}
+        subscription={freezeTarget}
       />
       <ConfirmDialog
         open={cancelTarget !== null}
