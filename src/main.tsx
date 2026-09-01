@@ -6,6 +6,7 @@ import "./index.css";
 import { I18nProvider } from "@/i18n";
 import { AuthProvider } from "@/contexts/auth-context";
 import { ToastProvider } from "@/components/ui/toast";
+import { ErrorBoundary } from "@/components/ui/error-boundary";
 import { AppRoutes } from "@/routes";
 
 createRoot(document.getElementById("root")!).render(
@@ -14,7 +15,9 @@ createRoot(document.getElementById("root")!).render(
       <ToastProvider>
         <HashRouter>
           <AuthProvider>
-            <AppRoutes />
+            <ErrorBoundary>
+              <AppRoutes />
+            </ErrorBoundary>
           </AuthProvider>
         </HashRouter>
       </ToastProvider>

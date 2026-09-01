@@ -478,7 +478,19 @@ export function SubscriptionsPage() {
           </div>
 
           {rows.length === 0 ? (
-            <EmptyState icon={<CalendarPlus />} title={t("subs.empty")} />
+            <EmptyState
+              icon={<CalendarPlus />}
+              title={t("subs.empty")}
+              description={t("subs.emptyDesc")}
+              action={
+                hasPermission("subscriptions.create") ? (
+                  <Button onClick={() => setSubModalOpen(true)}>
+                    <CalendarPlus className="size-4" />
+                    {t("subs.addSubscription")}
+                  </Button>
+                ) : undefined
+              }
+            />
           ) : (
             <>
               <DataTable columns={columns} data={rows} rowKey={(r) => r.id} />
