@@ -45,8 +45,15 @@ export const members = defineService({
       if (!row) throw errNotFound("errors.memberNotFound");
       const meta = filesService.getFileMeta(db as never, fileId);
       if (meta.kind !== "member_photo") throw errValidation("errors.file.kindInvalid");
+      // Collect the previous photo id before committing; the byte unlink
+      // happens AFTER commit so a rollback never strands the registry row.
+      const previousPhotoId = row.photo_file_id ? String(row.photo_file_id) : null;
       db.transaction(() => {
-        if (row.photo_file_id) filesService.deleteFile(db, actor, String(row.photo_file_id));
+        if (previousPhotoId) {
+          // delete the registry row only inside the tx; bytes are unlinked
+          // after commit by the sweep below.
+          db.run("DELETE FROM files WHERE id = ?", [previousPhotoId]);
+        }
         db.run("UPDATE members SET photo_file_id = ?, updated_at = ? WHERE id = ?", [
           fileId,
           nowStamp(),
@@ -54,6 +61,14 @@ export const members = defineService({
         ]);
         recordAudit(db, actor, "MEMBER_PHOTO_CHANGED", "member", memberId, { fileId });
       });
+      if (previousPhotoId) {
+        try {
+          const prevMeta = filesService.getFileMeta(db as never, previousPhotoId);
+          filesService.unlinkFileBytes(prevMeta);
+        } catch {
+          /* previous photo already gone — sweep will catch up on next boot */
+        }
+      }
       return membersService.toPublicMember(membersService.getMemberRowById(db, memberId)!);
     }) as Fn,
     actor: true,
@@ -64,13 +79,19 @@ export const members = defineService({
       requirePermission(actor, "members.edit");
       const row = membersService.getMemberRowById(db, memberId);
       if (!row) throw errNotFound("errors.memberNotFound");
-      if (row.photo_file_id) {
-        const fileId = String(row.photo_file_id);
+      const fileId = row.photo_file_id ? String(row.photo_file_id) : null;
+      if (fileId) {
         db.transaction(() => {
           db.run("UPDATE members SET photo_file_id = NULL WHERE id = ?", [memberId]);
-          filesService.deleteFile(db, actor, fileId);
+          db.run("DELETE FROM files WHERE id = ?", [fileId]);
           recordAudit(db, actor, "MEMBER_PHOTO_CHANGED", "member", memberId, { removed: true });
         });
+        try {
+          const prevMeta = filesService.getFileMeta(db as never, fileId);
+          filesService.unlinkFileBytes(prevMeta);
+        } catch {
+          /* sweep catches leftovers */
+        }
       }
       return membersService.toPublicMember(membersService.getMemberRowById(db, memberId)!);
     }) as Fn,

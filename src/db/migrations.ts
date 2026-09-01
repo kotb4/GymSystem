@@ -1,6 +1,6 @@
 import { nowStamp, diffDaysKeys } from "@/core/dates";
 import { PERMS, ROLES, ROLE_GRANTS, type RoleId } from "@/core/permissions";
-import type { Db } from "./engine";
+import type { Db, Row } from "./engine";
 
 export interface Migration {
   version: number;
@@ -603,7 +603,57 @@ function buildMigrations(): Migration[] {
         db.run("INSERT OR IGNORE INTO permissions (code) VALUES ('loyalty.manage')");
         db.run("INSERT OR IGNORE INTO role_permissions (role_id, permission_code) VALUES ('manager', 'loyalty.view')");
         db.run("INSERT OR IGNORE INTO role_permissions (role_id, permission_code) VALUES ('manager', 'loyalty.manage')");
-        db.run("INSERT OR IGNORE INTO role_permissions (role_id, permission_code) VALUES ('reception', 'loyalty.view')");
+                db.run("INSERT OR IGNORE INTO role_permissions (role_id, permission_code) VALUES ('reception', 'loyalty.view')");
+              },
+            },
+            {
+                          // ---- ADR-018 §3: stored `relative_path` for the file registry.
+      // Existing rows are filled with the legacy `<kind>/<id><ext>` layout
+      // so on-disk bytes remain reachable. Going forward, every saveFile
+      // write stores the path explicitly and the service resolves paths
+      // ONLY from `relative_path` (no more extname(original_name)).
+      //
+      // Defensive: if `files` doesn't exist (e.g. a partial v20 schema
+      // upgrade test skeleton), the rest of the migrations cover its
+      // creation; we just skip the backfill here.
+      version: 25,
+      statements: [],
+      callback: (db: Db) => {
+        const tables = new Set(
+          db.all<{ name: string }>("SELECT name FROM sqlite_master WHERE type = 'table'").map((t) => t.name),
+        );
+        if (!tables.has("files")) return;
+        const fileCols = new Set(
+          db.all<{ name: string }>("PRAGMA table_info(files)").map((c) => c.name),
+        );
+        if (!fileCols.has("relative_path")) {
+          db.exec("ALTER TABLE files ADD COLUMN relative_path TEXT NOT NULL DEFAULT ''");
+          db.run("CREATE INDEX IF NOT EXISTS idx_files_relative_path ON files(relative_path)");
+        }
+        const rows = db.all<Row>(
+          "SELECT id, kind, original_name, relative_path FROM files WHERE relative_path = '' OR relative_path IS NULL",
+        );
+        for (const r of rows) {
+          const ext = String(r.original_name ?? "")
+            .split(".")
+            .pop()
+            ?.replace(/[^.\w]/g, "")
+            .slice(0, 10);
+          const tail = ext ? `.${ext}` : "";
+          const rel = `${String(r.kind)}/${String(r.id)}${tail}`;
+          db.run("UPDATE files SET relative_path = ? WHERE id = ?", [rel, String(r.id)]);
+        }
+      },
+    },
+    {
+      // ---- ADR-018 §8: backfill is handled by `src/db/expense-attachments-backfill.ts`
+      // after `runMigrations` finishes (called from `server/context.ts`).
+      // This migration is a no-op to keep `src/db/migrations.ts` free of
+      // node-only globals so the frontend tsconfig still typechecks.
+      version: 26,
+      statements: [],
+      callback: () => {
+        // Reserved — backfill lives in server/expense-attachments-backfill.ts.
       },
     },
   ];

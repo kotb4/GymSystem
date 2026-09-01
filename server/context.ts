@@ -1,5 +1,6 @@
 import { Db } from "../src/db/engine";
 import { runMigrations } from "../src/db/migrations";
+import { runExpenseAttachmentsBackfill } from "./expense-attachments-backfill";
 import { shouldSeedDemo, seedDemoData } from "../src/db/seed";
 import { loadPermissionsCache } from "../src/core/services/permissions.service";
 import { NodeSqliteDriver } from "./driver";
@@ -7,7 +8,7 @@ import { resolveAppDirs, type AppDirs } from "./config";
 import { existsSync, renameSync, unlinkSync, createWriteStream } from "node:fs";
 import type { WriteStream } from "node:fs";
 import path from "node:path";
-import { setFilesRoot } from "./files.service";
+import { setFilesRoot, sweepPendingDeletes } from "./files.service";
 
 export interface AppContext {
   dirs: AppDirs;
@@ -91,9 +92,27 @@ export function openDatabase(): AppContext {
   const dirs = resolveAppDirs();
   initLogging(dirs.logsDir);
   setFilesRoot(dirs.filesDir);
+  // Crash-safe sweep: a prior crash may have left .pending-delete sidecars
+  // next to files that were about to be moved to .trash/. Best-effort.
+  try {
+    const recovered = sweepPendingDeletes();
+    if (recovered > 0) logLine(`files: swept ${recovered} pending-delete marker(s)`);
+  } catch (error) {
+    logLine(`files: pending-delete sweep failed: ${String(error)}`);
+  }
   const driver = new NodeSqliteDriver(dirs.dbFile);
   const db = new Db(driver);
   runMigrations(db);
+  // ADR-018 §8: promote any legacy `expense_attachments` BLOBs to Files/.
+  // Idempotent; safe on every boot.
+  try {
+    const report = runExpenseAttachmentsBackfill(db);
+    if (report.imported > 0) {
+      logLine(`backfill: imported ${report.imported} legacy expense attachment(s)`);
+    }
+  } catch (error) {
+    logLine(`backfill: expense attachments backfill failed: ${String(error)}`);
+  }
   loadPermissionsCache(db);
   db.onDirty(() => loadPermissionsCache(db));
 

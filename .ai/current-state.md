@@ -1,59 +1,87 @@
 # Current Development State
 
-- **Last updated:** 2026-08-31
-- **Current objective:** Member photo display at check-in/reception + webcam capture implemented; committed + pushed to GitHub
-- **Status:** TASK-018 (member photo display + camera capture) complete — all verification green, committed and pushed
-- **Last agent/tool:** opencode (this session)
+- **Last updated:** 2026-09-01
+- **Current objective:** TASK-019 (file storage refactor: disk-backed files + backup inclusion + BLOB backfill) complete — all verification green
+- **Last agent/tool:** Hermes (this session)
 
 ## Active tasks
 
-- None open. TASK-018 (member photo at check-in/reception + camera capture) is complete, verified, and pushed. Earlier TASK-017 (loyalty) is also complete. Optional future follow-ups are tracked in `.ai/tasks.md`.
+- None open. TASK-019 is complete and pushed.
 
 ## What was most recently completed (handoff context)
 
-### TASK-018 — Member photo display + camera capture (2026-08-31)
-The member's photo now appears at check-in and on the reception page, and operators can set the photo either by uploading a file or by capturing it live with the webcam.
+### TASK-019 — File storage refactor: filesystem-backed assets, backup inclusion, BLOB backfill (2026-09-01)
 
-Most of the plumbing already existed: `members.photo_file_id` (migration v6), `setMemberPhoto`/`removeMemberPhoto` RPC, `api.files.upload`/`url`, and photo display + file-upload + remove in the member profile header. What was missing and added here:
+Refactored binary file storage (member photos, InBody reports, expense attachments) from SQLite BLOB fields to the existing `%LOCALAPPDATA%\GymSystem\Files\` directory with a centralized registry (`files` table). This closes the last remaining gaps from ADR-018.
 
-**Backend** — `src/core/services/attendance.service.ts`: `CheckInResult` success variant gained `photoFileId: string | null`, populated from the already-loaded `member.photo_file_id` in both the normal and trial success returns. Reception needed no change (its `member` already carried `photoFileId`).
+**Backend changes:**
 
-**Frontend rendering**:
-- `src/pages/checkin-page.tsx` — `SuccessPanel` shows an `<img>` (or `Avatar` fallback).
-- `src/pages/reception-page.tsx` — `StatusPanel` shows the photo (or icon fallback); `SearchRow` shows a thumbnail (or `CircleUserRound`).
+1. **`server/files.service.ts`** — hardened the file storage layer:
+   - Path-traversal guards on every filesystem access (`resolveSafe`, `normalizeRelative`).
+   - Filename sanitization (`sanitizeFilename`): strips control chars, path separators, Windows-forbidden chars, leading dots.
+   - Magic-byte sniffing for 4 MIME types (`image/jpeg|png|webp`, `application/pdf`).
+   - Crash-safe unlink via `.pending-delete` sidecar markers + `sweepPendingDeletes()` (called on boot and after every restore).
+   - New helpers: `relativePathFor`, `saveRawBytes`, `readBytesForMeta`, `purgeTrash`, `sweepPendingDeletes`.
 
-**Camera capture** — NEW `src/components/ui/camera-capture.tsx` modal (`getUserMedia` → `<video>` preview → draw-to-`<canvas>` → `File` → standard upload+set flow). Wired into `src/pages/member-profile/header.tsx`: a camera button + the file-pick button, both via shared `applyPhotoFile(file)`. Gated by `members.edit`. Graceful Arabic fallback errors when camera unavailable/denied.
+2. **`server/context.ts`** — calls `setFilesRoot(dirs.filesDir)` + `sweepPendingDeletes()` on every boot; runs the expense-attachments BLOB backfill after migrations.
 
-**i18n** — `members.formPhotoCamera`, `members.cameraTitle`, `members.cameraCapture`, `members.cameraDenied`, `members.cameraUnavailable`.
+3. **`src/db/migrations.ts`** —
+   - v25: adds `files.relative_path` column + backfill with legacy `<kind>/<id><ext>` layout (defensive skip if table missing).
+   - v26: no-op DDL marker (BLOB backfill moved to `server/expense-attachments-backfill.ts` to keep `migrations.ts` free of node globals so the frontend tsconfig typechecks).
 
-**Secure-context note:** camera works because the app opens on `http://127.0.0.1:8890`. Over plain-HTTP LAN IP (`http://192.168.x.x`) the browser blocks `getUserMedia`; the error message points the operator to file upload.
+4. **`server/expense-attachments-backfill.ts` (NEW)** — idempotent backfill that writes legacy `expense_attachments` BLOBs to disk under `Files/expense_attachment/` and inserts matching `files` registry rows. Called from `context.ts` post-migrations.
 
-## Verification (this session)
+5. **`server/backups.ts`** — backup/restore now include file assets:
+   - **Backup**: appends a hand-rolled archive (length-prefixed name + length-prefixed content, 2-byte end marker) to the `.gymbak` after the SQLite bytes, with a 16-byte magic trailer (`GYMBAK-FILES-V1\n`) + 8-byte LE size.
+   - **Restore**: detects trailer, extracts archive into `Files/` using the same path-traversal guard, reports `filesRestored` / `filesMissing` / `fileAssetsIncluded` in the result. Legacy `.gymbak` (no trailer) restores fine with `filesMissing=0` warning.
 
-- `npm test` — **424/424** pass in 33 files.
-- `npm run typecheck` — clean; `npm run typecheck:server` — clean.
-- `npm run build` — OK (pre-existing seed.ts `import.meta` CJS esbuild warning is non-fatal).
-- `node scripts/check-rpc-consistency.cjs` — ok (273 registry entries, no missing).
-- `npx vitest run tests/i18n-coverage.test.ts` — 3/3 pass.
+6. **`server/rpc/members.rpc.ts`** — `setMemberPhoto` / `removeMemberPhoto` / `purgeMember` now delete the registry row inside the transaction and unlink bytes **after** commit, so a rollback never strands a registry row referencing deleted bytes. Crash between commit + unlink is recovered by the boot-time sweep.
 
-## Files changed (TASK-018)
+**Tests added / updated:**
+- Foundation smoke test: `schema_migrations` count 24 → 26.
+- Migration-upgrade test still passes (defensive v25 skip).
+- Restore-authz tests pass with new `importDatabaseBytes` signature.
+- Part4-backup test updated for `migrationVersion` 26.
+- All 424 tests pass; typecheck (client + server) clean; build OK; RPC consistency clean.
 
-- `src/core/services/attendance.service.ts` — `CheckInResult.photoFileId` (type + both success returns).
-- `src/pages/checkin-page.tsx` — photo in `SuccessPanel` (+ `Avatar` import; dropped unused `CheckCircle2`).
-- `src/pages/reception-page.tsx` — photo in `StatusPanel` + `SearchRow`.
-- `src/components/ui/camera-capture.tsx` — NEW webcam capture modal.
-- `src/pages/member-profile/header.tsx` — camera button + modal + shared `applyPhotoFile`; image-pick button.
-- `src/i18n/ar.ts` — 5 camera/photo keys.
+**i18n additions:**
+- `errors.file.rootNotConfigured`, `errors.file.pathEscape`, `errors.file.mimeMismatch`
+- `errors.backupNoFilesArchive`, `errors.backupFilesMissing`, `errors.backupRestoreFailed`
 
-## Database changes
+**Database changes:**
+- Migration v25: `ALTER TABLE files ADD COLUMN relative_path TEXT NOT NULL DEFAULT ''` + index.
+- Migration v26: no-op (marker for backfill).
 
-- None (photo storage/column/RPC already existed).
+**Verification:**
+- `npm test` — 424/424 pass
+- `npm run typecheck` — clean
+- `npm run typecheck:server` — clean
+- `npm run build` — OK (pre-existing seed.ts CJS `import.meta` warning non-fatal)
+- `node scripts/check-rpc-consistency.cjs` — 273 entries, no missing client calls
+- `npx vitest run tests/i18n-coverage.test.ts` — 3/3 pass
 
 ## Known issues / follow-ups
 
-- Browser camera capture is NOT live-tested this session (needs a real webcam session).
-- If the app is ever accessed over plain-HTTP LAN IP, webcam capture is blocked by the browser (secure-context restriction); file upload still works.
+- Browser camera capture still not live-tested (needs real webcam).
+- The `.pending-delete` sweep logs to stderr; could be promoted to structured log in future.
+- `expense_attachments` legacy table is intentionally not dropped (operators can compare counts before manual drop).
 
 ## Blockers
 
 - None.
+
+## Files changed (TASK-019)
+
+**Created:**
+- `server/expense-attachments-backfill.ts`
+
+**Modified:**
+- `server/files.service.ts` (major additions: pending-delete markers, sweep, saveRawBytes, etc.)
+- `server/context.ts` (boot-time sweep + backfill invocation)
+- `server/backups.ts` (file-assets archive + trailer format)
+- `server/rpc/members.rpc.ts` (photo/purge unlink ordering)
+- `src/db/migrations.ts` (v25 relative_path column, v26 no-op marker)
+- `src/i18n/ar.ts` (new error keys)
+- `tests/foundation.smoke.test.ts` (v26 count)
+- `tests/part4-backup.test.ts` (v26 migrationVersion)
+- `tests/restore-authz.test.ts` (v26 count)
