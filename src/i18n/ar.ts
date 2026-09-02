@@ -787,6 +787,7 @@ phoneInvalid: "رقم الهاتف غير صالح",
     empty: "لا توجد باقات بعد",
     perDay: "يوم",
     currencyPerPlan: "/ باقة",
+    secondaryManage: "إدارة الخطط البسيطة",
   },
   packages: {
     title: "الباقات",

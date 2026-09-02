@@ -1,6 +1,6 @@
 ﻿import { useCallback, useEffect, useState } from "react";
 import { useNavigate, useSearchParams } from "react-router-dom";
-import { CalendarPlus, CalendarX2, CreditCard, Info, PauseCircle, PlayCircle, RotateCcw, Snowflake, Trash2 } from "lucide-react";
+import { ArrowLeft, CalendarPlus, CalendarX2, CreditCard, Info, PauseCircle, PlayCircle, RotateCcw, Snowflake, Trash2 } from "lucide-react";
 import { useAuth } from "@/contexts/auth-context";
 import { useT } from "@/i18n";
 import { useToast } from "@/components/ui/toast";
@@ -38,6 +38,7 @@ export function SubscriptionsPage() {
   const [searchParams, setSearchParams] = useSearchParams();
 
   const [tab, setTab] = useState("subs");
+  const [showPlans, setShowPlans] = useState(false);
   const [effective, setEffective] = useState<string>("all");
   const [page, setPage] = useState(1);
   const [data, setData] = useState<{ items: SubscriptionWithMember[]; total: number }>({ items: [], total: 0 });
@@ -443,10 +444,12 @@ export function SubscriptionsPage() {
           ...(hasPermission("packages.view")
             ? [{ value: "packages", label: t("packages.tabPackages") }]
             : []),
-          { value: "plans", label: t("plans.tabPlans") },
         ]}
         value={tab}
-        onChange={setTab}
+        onChange={(v) => {
+          setShowPlans(false);
+          setTab(v);
+        }}
       />
 
       {tab === "subs" ? (
@@ -455,14 +458,48 @@ export function SubscriptionsPage() {
             title={t("nav.subscriptions")}
             action={
               hasPermission("subscriptions.create") ? (
-                <Button onClick={() => setSubModalOpen(true)}>
-                  <CalendarPlus className="size-4" />
-                  {t("subs.addSubscription")}
+                <div className="flex flex-wrap items-center gap-2">
+                  <Button variant="secondary" onClick={() => setShowPlans((v) => !v)}>
+                    {t("plans.secondaryManage")}
+                  </Button>
+                  <Button onClick={() => setSubModalOpen(true)}>
+                    <CalendarPlus className="size-4" />
+                    {t("subs.addSubscription")}
+                  </Button>
+                </div>
+              ) : hasPermission("plans.view") ? (
+                <Button variant="secondary" onClick={() => setShowPlans((v) => !v)}>
+                  {t("plans.secondaryManage")}
                 </Button>
               ) : undefined
             }
           />
-          <div className="flex flex-col gap-3 border-b border-line px-5 py-3.5 sm:flex-row sm:items-center">
+          {showPlans ? (
+            <>
+              <div className="flex items-center gap-2 border-b border-line px-5 py-3">
+                <Button variant="ghost" size="sm" onClick={() => setShowPlans(false)}>
+                  <ArrowLeft className="size-4" />
+                  {t("common.back")}
+                </Button>
+                <p className="text-xs font-semibold text-subtle">{t("plans.secondaryManage")}</p>
+              </div>
+              <PlansGrid
+                plans={plans}
+                canCreate={hasPermission("plans.create")}
+                canEdit={hasPermission("plans.edit")}
+                onAdd={() => {
+                  setEditPlan(null);
+                  setPlanModalOpen(true);
+                }}
+                onEdit={(plan) => {
+                  setEditPlan(plan);
+                  setPlanModalOpen(true);
+                }}
+              />
+            </>
+          ) : (
+            <>
+              <div className="flex flex-col gap-3 border-b border-line px-5 py-3.5 sm:flex-row sm:items-center">
             <div className="sm:w-52">
               <Select
                 value={effective}
@@ -508,23 +545,11 @@ export function SubscriptionsPage() {
               </div>
             </>
           )}
+            </>
+          )}
         </Card>
-      ) : tab === "packages" ? (
-        <PackagesPage />
       ) : (
-        <PlansGrid
-          plans={plans}
-          canCreate={hasPermission("plans.create")}
-          canEdit={hasPermission("plans.edit")}
-          onAdd={() => {
-            setEditPlan(null);
-            setPlanModalOpen(true);
-          }}
-          onEdit={(plan) => {
-            setEditPlan(plan);
-            setPlanModalOpen(true);
-          }}
-        />
+        <PackagesPage />
       )}
 
       <SubscriptionFormModal open={subModalOpen} onClose={() => setSubModalOpen(false)} onSaved={reload} />

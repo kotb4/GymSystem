@@ -1,12 +1,12 @@
 # Current Development State
 
 - **Last updated:** 2026-09-02
-- **Current objective:** TASK-021 (page consolidation) — `/subscriptions` now consolidates الاشتراكات + الباقات + الخطط in one tabbed screen; attendance consolidated to a single reception page. Earlier phases done & pushed.
+- **Current objective:** TASK-021 (page consolidation) — resolved the "two الباقات" duplication: modern `packages` table is now THE subscriptions interface; legacy simple plans moved to a secondary sub-view. Attendance consolidated to a single reception page. Earlier phases done & pushed.
 - **Last agent/tool:** opencode (this session)
 
 ## Active tasks
 
-- **TASK-021** — extended: merged subscription-related screens. Fast attendance tab removed + pushed (`cc3bdb8`). This session: `/subscriptions` page now has 3 tabs (الاشتراكات / الباقات / الخطط); `/packages` removed from sidebar (legacy `/packages` route kept for bookmarks). Not yet committed.
+- **TASK-021** — extended: resolved الاشتراكات / الباقات duplicate. Attendance fast-tab removal pushed (`cc3bdb8`); subscriptions+packages+plans merge/tab-reorder pushed (`29de98e`). This session: made modern `packages` the primary interface, hid the legacy "الخطط/الباقات" tab (PlansGrid) into a secondary sub-view, and made the subscription-create modal default to a package. Not yet committed.
 
 ## What was most recently completed (handoff context)
 
@@ -28,7 +28,9 @@ Consolidate small admin/pages into shared shells and reorder the sidebar.
 
 **Phase 6 (done, pushed `cc3bdb8`): removed fast attendance tab.** Per user request, deleted the "fast (barcode/card)" tab + `/checkin` page entirely — the reception/search screen is now the only attendance UI. Deleted `fast-checkin-tab.tsx`, `checkin-page.tsx`, `attendance-page.tsx`. `/attendance` route now renders `ReceptionPage` gated by `reception.view`; removed `/checkin` route + imports; `NAV_ROUTES` `/attendance` gated by `reception.view`. Removed dead i18n keys `nav.attendanceFast`/`nav.attendanceSearch`. Backend `checkin.*` permissions + `recordCheckIn` engine are KEPT because `reception.checkIn` delegates to them (manager + reception roles already carry `checkin.create` + `checkin.view_history`).
 
-**Phase 7 (done, this session, NOT yet committed): merged subscriptions + packages + plans into one screen.** Per user request, `/subscriptions` (الاشتراكات) now consolidates الاشتراكات + الباقات + الخطط as one tabbed screen. `SubscriptionsPage` gained a 3rd tab الباقات (renders `<PackagesPage />`, which internally has الباقات + مقارنة tabs) gated by `packages.view`; kept existing الاشتراكات (`subs`) + الخطط (`plans`) tabs. Removed `/packages` from `NAV_ROUTES` sidebar (legacy `/packages` route in `routes/index.tsx` kept for bookmark compat, still renders `PackagesPage`). No backend/schema/permission changes. Note: subscriptions reference `membership_plans` (خطط), while الباقات is a separate richer catalog (time/visit/hybrid + compare) — two distinct features now under one screen.
+**Phase 7 (done, pushed `29de98e`): merged subscriptions + packages + plans into one screen.** Per user request, `/subscriptions` (الاشتراكات) now consolidates الاشتراكات + الباقات + الخطط as one tabbed screen. `SubscriptionsPage` gained a 3rd tab الباقات (renders `<PackagesPage />`, which internally has الباقات + مقارنة tabs) gated by `packages.view`; kept existing الاشتراكات (`subs`) + الخطط (`plans`) tabs. Removed `/packages` from `NAV_ROUTES` sidebar (legacy `/packages` route in `routes/index.tsx` kept for bookmark compat, still renders `PackagesPage`). No backend/schema/permission changes. Note: subscriptions reference `membership_plans` (خطط), while الباقات is a separate richer catalog (time/visit/hybrid + compare).
+
+**Phase 8 (done, this session, NOT yet committed): resolved the "two الباقات" duplication — modern `packages` is now THE interface.** Investigation revealed the `plans` tab in `/subscriptions` was actually labeled "الباقات" too (i18n `plans.tabPlans: "الباقات"`), so there were two tabs both named الباقات (legacy `PlansGrid` from `membership_plans` vs modern `PackagesPage` from `packages`). Per user decision ("الباقات هي الواجهة"), `SubscriptionsPage` now shows only 2 tabs (`subs` + `packages`); the legacy `PlansGrid`/`PlanFormModal` (simple plans) is moved to a secondary sub-view toggled by an "إدارة الخطط البسيطة" button (with back). `SubscriptionFormModal` now defaults to the first package when packages exist (packages are the primary choice; simple plan remains a secondary fallback). Backend/schema untouched — `membership_plans` remains the load-bearing table for attendance/reports/payments via synthetic plans. Added i18n `plans.secondaryManage`.
 
 ## Known issues / follow-ups
 
@@ -43,6 +45,11 @@ Consolidate small admin/pages into shared shells and reorder the sidebar.
 - None.
 
 ## Files changed (TASK-021, this session)
+
+**Modified (phase 8):**
+- `src/pages/subscriptions-page.tsx` (tabs now `subs`/`packages` only; legacy `PlansGrid`/`PlanFormModal` moved to a secondary "إدارة الخطط البسيطة" sub-view toggled by a button with back; added `ArrowLeft` import + `showPlans` state)
+- `src/components/subscriptions/subscription-form-modal.tsx` (defaults to first package when packages exist — packages are the primary choice; simple plan stays a secondary fallback)
+- `src/i18n/ar.ts` (+`plans.secondaryManage`)
 
 **Modified (phase 7):**
 - `src/pages/subscriptions-page.tsx` (+`packages` tab rendering `<PackagesPage />`, gated by `packages.view`; tabs now `subs`/`packages`/`plans`; added `PackagesPage` import)

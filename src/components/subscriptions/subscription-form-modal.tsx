@@ -66,10 +66,18 @@ export function SubscriptionFormModal({ open, onClose, onSaved, presetMember }: 
         const syntheticIds = new Set<string>(pkgList.map((p) => p.syntheticPlanId ?? "").filter(Boolean));
         const typed = (activePlans as unknown as Plan[]).filter((p) => !syntheticIds.has(p.id));
         setPlans(typed);
-        setPackageId("");
-        const first = typed[0];
-        setPlanId(first?.id ?? "");
-        setPrice(first ? String(first.price) : "");
+        if (pkgList.length > 0) {
+          // باشارات: الباقات هي الواجهة — نفقد على أول باقة
+          const firstPkg = pkgList[0];
+          setPackageId(firstPkg.id);
+          setPlanId("");
+          setPrice(minorToMajor(firstPkg.price).toString());
+        } else {
+          const first = typed[0];
+          setPackageId("");
+          setPlanId(first?.id ?? "");
+          setPrice(first ? String(first.price) : "");
+        }
         setMethods(await api.payments.methods());
       } catch (err) {
         setError(describeError(err, t));
