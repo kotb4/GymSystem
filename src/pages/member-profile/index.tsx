@@ -165,6 +165,7 @@ export function MemberProfilePage() {
       case "addMeasurement":
         setTab("inbody");
         break;
+      case "assignCard": setCardModalOpen(true); break;
     }
   };
 

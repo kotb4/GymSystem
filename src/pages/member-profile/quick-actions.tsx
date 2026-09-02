@@ -1,4 +1,5 @@
 import {
+  BadgePlus,
   CreditCard,
   Dumbbell,
   ScanLine,
@@ -18,7 +19,8 @@ export type QuickAction =
   | "recordPayment"
   | "addNote"
   | "addPt"
-  | "addMeasurement";
+  | "addMeasurement"
+  | "assignCard";
 
 interface QuickActionsProps {
   onAction: (a: QuickAction) => void;
@@ -87,6 +89,12 @@ export function QuickActions({ onAction, activeSubscriptionId, memberArchived }:
       label: t("members.qaAddMeasurement"),
       icon: <Scale className="size-4" />,
       disabled: archived,
+    },
+    {
+      key: "assignCard",
+      perm: "cards.assign",
+      label: t("members.qaAssignCard"),
+      icon: <BadgePlus className="size-4" />,
     },
   ];
 
