@@ -17,6 +17,7 @@ import { SubscriptionsPage } from "@/pages/subscriptions-page";
 import { PackagesPage } from "@/pages/packages-page";
 import { CardsPage } from "@/pages/cards-page";
 import { UsersPage } from "@/pages/users-page";
+import { StaffPage } from "@/pages/staff-page";
 import { AuditPage } from "@/pages/audit-page";
 import { SettingsPage } from "@/pages/settings-page";
 import { PaymentsPage } from "@/pages/payments-page";
@@ -239,6 +240,14 @@ export function AppRoutes() {
           element={
             <RequirePermission permission="users.view">
               <PermissionsPage />
+            </RequirePermission>
+          }
+        />
+        <Route
+          path="staff"
+          element={
+            <RequirePermission permission="users.view">
+              <StaffPage />
             </RequirePermission>
           }
         />

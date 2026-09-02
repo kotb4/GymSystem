@@ -1,87 +1,51 @@
 # Current Development State
 
-- **Last updated:** 2026-09-01
-- **Current objective:** TASK-019 (file storage refactor: disk-backed files + backup inclusion + BLOB backfill) complete — all verification green
-- **Last agent/tool:** Hermes (this session)
+- **Last updated:** 2026-09-02
+- **Current objective:** TASK-021 (sidebar page reorg: merge /users+/permissions → /staff, /health+/scanner → /settings tabs, grouped sidebar) — complete, ready to commit
+- **Last agent/tool:** opencode (this session)
 
 ## Active tasks
 
-- None open. TASK-019 is complete and pushed.
+- **TASK-021** — all phases complete (Phases 1-4), staged for commit.
+  - Phase 2: `/staff` page merging Users + Permissions as tabs. Legacy `/users`, `/permissions` routes kept as re-exports.
+  - Phase 3: `/health` → Settings backups tab, `/scanner` → Settings diagnostics tab. Legacy routes kept as re-exports.
+  - Phase 4: sidebar grouped into labeled sections (Overview, Daily, Subscriptions, Finance, Store, Training, Team, Comms, Maintenance, Security); dropped `/users`,`/permissions`,`/scanner`,`/health` from sidebar (still routable), dropped dangling `/hr` icon + `nav.hr` key; added `nav.group.*` keys.
 
 ## What was most recently completed (handoff context)
 
-### TASK-019 — File storage refactor: filesystem-backed assets, backup inclusion, BLOB backfill (2026-09-01)
+### TASK-020 — Subscriptions page blank-screen fix (2026-09-02)
+Fixed `FreezeSubscriptionModal` crash that blanked the whole /subscriptions page: it read a prop inside its initial `useState` while the parent always mounted it with `subscription={null}`, so `null.endDate` threw. Fix: made the `subscription` prop nullable, `if (!open || !sub) return null;` before any hooks, renamed `subscription`→`sub`, dropped `as Subscription` casts. Committed/pushed (`04bdf28`). Also added an `ErrorBoundary` (`src/components/ui/error-boundary.tsx`) in `src/main.tsx` so a single crash can no longer blank a whole route.
 
-Refactored binary file storage (member photos, InBody reports, expense attachments) from SQLite BLOB fields to the existing `%LOCALAPPDATA%\GymSystem\Files\` directory with a centralized registry (`files` table). This closes the last remaining gaps from ADR-018.
+### TASK-021 — Page consolidation & sidebar reorganization (2026-09-02, in progress)
+Consolidate small admin/pages into shared shells and reorder the sidebar.
 
-**Backend changes:**
+**Phase 1 (done, pushed `18ff360`): assign-card quick action.** Added `members.qaAssignCard` i18n + `cards.assign`-gated `assignCard` quick action (`BadgePlus`) on member profile wired to the existing `cardModalOpen` state.
 
-1. **`server/files.service.ts`** — hardened the file storage layer:
-   - Path-traversal guards on every filesystem access (`resolveSafe`, `normalizeRelative`).
-   - Filename sanitization (`sanitizeFilename`): strips control chars, path separators, Windows-forbidden chars, leading dots.
-   - Magic-byte sniffing for 4 MIME types (`image/jpeg|png|webp`, `application/pdf`).
-   - Crash-safe unlink via `.pending-delete` sidecar markers + `sweepPendingDeletes()` (called on boot and after every restore).
-   - New helpers: `relativePathFor`, `saveRawBytes`, `readBytesForMeta`, `purgeTrash`, `sweepPendingDeletes`.
+**Phase 2 (done, this session): /staff page.** Extracted `UsersTab` (`src/components/staff/users-tab.tsx`) + `PermissionsTab` (`src/components/staff/permissions-tab.tsx`) from the old pages; `users-page.tsx`/`permissions-page.tsx` now re-export them (legacy `/users` + `/permissions` routes preserved). New `src/pages/staff-page.tsx` renders both as Tabs, gated by `users.view`. Added `/staff` to `NAV_ROUTES` + sidebar `ICONS`. `nav.staff` i18n key added previously.
 
-2. **`server/context.ts`** — calls `setFilesRoot(dirs.filesDir)` + `sweepPendingDeletes()` on every boot; runs the expense-attachments BLOB backfill after migrations.
+**Phase 3 (done, this session): Settings tabs.** Extracted `HealthTab` (`src/components/settings/health-tab.tsx`) + `ScannerTab` (`src/components/settings/scanner-tab.tsx`); `health-page.tsx`/`scanner-diagnostics-page.tsx` re-export them (legacy routes preserved). `settings-page.tsx` became a 3-tab shell: general (settings cards), backups (`HealthTab`), scanner diagnostics (`ScannerTab`). Added `settings.backupsTab` + `settings.scannerDiagTab` i18n keys.
 
-3. **`src/db/migrations.ts`** —
-   - v25: adds `files.relative_path` column + backfill with legacy `<kind>/<id><ext>` layout (defensive skip if table missing).
-   - v26: no-op DDL marker (BLOB backfill moved to `server/expense-attachments-backfill.ts` to keep `migrations.ts` free of node globals so the frontend tsconfig typechecks).
-
-4. **`server/expense-attachments-backfill.ts` (NEW)** — idempotent backfill that writes legacy `expense_attachments` BLOBs to disk under `Files/expense_attachment/` and inserts matching `files` registry rows. Called from `context.ts` post-migrations.
-
-5. **`server/backups.ts`** — backup/restore now include file assets:
-   - **Backup**: appends a hand-rolled archive (length-prefixed name + length-prefixed content, 2-byte end marker) to the `.gymbak` after the SQLite bytes, with a 16-byte magic trailer (`GYMBAK-FILES-V1\n`) + 8-byte LE size.
-   - **Restore**: detects trailer, extracts archive into `Files/` using the same path-traversal guard, reports `filesRestored` / `filesMissing` / `fileAssetsIncluded` in the result. Legacy `.gymbak` (no trailer) restores fine with `filesMissing=0` warning.
-
-6. **`server/rpc/members.rpc.ts`** — `setMemberPhoto` / `removeMemberPhoto` / `purgeMember` now delete the registry row inside the transaction and unlink bytes **after** commit, so a rollback never strands a registry row referencing deleted bytes. Crash between commit + unlink is recovered by the boot-time sweep.
-
-**Tests added / updated:**
-- Foundation smoke test: `schema_migrations` count 24 → 26.
-- Migration-upgrade test still passes (defensive v25 skip).
-- Restore-authz tests pass with new `importDatabaseBytes` signature.
-- Part4-backup test updated for `migrationVersion` 26.
-- All 424 tests pass; typecheck (client + server) clean; build OK; RPC consistency clean.
-
-**i18n additions:**
-- `errors.file.rootNotConfigured`, `errors.file.pathEscape`, `errors.file.mimeMismatch`
-- `errors.backupNoFilesArchive`, `errors.backupFilesMissing`, `errors.backupRestoreFailed`
-
-**Database changes:**
-- Migration v25: `ALTER TABLE files ADD COLUMN relative_path TEXT NOT NULL DEFAULT ''` + index.
-- Migration v26: no-op (marker for backfill).
-
-**Verification:**
-- `npm test` — 424/424 pass
-- `npm run typecheck` — clean
-- `npm run typecheck:server` — clean
-- `npm run build` — OK (pre-existing seed.ts CJS `import.meta` warning non-fatal)
-- `node scripts/check-rpc-consistency.cjs` — 273 entries, no missing client calls
-- `npx vitest run tests/i18n-coverage.test.ts` — 3/3 pass
+**Phase 4 (done, this session): grouped sidebar.** Added `group: NavGroup` to every `NAV_ROUTES` entry + `NAV_GROUP_ORDER`; sidebar now renders group headers (`nav.group.*`) and only shows groups with ≥1 visible route. Cleaned-up canonical sidebar set: removed `/users`,`/permissions`,`/scanner`,`/health` (their pages now live under /staff + /settings; legacy *routes* still resolvable), and removed the dangling `/hr` icon map entry + `nav.hr` i18n key. Added missing sidebar icons for `/store` (ShoppingBag), `/classes` (ListChecks), `/crm` (MessageSquare).
 
 ## Known issues / follow-ups
 
 - Browser camera capture still not live-tested (needs real webcam).
-- The `.pending-delete` sweep logs to stderr; could be promoted to structured log in future.
-- `expense_attachments` legacy table is intentionally not dropped (operators can compare counts before manual drop).
+- Legacy `/users`, `/permissions`, `/health`, `/scanner` routes still registered in `routes/index.tsx` (direct-bookmark compat) but no longer listed in the sidebar; could be removed once confirmed unused.
+- No i18n-coverage regression: legacy nav keys (`users`, `permissions`, `scannerDiagnostics`, `health`) retained (used by legacy route titles via `routeTitleKey`).
 
 ## Blockers
 
 - None.
 
-## Files changed (TASK-019)
+## Files changed (TASK-021, this session)
 
 **Created:**
-- `server/expense-attachments-backfill.ts`
+- `src/components/staff/users-tab.tsx`, `src/components/staff/permissions-tab.tsx`, `src/pages/staff-page.tsx`
+- `src/components/settings/health-tab.tsx`, `src/components/settings/scanner-tab.tsx`
 
 **Modified:**
-- `server/files.service.ts` (major additions: pending-delete markers, sweep, saveRawBytes, etc.)
-- `server/context.ts` (boot-time sweep + backfill invocation)
-- `server/backups.ts` (file-assets archive + trailer format)
-- `server/rpc/members.rpc.ts` (photo/purge unlink ordering)
-- `src/db/migrations.ts` (v25 relative_path column, v26 no-op marker)
-- `src/i18n/ar.ts` (new error keys)
-- `tests/foundation.smoke.test.ts` (v26 count)
-- `tests/part4-backup.test.ts` (v26 migrationVersion)
-- `tests/restore-authz.test.ts` (v26 count)
+- `src/pages/users-page.tsx`, `src/pages/permissions-page.tsx` → re-export tab components
+- `src/pages/health-page.tsx`, `src/pages/scanner-diagnostics-page.tsx` → re-export tab components
+- `src/pages/settings-page.tsx` → 3-tab shell
+- `src/routes/index.tsx` (+`/staff` route), `src/routes/nav-routes.ts` (group field + canonical sidebar set + `/staff`), `src/components/layout/sidebar.tsx` (grouped nav + icon cleanup)
+- `src/i18n/ar.ts` (+`settings.backupsTab`, `settings.scannerDiagTab`, `nav.group.*`; removed `nav.hr`)

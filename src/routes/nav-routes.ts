@@ -1,38 +1,61 @@
 import type { Permission } from "@/core/permissions";
 
+export type NavGroup =
+  | "overview"
+  | "daily"
+  | "subscriptions"
+  | "finance"
+  | "store"
+  | "training"
+  | "team"
+  | "comms"
+  | "maintenance"
+  | "security";
+
 export interface NavRoute {
   path: string;
   key: string;
+  group: NavGroup;
   permission?: Permission;
   permissions?: Permission[];
 }
 
+export const NAV_GROUP_ORDER: NavGroup[] = [
+  "overview",
+  "daily",
+  "subscriptions",
+  "finance",
+  "store",
+  "training",
+  "team",
+  "comms",
+  "maintenance",
+  "security",
+];
+
 export const NAV_ROUTES: NavRoute[] = [
-  { path: "/", key: "nav.dashboard", permission: "members.view" },
-  { path: "/members", key: "nav.members", permission: "members.view" },
-  { path: "/checkin", key: "nav.checkin", permission: "checkin.create" },
-  { path: "/reception", key: "nav.reception", permission: "reception.view" },
-  { path: "/subscriptions", key: "nav.subscriptions", permission: "subscriptions.view" },
-  { path: "/packages", key: "nav.packages", permission: "packages.view" },
-  { path: "/payments", key: "nav.payments", permission: "payments.view" },
-  { path: "/store", key: "nav.store", permission: "store.view" },
-  { path: "/classes", key: "nav.classes", permission: "classes.view" },
-  { path: "/expenses", key: "nav.expenses", permission: "expenses.view" },
-  { path: "/cash", key: "nav.cash", permission: "payments.view" },
-  { path: "/treasury", key: "nav.treasury", permission: "cash.daily_close" },
-  { path: "/employees", key: "nav.employees", permissions: ["employees.view", "hr.view"] },
-  { path: "/employee-checkin", key: "nav.employeeCheckIn", permission: "hr.employee_checkin" },
-  { path: "/crm", key: "nav.crm", permissions: ["crm.send", "leads.view", "trials.view"] },
-  { path: "/reports", key: "nav.reports", permission: "reports.view" },
-  { path: "/trainers", key: "nav.trainers", permission: "trainers.view" },
-  { path: "/cards", key: "nav.cards", permission: "cards.view" },
-  { path: "/scanner", key: "nav.scannerDiagnostics", permission: "checkin.create" },
-  { path: "/health", key: "nav.health", permission: "diagnostics.view" },
-  { path: "/users", key: "nav.users", permission: "users.view" },
-  { path: "/permissions", key: "nav.permissions", permission: "users.view" },
-  { path: "/loyalty", key: "nav.loyalty", permission: "loyalty.manage" },
-  { path: "/audit", key: "nav.audit", permission: "audit.view" },
-  { path: "/settings", key: "nav.settings", permission: "settings.view" },
+  { path: "/", key: "nav.dashboard", group: "overview", permission: "members.view" },
+  { path: "/members", key: "nav.members", group: "daily", permission: "members.view" },
+  { path: "/checkin", key: "nav.checkin", group: "daily", permission: "checkin.create" },
+  { path: "/reception", key: "nav.reception", group: "daily", permission: "reception.view" },
+  { path: "/cash", key: "nav.cash", group: "daily", permission: "payments.view" },
+  { path: "/treasury", key: "nav.treasury", group: "daily", permission: "cash.daily_close" },
+  { path: "/subscriptions", key: "nav.subscriptions", group: "subscriptions", permission: "subscriptions.view" },
+  { path: "/packages", key: "nav.packages", group: "subscriptions", permission: "packages.view" },
+  { path: "/payments", key: "nav.payments", group: "finance", permission: "payments.view" },
+  { path: "/expenses", key: "nav.expenses", group: "finance", permission: "expenses.view" },
+  { path: "/reports", key: "nav.reports", group: "finance", permission: "reports.view" },
+  { path: "/store", key: "nav.store", group: "store", permission: "store.view" },
+  { path: "/trainers", key: "nav.trainers", group: "training", permission: "trainers.view" },
+  { path: "/classes", key: "nav.classes", group: "training", permission: "classes.view" },
+  { path: "/employees", key: "nav.employees", group: "team", permissions: ["employees.view", "hr.view"] },
+  { path: "/employee-checkin", key: "nav.employeeCheckIn", group: "team", permission: "hr.employee_checkin" },
+  { path: "/staff", key: "nav.staff", group: "team", permission: "users.view" },
+  { path: "/crm", key: "nav.crm", group: "comms", permissions: ["crm.send", "leads.view", "trials.view"] },
+  { path: "/cards", key: "nav.cards", group: "maintenance", permission: "cards.view" },
+  { path: "/loyalty", key: "nav.loyalty", group: "maintenance", permission: "loyalty.manage" },
+  { path: "/settings", key: "nav.settings", group: "maintenance", permission: "settings.view" },
+  { path: "/audit", key: "nav.audit", group: "security", permission: "audit.view" },
 ];
 
 export function routeTitleKey(pathname: string): string {

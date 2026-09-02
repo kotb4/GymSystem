@@ -2,6 +2,22 @@
 
 > **Reading order for the next agent:** `AGENTS.md` → `.ai/project.md` → `.ai/current-state.md` → `.ai/tasks.md` → `.ai/decisions.md` (when relevant) → inspect the actual source. The repository files are the persistent memory; chat history is not part of the project.
 
+## TASK-021: Page consolidation & sidebar reorganization
+- Status: done (2026-09-02) — all phases complete; verification green; ready to commit
+- Phase 1 (done): assign-card quick action on member profile (`members.qaAssignCard`, `BadgePlus`, gated `cards.assign`, wired to existing `cardModalOpen`).
+- Phase 2 (done): `/staff` page merging Users + Permissions as tabs. New `src/pages/staff-page.tsx` + extracted `src/components/staff/users-tab.tsx`, `src/components/staff/permissions-tab.tsx`; `users-page.tsx`/`permissions-page.tsx` re-export (legacy routes preserved).
+- Phase 3 (done): `/health` → Settings backups tab, `/scanner` → Settings diagnostics tab. Extracted `src/components/settings/health-tab.tsx` + `scanner-tab.tsx`; `settings-page.tsx` is now a 3-tab shell. Added i18n `settings.backupsTab` + `settings.scannerDiagTab`.
+- Phase 4 (done): sidebar grouped via `group` field on `NAV_ROUTES` + `NAV_GROUP_ORDER`; renders `nav.group.*` headers, shows only non-empty groups. Canonical sidebar set now excludes `/users`,`/permissions`,`/scanner`,`/health` (their content lives under `/staff` + `/settings`; legacy routes still resolvable via `routes/index.tsx`). Dropped dangling `/hr` sidebar icon + `nav.hr` key; added icons for `/store`(ShoppingBag), `/classes`(ListChecks), `/crm`(MessageSquare).
+- Verification: `npm run typecheck` clean, `npm test` 424/424 (33 files), `npm run build` OK (pre-existing seed.ts CJS `import.meta` warning non-fatal), `npx vitest run tests/i18n-coverage.test.ts` 3/3.
+- Follow-up (optional): remove legacy `/users`,`/permissions`,`/health`,`/scanner` routes from `routes/index.tsx` once confirmed unused by operators.
+
+## TASK-020: Subscriptions page blank-screen fix (freeze modal crash)
+- Status: done (2026-09-02) — committed + pushed (`04bdf28`)
+- Root cause: `FreezeSubscriptionModal` read its `subscription` prop inside initial `useState` while the parent always mounted it with `subscription={null}` → `TypeError: Cannot read properties of null (reading 'endDate')` blanked the whole /subscriptions route.
+- Fix: nullable `subscription` prop, `if (!open || !sub) return null;` before any hooks, renamed `subscription`→`sub`, dropped `as Subscription` casts. Files: `src/components/subscriptions/freeze-subscription-modal.tsx`, `src/pages/subscriptions-page.tsx`, `src/pages/member-profile/tabs/membership-tab.tsx`.
+- Also added `ErrorBoundary` (`src/components/ui/error-boundary.tsx`) in `src/main.tsx` so a single crash can't blank a whole route. i18n: `errors.unexpectedTitle/unexpectedShort/unexpectedDesc`, `common.retry`, `subs.emptyDesc`.
+- Verification: `npm test` 424/424, typecheck clean.
+
 ## TASK-017: Configurable Loyalty/Rewards system
 - Status: done (2026-08-31) — implementation + unit tests + full verification green; committed + pushed
 - Objective: reward member activity (check-in, renewal, referral, paid store purchase) with points redeemable for configurable rewards (discount credit, free days, PT sessions, product, custom); auditable append-only points ledger; admin page + member-profile tab.

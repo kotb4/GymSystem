@@ -1,11 +1,9 @@
 ﻿import { useState } from "react";
 import { NavLink, useLocation } from "react-router-dom";
 import {
-  Activity,
   Banknote,
   BarChart3,
   CalendarCheck,
-  CalendarClock,
   ChevronsLeft,
   ChevronsRight,
   Coins,
@@ -15,21 +13,22 @@ import {
   Fingerprint,
   Gift,
   LayoutDashboard,
+  ListChecks,
+  MessageSquare,
   Package as PackageIcon,
   ReceiptText,
   ScanLine,
-  ScanSearch,
   ScrollText,
   Settings,
-  ShieldCheck,
-  UserCog,
+  ShoppingBag,
   Users,
+  UsersRound,
   Wallet,
   type LucideIcon,
 } from "lucide-react";
 import { useAuth } from "@/contexts/auth-context";
 import { useT } from "@/i18n";
-import { NAV_ROUTES } from "@/routes/nav-routes";
+import { NAV_GROUP_ORDER, NAV_ROUTES } from "@/routes/nav-routes";
 
 import { cn } from "@/utils/cn";
 import { Tooltip } from "@/components/ui/tooltip";
@@ -39,25 +38,24 @@ const ICONS: Record<string, LucideIcon> = {
   "/members": Users,
   "/checkin": ScanLine,
   "/reception": ConciergeBell,
+  "/cash": Wallet,
+  "/treasury": Coins,
   "/subscriptions": CalendarCheck,
   "/packages": PackageIcon,
   "/payments": Banknote,
   "/expenses": ReceiptText,
-  "/cash": Wallet,
-  "/treasury": Coins,
   "/reports": BarChart3,
+  "/store": ShoppingBag,
   "/trainers": Dumbbell,
-  "/cards": CreditCard,
-  "/scanner": ScanSearch,
-  "/health": Activity,
-  "/users": UserCog,
-  "/permissions": ShieldCheck,
-  "/loyalty": Gift,
-  "/audit": ScrollText,
-  "/settings": Settings,
+  "/classes": ListChecks,
   "/employees": Users,
   "/employee-checkin": Fingerprint,
-  "/hr": CalendarClock,
+  "/staff": UsersRound,
+  "/crm": MessageSquare,
+  "/cards": CreditCard,
+  "/loyalty": Gift,
+  "/settings": Settings,
+  "/audit": ScrollText,
 };
 
 export function Sidebar() {
@@ -100,47 +98,67 @@ export function Sidebar() {
       </div>
 
       <nav className="flex-1 overflow-y-auto p-3" aria-label="main">
-        <ul className="space-y-1">
-          {NAV_ROUTES.filter((route) => {
-            if (route.permissions) return route.permissions.some((p) => hasPermission(p));
-            return route.permission ? hasPermission(route.permission) : true;
-          }).map((route) => {
-            const Icon = ICONS[route.path] ?? LayoutDashboard;
-            const active =
-              route.path === "/"
-                ? location.pathname === "/"
-                : location.pathname.startsWith(route.path);
-            const label = t(route.key);
-            const link = (
-              <NavLink
-                to={route.path}
-                className={cn(
-                  "relative flex h-11 items-center gap-3 rounded-xl px-3 text-sm font-semibold outline-none transition-colors duration-150 focus-visible:ring-2 focus-visible:ring-neon/50",
-                  active
-                    ? "bg-neon/10 text-neon shadow-glow-sm"
-                    : "text-subtle hover:bg-white/[0.04] hover:text-ink",
-                  collapsed && "justify-center px-0"
-                )}
-              >
-                {active && (
-                  <span
-                    aria-hidden
-                    className="absolute start-0 top-1/2 h-6 w-1 -translate-y-1/2 rounded-full bg-neon shadow-glow-sm"
-                  />
-                )}
-                <Icon aria-hidden className="size-[18px] shrink-0" />
-                {!collapsed && <span className="truncate">{label}</span>}
-              </NavLink>
+        <ul className="space-y-3">
+          {NAV_GROUP_ORDER.map((group) => {
+            const visible = NAV_ROUTES.filter(
+              (route) =>
+                route.group === group &&
+                (route.permissions
+                  ? route.permissions.some((p) => hasPermission(p))
+                  : route.permission
+                    ? hasPermission(route.permission)
+                    : true),
             );
+            if (visible.length === 0) return null;
             return (
-              <li key={route.path}>
-                {collapsed ? (
-                  <Tooltip content={label} side="start">
-                    {link}
-                  </Tooltip>
-                ) : (
-                  link
+              <li key={group}>
+                {!collapsed && (
+                  <p className="mb-1 flex items-center gap-2 px-3 text-[11px] font-bold uppercase tracking-wider text-faint">
+                    <span>{t(`nav.group.${group}`)}</span>
+                  </p>
                 )}
+                <ul className="space-y-1">
+                  {visible.map((route) => {
+                    const Icon = ICONS[route.path] ?? LayoutDashboard;
+                    const active =
+                      route.path === "/"
+                        ? location.pathname === "/"
+                        : location.pathname.startsWith(route.path);
+                    const label = t(route.key);
+                    const link = (
+                      <NavLink
+                        to={route.path}
+                        className={cn(
+                          "relative flex h-11 items-center gap-3 rounded-xl px-3 text-sm font-semibold outline-none transition-colors duration-150 focus-visible:ring-2 focus-visible:ring-neon/50",
+                          active
+                            ? "bg-neon/10 text-neon shadow-glow-sm"
+                            : "text-subtle hover:bg-white/[0.04] hover:text-ink",
+                          collapsed && "justify-center px-0"
+                        )}
+                      >
+                        {active && (
+                          <span
+                            aria-hidden
+                            className="absolute start-0 top-1/2 h-6 w-1 -translate-y-1/2 rounded-full bg-neon shadow-glow-sm"
+                          />
+                        )}
+                        <Icon aria-hidden className="size-[18px] shrink-0" />
+                        {!collapsed && <span className="truncate">{label}</span>}
+                      </NavLink>
+                    );
+                    return (
+                      <li key={route.path}>
+                        {collapsed ? (
+                          <Tooltip content={label} side="start">
+                            {link}
+                          </Tooltip>
+                        ) : (
+                          link
+                        )}
+                      </li>
+                    );
+                  })}
+                </ul>
               </li>
             );
           })}

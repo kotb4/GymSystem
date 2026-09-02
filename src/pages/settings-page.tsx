@@ -10,6 +10,9 @@ import { Card, CardHeader } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { PasswordInput } from "@/components/ui/password-input";
+import { Tabs } from "@/components/ui/tabs";
+import { HealthTab } from "@/components/settings/health-tab";
+import { ScannerTab } from "@/components/settings/scanner-tab";
 import { cn } from "@/utils/cn";
 
 const DAY_KEYS = [
@@ -22,14 +25,34 @@ const DAY_KEYS = [
   "settings.day6",
 ];
 
+type SettingsTab = "general" | "backups" | "scanner";
+
 export function SettingsPage() {
+  const t = useT();
+  const [tab, setTab] = useState<SettingsTab>("general");
+
   return (
-    <div className="grid gap-4 xl:grid-cols-2">
-      <GeneralSettingsCard />
-      <ScannerSettingsCard />
-      <NotificationSettingsCard />
-      <BackupSettingsCard />
-      <ChangePasswordCard />
+    <div className="space-y-4">
+      <Tabs
+        items={[
+          { value: "general", label: t("settings.generalTab") },
+          { value: "backups", label: t("settings.backupsTab") },
+          { value: "scanner", label: t("settings.scannerDiagTab") },
+        ]}
+        value={tab}
+        onChange={(v) => setTab(v as SettingsTab)}
+      />
+      {tab === "general" && (
+        <div className="grid gap-4 xl:grid-cols-2">
+          <GeneralSettingsCard />
+          <ScannerSettingsCard />
+          <NotificationSettingsCard />
+          <ChangePasswordCard />
+          <BackupSettingsCard />
+        </div>
+      )}
+      {tab === "backups" && <HealthTab />}
+      {tab === "scanner" && <ScannerTab />}
     </div>
   );
 }
