@@ -22,7 +22,7 @@ import { EmptyState } from "@/components/ui/empty-state";
 import { Pagination } from "@/components/ui/pagination";
 import { ConfirmDialog } from "@/components/ui/confirm-dialog";
 
-export function CashSessionsPage() {
+export function CashSessionsPanel() {
   const t = useT();
   const { actor, hasPermission } = useAuth();
   const { toast } = useToast();
@@ -230,12 +230,6 @@ export function CashSessionsPage() {
 
   return (
     <div className="space-y-5">
-      <section className="flex flex-wrap items-center justify-between gap-3">
-        <div>
-          <h2 className="text-2xl font-extrabold tracking-tight">{t("cashPage.title")}</h2>
-        </div>
-      </section>
-
       {openTotals ? (
         <>
           <section className="grid gap-4 sm:grid-cols-2 xl:grid-cols-4">
@@ -388,6 +382,18 @@ export function CashSessionsPage() {
         confirmLabel={t("common.confirm")}
         onConfirm={() => void onDeleteOpenSession()}
       />
+    </div>
+  );
+}
+
+export function CashSessionsPage() {
+  const t = useT();
+  return (
+    <div className="space-y-5">
+      <section>
+        <h2 className="text-2xl font-extrabold tracking-tight">{t("cashPage.title")}</h2>
+      </section>
+      <CashSessionsPanel />
     </div>
   );
 }

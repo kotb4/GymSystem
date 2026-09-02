@@ -23,8 +23,10 @@ import { Pagination } from "@/components/ui/pagination";
 import { ConfirmDialog } from "@/components/ui/confirm-dialog";
 import { Badge } from "@/components/ui/badge";
 import { Coins, Wallet, LockKeyhole, ArrowUpCircle } from "lucide-react";
+import { Tabs } from "@/components/ui/tabs";
+import { CashSessionsPanel } from "@/pages/cash-page";
 
-export function TreasuryPage() {
+function DailyClosingPanel() {
   const t = useT();
   const { actor, hasPermission } = useAuth();
   const { toast } = useToast();
@@ -203,40 +205,31 @@ export function TreasuryPage() {
 
   return (
     <div className="space-y-5">
-      {/* Header with date picker and actions */}
-      <div className="flex flex-wrap items-center justify-between gap-3">
-        <div>
-          <h2 className="text-2xl font-extrabold tracking-tight">{t("treasury.title")}</h2>
-        </div>
-        <div className="flex items-center gap-3">
-          <div className="flex items-center gap-2">
-            <label className="text-[12px] font-medium text-subtle">{t("treasury.dateLabel")}</label>
-            <Input
-              type="date"
-              value={dateKey}
-              onChange={(e) => setDateKey(e.target.value)}
-              className="w-44"
-            />
-          </div>
-          <Button
-            onClick={() => {
-              setDateKey(
-                new Date().toISOString().split("T")[0]
-              ); // Reset to today
-            }}
-            variant="ghost"
-            size="sm"
-          >
-            <ArrowUpCircle className="size-4" />
-          </Button>
-        </div>
+      {/* Date picker */}
+      <div className="flex items-center gap-2">
+        <label className="text-[12px] font-medium text-subtle">{t("treasury.dateLabel")}</label>
+        <Input
+          type="date"
+          value={dateKey}
+          onChange={(e) => setDateKey(e.target.value)}
+          className="w-44"
+        />
+        <Button
+          onClick={() => {
+            setDateKey(new Date().toISOString().split("T")[0]);
+          }}
+          variant="ghost"
+          size="sm"
+        >
+          <ArrowUpCircle className="size-4" />
+        </Button>
       </div>
 
       {/* Today's treasury KPIs */}
       <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
         {/* Gym Treasury Card */}
         <Card>
-          <CardHeader title={t("treasury.sectionOpen")} description={t("treasury.boxGym")} />
+          <CardHeader title={t("treasury.boxGym")} description={t("treasury.closingCardHint")} />
           {gymSnapshot ? (
             <>
               {gymSnapshot.status === "missing" ? (
@@ -275,16 +268,6 @@ export function TreasuryPage() {
                             {gymSnapshot.differenceMinor == null ? "—" : formatMinor(gymSnapshot.differenceMinor)}
                           </p>
                         </div>
-                        {gymSnapshot.differenceMinor !== null && gymSnapshot.differenceMinor !== 0 && (
-                          <div className="pt-2">
-                            <Input
-                              label={t("treasury.reasonLabel")}
-                              placeholder={t("treasury.reasonPlaceholder")}
-                              value=""
-onChange={() => {}}
-                              />
-                            </div>
-                         )}
                         <div className="pt-4 flex items-center gap-2">
                           <Button
                             onClick={() => {
@@ -320,7 +303,7 @@ onChange={() => {}}
 
         {/* Store Treasury Card */}
         <Card>
-          <CardHeader title={t("treasury.sectionOpen")} description={t("treasury.boxStore")} />
+          <CardHeader title={t("treasury.boxStore")} description={t("treasury.closingCardHint")} />
           {storeSnapshot ? (
             <>
               {storeSnapshot.status === "missing" ? (
@@ -359,16 +342,6 @@ onChange={() => {}}
                             {storeSnapshot.differenceMinor == null ? "—" : formatMinor(storeSnapshot.differenceMinor)}
                           </p>
                         </div>
-                        {storeSnapshot.differenceMinor !== null && storeSnapshot.differenceMinor !== 0 && (
-                          <div className="pt-2">
-                            <Input
-                              label={t("treasury.reasonLabel")}
-                              placeholder={t("treasury.reasonPlaceholder")}
-                              value=""
-                              onChange={() => {}}
-/>
-                           </div>
-                          )}
                         <div className="pt-4 flex items-center gap-2">
                           <Button
                             onClick={() => {
@@ -574,12 +547,6 @@ onChange={() => {}}
                 <div className="grid gap-2 sm:grid-cols-2">
                   <div>
                     <p className="text-[12px] text-faint">{t("treasury.expectedCash")}</p>
-                    <p className="text-sm font-semibold tabnum">
-                      {formatMinor(detail.expected.cash)}
-                    </p>
-                  </div>
-                  <div>
-                    <p className="text-[12px] text-faint">{t("treasury.countedCash")} (نقدي)</p>
                     <p className="text-sm font-semibold tabnum">
                       {formatMinor(detail.expected.cash)}
                     </p>
@@ -1063,6 +1030,52 @@ onChange={() => {}}
           }}
         />
       )}
+    </div>
+  );
+}
+
+type TreasuryTab = "closing" | "sessions";
+
+export function TreasuryPage() {
+  const t = useT();
+  const { hasPermission } = useAuth();
+
+  const canClose = hasPermission("cash.daily_close");
+  const canSessions = hasPermission("payments.view");
+
+  const [tab, setTab] = useState<TreasuryTab>(canClose ? "closing" : "sessions");
+
+  useEffect(() => {
+    if (tab === "closing" && !canClose && canSessions) setTab("sessions");
+    if (tab === "sessions" && !canSessions && canClose) setTab("closing");
+  }, [tab, canClose, canSessions]);
+
+  if (!canClose && !canSessions) {
+    return (
+      <div className="space-y-5">
+        <EmptyState icon={<Coins />} title={t("errors.forbidden")} />
+      </div>
+    );
+  }
+
+  return (
+    <div className="space-y-5">
+      <section>
+        <h2 className="text-2xl font-extrabold tracking-tight">{t("treasury.title")}</h2>
+        <p className="text-[13px] text-subtle">{t("treasury.subtitle")}</p>
+      </section>
+
+      <Tabs
+        items={[
+          { value: "closing", label: t("treasury.tabClosing") },
+          { value: "sessions", label: t("treasury.tabSessions") },
+        ]}
+        value={tab}
+        onChange={(v) => setTab(v as TreasuryTab)}
+      />
+
+      {tab === "closing" && canClose && <DailyClosingPanel />}
+      {tab === "sessions" && canSessions && <CashSessionsPanel />}
     </div>
   );
 }

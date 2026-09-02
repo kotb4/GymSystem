@@ -277,7 +277,7 @@ export function AppRoutes() {
         <Route
           path="treasury"
           element={
-            <RequirePermission permission="cash.daily_close">
+            <RequirePermission permissions={["cash.daily_close", "payments.view"]}>
               <TreasuryPage />
             </RequirePermission>
           }
