@@ -7,7 +7,6 @@ import {
   ChevronsLeft,
   ChevronsRight,
   Coins,
-  ConciergeBell,
   CreditCard,
   Dumbbell,
   Fingerprint,
@@ -36,8 +35,7 @@ import { Tooltip } from "@/components/ui/tooltip";
 const ICONS: Record<string, LucideIcon> = {
   "/": LayoutDashboard,
   "/members": Users,
-  "/checkin": ScanLine,
-  "/reception": ConciergeBell,
+  "/attendance": ScanLine,
   "/cash": Wallet,
   "/treasury": Coins,
   "/subscriptions": CalendarCheck,

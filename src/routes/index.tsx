@@ -11,6 +11,7 @@ import { SetupPage } from "@/pages/setup-page";
 import { DashboardPage } from "@/pages/dashboard-page";
 import { CheckInPage } from "@/pages/checkin-page";
 import { ReceptionPage } from "@/pages/reception-page";
+import { AttendancePage } from "@/pages/attendance-page";
 import { MembersPage } from "@/pages/members-page";
 import { MemberProfilePage } from "@/pages/member-profile-page";
 import { SubscriptionsPage } from "@/pages/subscriptions-page";
@@ -104,6 +105,14 @@ export function AppRoutes() {
           element={
             <RequirePermission permission="reception.view">
               <ReceptionPage />
+            </RequirePermission>
+          }
+        />
+        <Route
+          path="attendance"
+          element={
+            <RequirePermission permissions={["checkin.create", "reception.view"]}>
+              <AttendancePage />
             </RequirePermission>
           }
         />

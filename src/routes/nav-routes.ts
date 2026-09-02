@@ -36,8 +36,7 @@ export const NAV_GROUP_ORDER: NavGroup[] = [
 export const NAV_ROUTES: NavRoute[] = [
   { path: "/", key: "nav.dashboard", group: "overview", permission: "members.view" },
   { path: "/members", key: "nav.members", group: "daily", permission: "members.view" },
-  { path: "/checkin", key: "nav.checkin", group: "daily", permission: "checkin.create" },
-  { path: "/reception", key: "nav.reception", group: "daily", permission: "reception.view" },
+  { path: "/attendance", key: "nav.attendance", group: "daily", permissions: ["checkin.create", "reception.view"] },
   { path: "/cash", key: "nav.cash", group: "daily", permission: "payments.view" },
   { path: "/treasury", key: "nav.treasury", group: "daily", permission: "cash.daily_close" },
   { path: "/subscriptions", key: "nav.subscriptions", group: "subscriptions", permission: "subscriptions.view" },
