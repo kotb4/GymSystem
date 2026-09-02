@@ -26,6 +26,7 @@ import { ConfirmDialog } from "@/components/ui/confirm-dialog";
 import { SubscriptionFormModal } from "@/components/subscriptions/subscription-form-modal";
 import { PlanFormModal } from "@/components/subscriptions/plan-form-modal";
 import { FreezeSubscriptionModal } from "@/components/subscriptions/freeze-subscription-modal";
+import { PackagesPage } from "@/pages/packages-page";
 
 const EFFECTIVE_OPTIONS = ["all", "active", "upcoming", "expired", "suspended", "frozen", "cancelled"] as const;
 
@@ -439,6 +440,9 @@ export function SubscriptionsPage() {
       <Tabs
         items={[
           { value: "subs", label: t("subs.tabSubs") },
+          ...(hasPermission("packages.view")
+            ? [{ value: "packages", label: t("packages.tabPackages") }]
+            : []),
           { value: "plans", label: t("plans.tabPlans") },
         ]}
         value={tab}
@@ -505,6 +509,8 @@ export function SubscriptionsPage() {
             </>
           )}
         </Card>
+      ) : tab === "packages" ? (
+        <PackagesPage />
       ) : (
         <PlansGrid
           plans={plans}

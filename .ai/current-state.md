@@ -1,12 +1,12 @@
 # Current Development State
 
 - **Last updated:** 2026-09-02
-- **Current objective:** TASK-021 (page consolidation) — attendance now a single reception page at `/attendance`; fast check-in tab/page removed; previous phases (staff, settings tabs, grouped sidebar) done & pushed
+- **Current objective:** TASK-021 (page consolidation) — `/subscriptions` now consolidates الاشتراكات + الباقات + الخطط in one tabbed screen; attendance consolidated to a single reception page. Earlier phases done & pushed.
 - **Last agent/tool:** opencode (this session)
 
 ## Active tasks
 
-- **TASK-021** — extended: merged the two attendance screens into a single `/attendance` page, then removed the "fast (barcode/card)" tab + `/checkin` page entirely (reception/search is the only attendance screen now). Prior phases (P2 /staff, P3 settings tabs, P4 grouped sidebar) pushed (`d05d94a`); the attendance merge push is `1c88c86`. This session's fast-tab removal is not yet committed.
+- **TASK-021** — extended: merged subscription-related screens. Fast attendance tab removed + pushed (`cc3bdb8`). This session: `/subscriptions` page now has 3 tabs (الاشتراكات / الباقات / الخطط); `/packages` removed from sidebar (legacy `/packages` route kept for bookmarks). Not yet committed.
 
 ## What was most recently completed (handoff context)
 
@@ -26,14 +26,17 @@ Consolidate small admin/pages into shared shells and reorder the sidebar.
 
 **Phase 5 (done, pushed `1c88c86`): merged attendance screens.** Merged the two overlapping attendance pages (fast barcode/card check-in + reception search) into a single `/attendance` page with tabs. Extracted `FastCheckInTab` + `ReceptionTab` into `src/components/attendance/`; `checkin-page.tsx`/`reception-page.tsx` re-export them. Sidebar uses single `/attendance` entry. Added i18n `nav.attendance`, `nav.attendanceFast`, `nav.attendanceSearch`.
 
-**Phase 6 (done, this session, NOT yet committed): removed fast attendance tab.** Per user request, deleted the "fast (barcode/card)" tab + `/checkin` page entirely — the reception/search screen is now the only attendance UI. Deleted `fast-checkin-tab.tsx`, `checkin-page.tsx`, `attendance-page.tsx`. `/attendance` route now renders `ReceptionPage` gated by `reception.view`; removed `/checkin` route + imports; `NAV_ROUTES` `/attendance` gated by `reception.view`. Removed dead i18n keys `nav.attendanceFast`/`nav.attendanceSearch`. Backend `checkin.*` permissions + `recordCheckIn` engine are KEPT because `reception.checkIn` delegates to them (manager + reception roles already carry `checkin.create` + `checkin.view_history`).
+**Phase 6 (done, pushed `cc3bdb8`): removed fast attendance tab.** Per user request, deleted the "fast (barcode/card)" tab + `/checkin` page entirely — the reception/search screen is now the only attendance UI. Deleted `fast-checkin-tab.tsx`, `checkin-page.tsx`, `attendance-page.tsx`. `/attendance` route now renders `ReceptionPage` gated by `reception.view`; removed `/checkin` route + imports; `NAV_ROUTES` `/attendance` gated by `reception.view`. Removed dead i18n keys `nav.attendanceFast`/`nav.attendanceSearch`. Backend `checkin.*` permissions + `recordCheckIn` engine are KEPT because `reception.checkIn` delegates to them (manager + reception roles already carry `checkin.create` + `checkin.view_history`).
+
+**Phase 7 (done, this session, NOT yet committed): merged subscriptions + packages + plans into one screen.** Per user request, `/subscriptions` (الاشتراكات) now consolidates الاشتراكات + الباقات + الخطط as one tabbed screen. `SubscriptionsPage` gained a 3rd tab الباقات (renders `<PackagesPage />`, which internally has الباقات + مقارنة tabs) gated by `packages.view`; kept existing الاشتراكات (`subs`) + الخطط (`plans`) tabs. Removed `/packages` from `NAV_ROUTES` sidebar (legacy `/packages` route in `routes/index.tsx` kept for bookmark compat, still renders `PackagesPage`). No backend/schema/permission changes. Note: subscriptions reference `membership_plans` (خطط), while الباقات is a separate richer catalog (time/visit/hybrid + compare) — two distinct features now under one screen.
 
 ## Known issues / follow-ups
 
 - Browser camera capture still not live-tested (needs real webcam).
-- Legacy `/users`, `/permissions`, `/health`, `/scanner`, `/reception` routes still registered in `routes/index.tsx` (direct-bookmark compat) but no longer listed in the sidebar; could be removed once confirmed unused. (`/checkin` route removed this session.)
+- Legacy `/users`, `/permissions`, `/health`, `/scanner`, `/reception`, `/packages` routes still registered in `routes/index.tsx` (direct-bookmark compat) but no longer listed in the sidebar; could be removed once confirmed unused. (`/checkin` route removed this session.)
 - No i18n-coverage regression: shared `checkin.*` keys retained (used by dashboard `checkin.recent`/`checkin.noScans`, member-profile `checkin.deniedTitles`/`checkin.successTitle`, employee-checkin `checkin.submit`).
 - Some `checkin.*` fast-tab-only keys (e.g. `scanTitle`, `scanHint`, `quickTitle`, `fieldBarcode`) are now unused but retained (harmless; coverage test checks only that used keys exist).
+- `nav.packages` i18n key is now unused (sidebar entry removed) but retained harmlessly; `/packages` legacy route still used by some flows.
 
 ## Blockers
 
@@ -41,17 +44,18 @@ Consolidate small admin/pages into shared shells and reorder the sidebar.
 
 ## Files changed (TASK-021, this session)
 
-**Created (phase 6):** none — this phase is a removal.
+**Modified (phase 7):**
+- `src/pages/subscriptions-page.tsx` (+`packages` tab rendering `<PackagesPage />`, gated by `packages.view`; tabs now `subs`/`packages`/`plans`; added `PackagesPage` import)
+- `src/routes/nav-routes.ts` (removed `/packages` sidebar entry)
+
+**Modified (phase 6):**
+- `src/routes/nav-routes.ts` (`/attendance` permission → `reception.view`)
+- `src/i18n/ar.ts` (removed dead `nav.attendanceFast`/`nav.attendanceSearch`)
 
 **Deleted (phase 6):**
 - `src/components/attendance/fast-checkin-tab.tsx`
 - `src/pages/checkin-page.tsx`
 - `src/pages/attendance-page.tsx`
-
-**Modified (phase 6):**
-- `src/routes/index.tsx` (removed `/checkin` route + `CheckInPage`/`AttendancePage` imports; `/attendance` now renders `ReceptionPage` gated by `reception.view`)
-- `src/routes/nav-routes.ts` (`/attendance` permission → `reception.view`)
-- `src/i18n/ar.ts` (removed dead `nav.attendanceFast`/`nav.attendanceSearch`)
 
 **Created (phases 2-5):**
 - `src/components/staff/users-tab.tsx`, `src/components/staff/permissions-tab.tsx`, `src/pages/staff-page.tsx`

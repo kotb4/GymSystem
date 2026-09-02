@@ -40,7 +40,6 @@ export const NAV_ROUTES: NavRoute[] = [
   { path: "/cash", key: "nav.cash", group: "daily", permission: "payments.view" },
   { path: "/treasury", key: "nav.treasury", group: "daily", permission: "cash.daily_close" },
   { path: "/subscriptions", key: "nav.subscriptions", group: "subscriptions", permission: "subscriptions.view" },
-  { path: "/packages", key: "nav.packages", group: "subscriptions", permission: "packages.view" },
   { path: "/payments", key: "nav.payments", group: "finance", permission: "payments.view" },
   { path: "/expenses", key: "nav.expenses", group: "finance", permission: "expenses.view" },
   { path: "/reports", key: "nav.reports", group: "finance", permission: "reports.view" },
