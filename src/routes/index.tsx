@@ -9,9 +9,7 @@ import { useT } from "@/i18n";
 import { LoginPage } from "@/pages/login-page";
 import { SetupPage } from "@/pages/setup-page";
 import { DashboardPage } from "@/pages/dashboard-page";
-import { CheckInPage } from "@/pages/checkin-page";
 import { ReceptionPage } from "@/pages/reception-page";
-import { AttendancePage } from "@/pages/attendance-page";
 import { MembersPage } from "@/pages/members-page";
 import { MemberProfilePage } from "@/pages/member-profile-page";
 import { SubscriptionsPage } from "@/pages/subscriptions-page";
@@ -93,14 +91,6 @@ export function AppRoutes() {
         <Route path="members" element={<MembersPage />} />
         <Route path="members/:memberId" element={<MemberProfilePage />} />
         <Route
-          path="checkin"
-          element={
-            <RequirePermission permission="checkin.create">
-              <CheckInPage />
-            </RequirePermission>
-          }
-        />
-        <Route
           path="reception"
           element={
             <RequirePermission permission="reception.view">
@@ -111,8 +101,8 @@ export function AppRoutes() {
         <Route
           path="attendance"
           element={
-            <RequirePermission permissions={["checkin.create", "reception.view"]}>
-              <AttendancePage />
+            <RequirePermission permission="reception.view">
+              <ReceptionPage />
             </RequirePermission>
           }
         />

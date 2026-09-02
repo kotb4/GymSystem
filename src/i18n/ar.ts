@@ -61,8 +61,6 @@
     checkin: "تسجيل الحضور",
     reception: "شاشة الاستقبال",
     attendance: "تسجيل الحضور والاستقبال",
-    attendanceFast: "سريع (باركود/كارت)",
-    attendanceSearch: "بحث واستقبال",
     subscriptions: "الاشتراكات",
     packages: "الباقات",
     cards: "الكروت",
