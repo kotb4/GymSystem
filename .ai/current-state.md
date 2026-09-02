@@ -1,12 +1,12 @@
 # Current Development State
 
 - **Last updated:** 2026-09-02
-- **Current objective:** TASK-021 (page consolidation) — now ALSO merged the two confusing cash/treasury pages (خزينة النادي + الإغلاق اليومي) into a single tabbed `/treasury` page, with clarified labels and broken-UI fixes.
+- **Current objective:** TASK-021 (page consolidation) — merged the two confusing cash/treasury pages (خزينة النادي + الإغلاق اليومي) into a **single one-page `/treasury`** (no tabs), where the **cash session (الوردية) is the primary daily tool** and the daily closing (الإغلاق اليومي) sits below it.
 - **Last agent/tool:** opencode (this session)
 
 ## Active tasks
 
-- **TASK-021** — extended: resolved الاشتراكات / الباقات duplicate. Attendance fast-tab removal pushed (`cc3bdb8`); subscriptions+packages+plans merge/tab-reorder pushed (`29de98e`); packages-primary interface (@). This session: merged `/cash` + `/treasury` into one tabbed `/treasury` page ("الخزينة النقدية" = الإغلاق اليومي tab + ورديات الخزينة tab), clarified labels, removed dead reason inputs, fixed misleading counted/expected. All pushed.
+- **TASK-021** — extended: resolved الاشتراكات / الباقات duplicate. Attendance fast-tab removal pushed (`cc3bdb8`); subscriptions+packages+plans merge/tab-reorder pushed (`29de98e`); packages-primary interface pushed (`9f53d30`). This session phase 9 merged `/cash` + `/treasury` into a tabbed `/treasury` (pushed `7ac7420`), then phase 10 (current) removed the tabs → single `/treasury` page with the cash session as the primary daily tool + daily closing below. pushed.
 
 ## What was most recently completed (handoff context)
 
@@ -38,6 +38,13 @@ Consolidate small admin/pages into shared shells and reorder the sidebar.
 Nav: removed `/cash` sidebar entry (was `payments.view`); single `/treasury` entry now gated by `permissions: ["cash.daily_close", "payments.view"]` (any-of) so nobody loses access — a `payments.view`-only user sees only the ورديات tab. `nav.cash` i18n key removed; renamed `nav.treasury` → "الخزينة النقدية".
 Broken-UI fixes in the closing panel: removed two dead `value="" onChange={()=>{}}` reason inputs; removed the misleading duplicate "counted cash (نقدي)" box in the detail financials (it wrongly showed `expected.cash` as counted — real counted is `countedCashMinor`, already shown in the closed section); simplified "إنشاء / تحديث السجل" → "إنشاء سجل الإغلاق اليومي" with clearer hint; box cards now titled صندوق النادي/المتجر with a shared `closingCardHint`. Added i18n `treasury.tabClosing`/`tabSessions`/`tabClosingHint`/`tabSessionsHint`/`closingCardHint`. Backend/schema untouched.
 
+**Phase 10 (done, this session): single-page `/treasury` — no tabs, the cash session (الوردية) is the PRIMARY daily tool, daily closing merged below.** User decisions: (1) "الوردية (cash session) هي الأساسي" — it's what they operate every shift; (2) "ادمج الورديات جوه الإغلاق اليومي" — merge, don't keep separate; (3) "صفحة واحدة بدون تبويبات". Rewrote `TreasuryPage` in `src/pages/treasury/index.tsx`: removed the `Tabs` container entirely. New layout reads top-to-bottom:
+- Page header (الخزينة النقدية).
+- **وردية الخزينة** (primary) — renders `<CashSessionsPanel />` (open-session KPIs + open/close form + سجل الورديات), gated by `payments.view`. Each section gets a heading row with a neon icon + hint (`sessionSectionHint`).
+- **الإغلاق اليومي** — renders `<DailyClosingPanel />` (expected-by-method per box النادي/المتجر + خزينة اليوم KPI + سجل الإقفال + detail), gated by `cash.daily_close`.
+- Forbidden (EmptyState) only if the actor has neither permission. A `payments.view`-only user sees just the وردية section; a `cash.daily_close`-only user sees just الإغلاق اليومي.
+Removed the now-unused tab keys from i18n: `tabClosing`/`tabSessions`/`tabClosingHint`/`tabSessionsHint`; added `treasury.dailyClosingTitle`/`dailyClosingSectionHint`/`sessionSectionHint`; updated `treasury.subtitle`. Removed the `Tabs` import + `TreasuryTab` type from `treasury/index.tsx`. Backend/schema untouched. Verification: `npm run typecheck` clean, i18n coverage 3/3, `npm test` 424/424 (33 files), `npm run build` OK (pre-existing seed.ts CJS `import.meta` warning, non-fatal).
+
 ## Known issues / follow-ups
 
 - Browser camera capture still not live-tested (needs real webcam).
@@ -54,11 +61,16 @@ Broken-UI fixes in the closing panel: removed two dead `value="" onChange={()=>{
 ## Files changed (TASK-021, this session)
 
 **Modified (phase 9 — cash/treasury merge):**
-- `src/pages/treasury/index.tsx` (`DailyClosingPanel` extracted from `TreasuryPage`; new `TreasuryPage` tab container renders closing + sessions tabs; removed dead `value=""` reason inputs ×2; removed misleading duplicate counted-cash box in detail financials; box cards retitled; cleaner date-row header)
+- `src/pages/treasury/index.tsx` (`DailyClosingPanel` extracted; new tabbed `TreasuryPage` -> later replaced by single-page in phase 10; removed dead `value=""` reason inputs ×2; removed misleading duplicate counted-cash box in detail financials; box cards retitled; cleaner date-row header)
 - `src/pages/cash-page.tsx` (`CashSessionsPage` → `CashSessionsPanel` embedding component w/o title; new `CashSessionsPage` wrapper keeps legacy `/cash` page)
 - `src/routes/nav-routes.ts` (removed `/cash` sidebar entry; `/treasury` → `permissions: ["cash.daily_close","payments.view"]`)
 - `src/routes/index.tsx` (`/treasury` `RequirePermission` → `permissions` any-of)
 - `src/i18n/ar.ts` (+`treasury.tabClosing/tabSessions/tabClosingHint/tabSessionsHint/closingCardHint`; retitled `treasury.title`/`subtitle`+`nav.treasury`→"الخزينة النقدية"; clearer `snapshotMissingHint`/`createSnapshotBtn`; removed `nav.cash`)
+
+**Modified (phase 10 — single-page `/treasury`, session primary):**
+- `src/pages/treasury/index.tsx` (removed `Tabs` container + `TreasuryTab` type; single-page `TreasuryPage` renders page header → `<CashSessionsPanel/>` under "وردية الخزينة" heading + hint (gated `payments.view`) → `<DailyClosingPanel/>` under "الإغلاق اليومي" heading + hint (gated `cash.daily_close`); EmptyState forbidden only if neither perm; added neon icon rows using `WalletCards`/`Coins`)
+- `src/i18n/ar.ts` (removed `tabClosing/tabSessions/tabClosingHint/tabSessionsHint`; added `treasury.dailyClosingTitle`/`dailyClosingSectionHint`/`sessionSectionHint`; updated `treasury.subtitle`)
+- `.ai/current-state.md`, `.ai/tasks.md` (these docs)
 
 **Modified (phase 8):**
 - `src/pages/subscriptions-page.tsx` (tabs now `subs`/`packages` only; legacy `PlansGrid`/`PlanFormModal` moved to a secondary "إدارة الخطط البسيطة" sub-view toggled by a button with back; added `ArrowLeft` import + `showPlans` state)

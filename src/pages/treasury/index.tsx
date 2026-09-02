@@ -22,8 +22,7 @@ import { EmptyState } from "@/components/ui/empty-state";
 import { Pagination } from "@/components/ui/pagination";
 import { ConfirmDialog } from "@/components/ui/confirm-dialog";
 import { Badge } from "@/components/ui/badge";
-import { Coins, Wallet, LockKeyhole, ArrowUpCircle } from "lucide-react";
-import { Tabs } from "@/components/ui/tabs";
+import { Coins, Wallet, LockKeyhole, ArrowUpCircle, WalletCards } from "lucide-react";
 import { CashSessionsPanel } from "@/pages/cash-page";
 
 function DailyClosingPanel() {
@@ -1034,23 +1033,14 @@ function DailyClosingPanel() {
   );
 }
 
-type TreasuryTab = "closing" | "sessions";
-
 export function TreasuryPage() {
   const t = useT();
   const { hasPermission } = useAuth();
 
-  const canClose = hasPermission("cash.daily_close");
   const canSessions = hasPermission("payments.view");
+  const canClose = hasPermission("cash.daily_close");
 
-  const [tab, setTab] = useState<TreasuryTab>(canClose ? "closing" : "sessions");
-
-  useEffect(() => {
-    if (tab === "closing" && !canClose && canSessions) setTab("sessions");
-    if (tab === "sessions" && !canSessions && canClose) setTab("closing");
-  }, [tab, canClose, canSessions]);
-
-  if (!canClose && !canSessions) {
+  if (!canSessions && !canClose) {
     return (
       <div className="space-y-5">
         <EmptyState icon={<Coins />} title={t("errors.forbidden")} />
@@ -1059,23 +1049,33 @@ export function TreasuryPage() {
   }
 
   return (
-    <div className="space-y-5">
+    <div className="space-y-8">
       <section>
         <h2 className="text-2xl font-extrabold tracking-tight">{t("treasury.title")}</h2>
         <p className="text-[13px] text-subtle">{t("treasury.subtitle")}</p>
       </section>
 
-      <Tabs
-        items={[
-          { value: "closing", label: t("treasury.tabClosing") },
-          { value: "sessions", label: t("treasury.tabSessions") },
-        ]}
-        value={tab}
-        onChange={(v) => setTab(v as TreasuryTab)}
-      />
+      {canSessions && (
+        <section className="space-y-3">
+          <div className="flex items-center gap-2">
+            <WalletCards className="size-5 text-neon" />
+            <h3 className="text-lg font-bold">{t("cashPage.title")}</h3>
+          </div>
+          <p className="text-[12px] text-faint">{t("treasury.sessionSectionHint")}</p>
+          <CashSessionsPanel />
+        </section>
+      )}
 
-      {tab === "closing" && canClose && <DailyClosingPanel />}
-      {tab === "sessions" && canSessions && <CashSessionsPanel />}
+      {canClose && (
+        <section className="space-y-3">
+          <div className="flex items-center gap-2">
+            <Coins className="size-5 text-neon" />
+            <h3 className="text-lg font-bold">{t("treasury.dailyClosingTitle")}</h3>
+          </div>
+          <p className="text-[12px] text-faint">{t("treasury.dailyClosingSectionHint")}</p>
+          <DailyClosingPanel />
+        </section>
+      )}
     </div>
   );
 }
