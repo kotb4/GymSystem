@@ -3,7 +3,7 @@
 > **Reading order for the next agent:** `AGENTS.md` → `.ai/project.md` → `.ai/current-state.md` → `.ai/tasks.md` → `.ai/decisions.md` (when relevant) → inspect the actual source. The repository files are the persistent memory; chat history is not part of the project.
 
 ## TASK-021: Page consolidation & sidebar reorganization
-- Status: done (2026-09-03) — all phases complete; phases 9–10 pushed, phase 11 (daily-closing removal) is implemented + verified and pending the commit/push described in the Next Move.
+- Status: done (2026-09-03) — all phases complete and pushed. Phase 11 (daily-closing removal) pushed in `5b540d0`; E2E smoke fix `a6263b4`; E2E-audit fixes `edc815b`.
 - Phase 1 (done): assign-card quick action on member profile (`members.qaAssignCard`, `BadgePlus`, gated `cards.assign`, wired to existing `cardModalOpen`).
 - Phase 2 (done): `/staff` page merging Users + Permissions as tabs. New `src/pages/staff-page.tsx` + extracted `src/components/staff/users-tab.tsx`, `src/components/staff/permissions-tab.tsx`; `users-page.tsx`/`permissions-page.tsx` re-export (legacy routes preserved).
 - Phase 3 (done): `/health` → Settings backups tab, `/scanner` → Settings diagnostics tab. Extracted `src/components/settings/health-tab.tsx` + `scanner-tab.tsx`; `settings-page.tsx` is now a 3-tab shell. Added i18n `settings.backupsTab` + `settings.scannerDiagTab`.
