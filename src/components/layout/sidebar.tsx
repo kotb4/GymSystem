@@ -14,7 +14,6 @@ import {
   LayoutDashboard,
   ListChecks,
   MessageSquare,
-  Package as PackageIcon,
   ReceiptText,
   ScanLine,
   ScrollText,
@@ -22,7 +21,6 @@ import {
   ShoppingBag,
   Users,
   UsersRound,
-  Wallet,
   type LucideIcon,
 } from "lucide-react";
 import { useAuth } from "@/contexts/auth-context";
@@ -36,10 +34,8 @@ const ICONS: Record<string, LucideIcon> = {
   "/": LayoutDashboard,
   "/members": Users,
   "/attendance": ScanLine,
-  "/cash": Wallet,
   "/treasury": Coins,
   "/subscriptions": CalendarCheck,
-  "/packages": PackageIcon,
   "/payments": Banknote,
   "/expenses": ReceiptText,
   "/reports": BarChart3,

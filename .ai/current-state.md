@@ -78,7 +78,7 @@ Removed the now-unused tab keys from i18n: `tabClosing`/`tabSessions`/`tabClosin
 - The daily-closing feature (الإغلاق اليومي) is fully removed (tables, permissions, service, RPC, UI, dashboard). A full-repo sweep (source + docs, excluding the historical migration v20 definition and tasks/current-state history) confirmed **no stale references remain**; the last one fixed was the `treasury.subtitle` i18n string, which still mentioned daily-closing reconciliation and was updated to describe the cash-sessions-only page.
 - No i18n-coverage regression: shared `checkin.*` keys retained (used by dashboard `checkin.recent`/`checkin.noScans`, member-profile `checkin.deniedTitles`/`checkin.successTitle`, employee-checkin `checkin.submit`).
 - Some `checkin.*` fast-tab-only keys (e.g. `scanTitle`, `scanHint`, `quickTitle`, `fieldBarcode`) are now unused but retained (harmless; coverage test checks only that used keys exist).
-- Orphaned `nav.*` keys removed (phase 14): `nav.checkin`, `nav.reception`, `nav.packages`, `nav.scannerDiagnostics`, `nav.health`, `nav.inbody` — all confirmed unused via repo-wide grep (their sidebar entries/routes were removed in earlier phases). `nav.users`/`nav.permissions` kept (still used as tab titles in `/staff`). i18n coverage 3/3.
+- Orphaned `nav.*` keys removed (phase 14): `nav.checkin`, `nav.reception`, `nav.packages`, `nav.scannerDiagnostics`, `nav.health`, `nav.inbody` — all confirmed unused via repo-wide grep (their sidebar entries/routes were removed in earlier phases). `nav.users`/`nav.permissions` kept (still used as tab titles in `/staff`). i18n coverage 3/3. Also removed dead `ICONS` entries (for the now-removed `/cash` + `/packages` paths) + unused `Wallet`/`PackageIcon` imports from `sidebar.tsx`.
 
 ## Blockers
 
