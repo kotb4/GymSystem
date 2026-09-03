@@ -64,7 +64,10 @@ Removed the now-unused tab keys from i18n: `tabClosing`/`tabSessions`/`tabClosin
 - Deleted 4 fully-unused re-export wrapper pages: `users-page.tsx`, `permissions-page.tsx`, `scanner-diagnostics-page.tsx`, `health-page.tsx` (their tab components are imported directly by `/staff` + `/settings`).
 - `cash-page.tsx`: removed the unused `CashSessionsPage` export; kept `CashSessionsPanel` (used by `/treasury`). Note `cashPage.title` is still used by `/treasury` (`treasury/index.tsx`), so no i18n cleanup needed.
 - Kept `packages-page.tsx` (still imported by `subscriptions-page.tsx` for the باقات tab).
-- Verification: (to run) `npm run typecheck`, `npm test`, `npm run build`, `node scripts/check-rpc-consistency.cjs`.
+- Verification: `npm run typecheck` clean, `npm test` **394/394**, `npm run build` clean, `node scripts/check-rpc-consistency.cjs` → 264 entries, no missing, exit 0. Committed/pushed as `cb0d2bb`.
+
+**Phase 14 (done, this session): removed orphaned `nav.*` i18n keys.**
+- Removed 6 unused `nav.*` keys from `ar.ts`: `checkin`, `reception`, `packages`, `scannerDiagnostics`, `health`, `inbody` — all confirmed unused via repo-wide grep (their sidebar entries/routes were removed in earlier phases/TASK-023). Kept `nav.users`/`nav.permissions` (still used as tab titles in `/staff`). Verified: i18n coverage 3/3, `npm run typecheck` clean, `npm test` **394/394**, `npm run build` clean.
 
 ## Known issues / follow-ups
 
@@ -75,7 +78,7 @@ Removed the now-unused tab keys from i18n: `tabClosing`/`tabSessions`/`tabClosin
 - The daily-closing feature (الإغلاق اليومي) is fully removed (tables, permissions, service, RPC, UI, dashboard). A full-repo sweep (source + docs, excluding the historical migration v20 definition and tasks/current-state history) confirmed **no stale references remain**; the last one fixed was the `treasury.subtitle` i18n string, which still mentioned daily-closing reconciliation and was updated to describe the cash-sessions-only page.
 - No i18n-coverage regression: shared `checkin.*` keys retained (used by dashboard `checkin.recent`/`checkin.noScans`, member-profile `checkin.deniedTitles`/`checkin.successTitle`, employee-checkin `checkin.submit`).
 - Some `checkin.*` fast-tab-only keys (e.g. `scanTitle`, `scanHint`, `quickTitle`, `fieldBarcode`) are now unused but retained (harmless; coverage test checks only that used keys exist).
-- `nav.packages` i18n key is now unused (sidebar entry removed) but retained harmlessly; `/packages` legacy route still used by some flows.
+- Orphaned `nav.*` keys removed (phase 14): `nav.checkin`, `nav.reception`, `nav.packages`, `nav.scannerDiagnostics`, `nav.health`, `nav.inbody` — all confirmed unused via repo-wide grep (their sidebar entries/routes were removed in earlier phases). `nav.users`/`nav.permissions` kept (still used as tab titles in `/staff`). i18n coverage 3/3.
 
 ## Blockers
 
