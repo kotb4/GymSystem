@@ -13,25 +13,19 @@ import { ReceptionPage } from "@/pages/reception-page";
 import { MembersPage } from "@/pages/members-page";
 import { MemberProfilePage } from "@/pages/member-profile-page";
 import { SubscriptionsPage } from "@/pages/subscriptions-page";
-import { PackagesPage } from "@/pages/packages-page";
 import { CardsPage } from "@/pages/cards-page";
-import { UsersPage } from "@/pages/users-page";
 import { StaffPage } from "@/pages/staff-page";
 import { AuditPage } from "@/pages/audit-page";
 import { SettingsPage } from "@/pages/settings-page";
 import { PaymentsPage } from "@/pages/payments-page";
 import { ExpensesPage } from "@/pages/expenses-page";
-import { CashSessionsPage } from "@/pages/cash-page";
 import { ReportsPage } from "@/pages/reports-page";
 import { TrainersPage } from "@/pages/trainers-page";
-import { ScannerDiagnosticsPage } from "@/pages/scanner-diagnostics-page";
-import { HealthPage } from "@/pages/health-page";
 import { StorePage } from "@/pages/store-page";
 import { ClassesPage } from "@/pages/classes-page";
 import { EmployeesPage } from "@/pages/employees-page";
 import { EmployeeCheckInPage } from "@/pages/employee-checkin-page";
 import { CrmPage } from "@/pages/crm-page";
-import { PermissionsPage } from "@/pages/permissions-page";
 import { LoyaltyPage } from "@/pages/loyalty-page";
 import { TreasuryPage } from "@/pages/treasury";
 
@@ -90,14 +84,6 @@ export function AppRoutes() {
         <Route path="members" element={<MembersPage />} />
         <Route path="members/:memberId" element={<MemberProfilePage />} />
         <Route
-          path="reception"
-          element={
-            <RequirePermission permission="reception.view">
-              <ReceptionPage />
-            </RequirePermission>
-          }
-        />
-        <Route
           path="attendance"
           element={
             <RequirePermission permission="reception.view">
@@ -114,14 +100,6 @@ export function AppRoutes() {
           }
         />
         <Route
-          path="packages"
-          element={
-            <RequirePermission permission="packages.view">
-              <PackagesPage />
-            </RequirePermission>
-          }
-        />
-        <Route
           path="payments"
           element={
             <RequirePermission permission="payments.view">
@@ -134,14 +112,6 @@ export function AppRoutes() {
           element={
             <RequirePermission permission="expenses.view">
               <ExpensesPage />
-            </RequirePermission>
-          }
-        />
-        <Route
-          path="cash"
-          element={
-            <RequirePermission permission="payments.view">
-              <CashSessionsPage />
             </RequirePermission>
           }
         />
@@ -206,38 +176,6 @@ export function AppRoutes() {
           element={
             <RequirePermission permission="trainers.view">
               <TrainersPage />
-            </RequirePermission>
-          }
-        />
-        <Route
-          path="scanner"
-          element={
-            <RequirePermission permission="checkin.create">
-              <ScannerDiagnosticsPage />
-            </RequirePermission>
-          }
-        />
-        <Route
-          path="health"
-          element={
-            <RequirePermission permission="diagnostics.view">
-              <HealthPage />
-            </RequirePermission>
-          }
-        />
-        <Route
-          path="users"
-          element={
-            <RequirePermission permission="users.view">
-              <UsersPage />
-            </RequirePermission>
-          }
-        />
-        <Route
-          path="permissions"
-          element={
-            <RequirePermission permission="users.view">
-              <PermissionsPage />
             </RequirePermission>
           }
         />

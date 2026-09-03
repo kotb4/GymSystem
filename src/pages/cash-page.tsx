@@ -385,15 +385,3 @@ export function CashSessionsPanel() {
     </div>
   );
 }
-
-export function CashSessionsPage() {
-  const t = useT();
-  return (
-    <div className="space-y-5">
-      <section>
-        <h2 className="text-2xl font-extrabold tracking-tight">{t("cashPage.title")}</h2>
-      </section>
-      <CashSessionsPanel />
-    </div>
-  );
-}
