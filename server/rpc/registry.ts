@@ -35,7 +35,6 @@ import { lead } from "./lead.rpc";
 import { trials } from "./trials.rpc";
 import { dev } from "./dev.rpc";
 import { memberProfile } from "./member-profile.rpc";
-import { dailyClosing } from "./daily-closing.rpc";
 import { referral } from "./referral.rpc";
 import { loyalty } from "./loyalty.rpc";
 
@@ -78,7 +77,6 @@ export const REGISTRY: Record<string, Record<string, Exposed>> = {
   trials,
   dev,
   memberProfile,
-  dailyClosing,
   referral,
   loyalty,
 };

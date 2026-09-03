@@ -20,7 +20,7 @@ import {
 import { useAuth } from "@/contexts/auth-context";
 import { useT } from "@/i18n";
 import { api } from "@/api";
-import type { DashboardOperationalStats, DashboardOverview, DashboardTreasurySection } from "@/core/services/dashboard.service";
+import type { DashboardOperationalStats, DashboardOverview } from "@/core/services/dashboard.service";
 import type { StoreStats } from "@/api";
 import type { SubscriptionWithMember } from "@/core/services/subscriptions.service";
 import { addDaysKey, safeDiffDaysKeys, safeParseDateKey, todayKey } from "@/core/dates";
@@ -80,7 +80,6 @@ export function DashboardPage() {
   const [overview, setOverview] = useState<DashboardOverview | null>(null);
   const [operational, setOperational] = useState<DashboardOperationalStats | null>(null);
   const [storeStats, setStoreStats] = useState<StoreStats | null>(null);
-  const [treasury, setTreasury] = useState<DashboardTreasurySection | null>(null);
   const [upcomingSessions, setUpcomingSessions] = useState<Array<{id: string; className: string; sessionDate: string; startTime: string; bookedCount: number; capacity: number}>>([]);
 
   const customRange = useMemo<{ fromKey: string; toKey: string } | undefined>(
@@ -155,18 +154,6 @@ export function DashboardPage() {
     api.classes.listSessions({ fromDate: today, limit: 5 }).then((s) => { if (alive) setUpcomingSessions(s); }).catch(() => {});
     return () => { alive = false; };
   }, [actor, canViewClasses, today]);
-
-  const canViewTreasury = hasPermission("cash.daily_close");
-
-  useEffect(() => {
-    if (!actor || !canViewTreasury) return;
-    let alive = true;
-    api.dashboard
-      .treasury(today)
-      .then((ts) => { if (alive) setTreasury(ts); })
-      .catch(() => { if (alive) setTreasury(null); });
-    return () => { alive = false; };
-  }, [actor, canViewTreasury, today]);
 
   const greeting = new Date().getHours() < 12 ? t("dashboard.morning") : t("dashboard.evening");
 
@@ -266,47 +253,6 @@ export function DashboardPage() {
           accent="amber"
         />
       </section>
-
-      {treasury && (
-        <section className="grid gap-4 sm:grid-cols-2 xl:grid-cols-4">
-          <StatCard
-            title={t("treasury.todayKpiExpected")}
-            value={formatMinor(treasury.gym.expectedMinor + treasury.store.expectedMinor)}
-            icon={<Banknote className="size-5" />}
-            accent="neon"
-          />
-          <StatCard
-            title={t("treasury.todayKpiCounted")}
-            value={formatMinor((treasury.gym.countedCashMinor ?? 0) + (treasury.store.countedCashMinor ?? 0))}
-            icon={<CreditCard className="size-5" />}
-            accent="cyan"
-          />
-          <StatCard
-            title={t("treasury.todayKpiDiff")}
-            value={formatMinor((treasury.gym.differenceMinor ?? 0) + (treasury.store.differenceMinor ?? 0))}
-            icon={<ReceiptText className="size-5" />}
-            accent={treasury.gym.differenceMinor === 0 && treasury.store.differenceMinor === 0 ? "neon" : "amber"}
-          />
-          <StatCard
-            title={t("treasury.todayKpiStatus")}
-            value={
-              treasury.gym.status === "closed" && treasury.store.status === "closed"
-                ? t("treasury.statusClosed")
-                : treasury.gym.status === "open" || treasury.store.status === "open"
-                ? t("treasury.statusOpen")
-                : t("treasury.snapshotMissing")
-            }
-            icon={<CalendarDays className="size-5" />}
-            accent={
-              treasury.gym.status === "closed" && treasury.store.status === "closed"
-                ? "neon"
-                : treasury.gym.status === "open" || treasury.store.status === "open"
-                ? "amber"
-                : "violet"
-            }
-          />
-        </section>
-      )}
 
       {finance && (
         <section className="grid gap-4 sm:grid-cols-2 xl:grid-cols-3">

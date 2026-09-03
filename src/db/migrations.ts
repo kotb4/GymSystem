@@ -656,6 +656,26 @@ function buildMigrations(): Migration[] {
         // Reserved — backfill lives in server/expense-attachments-backfill.ts.
       },
     },
+    {
+      // ---- v27: Remove the daily-closing (الإغلاق اليومي) feature ----
+      // The feature was removed entirely (product decision): the /treasury page
+      // now serves only cash sessions (cash_sessions). We drop the daily_closings
+      // tables + indexes and revoke the seeded permissions/grants. This is an
+      // append-only drop: it only runs on DBs that have v20 applied. The legacy
+      // cash_sessions feature and its tables are untouched.
+      version: 27,
+      statements: [
+        "DROP TABLE IF EXISTS daily_closing_audit_entries",
+        "DROP INDEX IF EXISTS idx_daily_closings_active",
+        "DROP INDEX IF EXISTS idx_daily_closings_status",
+        "DROP INDEX IF EXISTS idx_daily_closings_date",
+        "DROP TABLE IF EXISTS daily_closings",
+      ],
+      callback: (db: Db) => {
+        db.run("DELETE FROM role_permissions WHERE permission_code IN ('cash.daily_close', 'cash.daily_reopen')");
+        db.run("DELETE FROM permissions WHERE code IN ('cash.daily_close', 'cash.daily_reopen')");
+      },
+    },
   ];
 }
 

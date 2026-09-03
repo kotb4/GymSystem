@@ -13,11 +13,6 @@ import {
   type AttendanceDayPoint,
 } from "./attendance.service";
 import {
-  getTreasurySnapshot,
-  type CashBox,
-  type TreasurySnapshot,
-} from "./daily-closing.service";
-import {
   countActiveSubscriptions,
   listExpiringSubscriptions,
   type SubscriptionWithMember,
@@ -562,39 +557,4 @@ function seriesDayMapOf(series: DashboardSeriesResult): Map<string, DayPoint> {
 
 function ledgerOnly(db: Db, fromKey: string, toKey: string): Map<string, DayPoint> {
   return ledgerDayMap(db, fromKey, toKey);
-}
-
-export interface DashboardTreasurySection {
-  businessDate: string;
-  gym: TreasurySnapshot;
-  store: TreasurySnapshot;
-}
-
-export function getTreasuryForDashboard(
-  db: Db,
-  actor: ServiceActor,
-  businessDate: string = todayKey(),
-): DashboardTreasurySection {
-  requirePermission(actor, "cash.daily_close");
-  const resolve = (box: CashBox): TreasurySnapshot => {
-    try {
-      return getTreasurySnapshot(db, actor, businessDate, box);
-    } catch {
-      return {
-        businessDate,
-        box,
-        status: "missing",
-        expectedMinor: 0,
-        expectedCashMinor: 0,
-        countedCashMinor: null,
-        differenceMinor: null,
-        closingId: null,
-      };
-    }
-  };
-  return {
-    businessDate,
-    gym: resolve("gym"),
-    store: resolve("store"),
-  };
 }

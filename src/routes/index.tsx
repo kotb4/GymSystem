@@ -34,7 +34,6 @@ import { CrmPage } from "@/pages/crm-page";
 import { PermissionsPage } from "@/pages/permissions-page";
 import { LoyaltyPage } from "@/pages/loyalty-page";
 import { TreasuryPage } from "@/pages/treasury";
-import { TreasuryPrintPage } from "@/pages/treasury/print";
 
 function RequireAuth({ children }: { children: ReactNode }) {
   const { user, booting } = useAuth();
@@ -277,16 +276,8 @@ export function AppRoutes() {
         <Route
           path="treasury"
           element={
-            <RequirePermission permissions={["cash.daily_close", "payments.view"]}>
+            <RequirePermission permission="payments.view">
               <TreasuryPage />
-            </RequirePermission>
-          }
-        />
-        <Route
-          path="treasury/print/:closingId"
-          element={
-            <RequirePermission permission="cash.daily_close">
-              <TreasuryPrintPage />
             </RequirePermission>
           }
         />

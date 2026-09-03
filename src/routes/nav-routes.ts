@@ -37,7 +37,7 @@ export const NAV_ROUTES: NavRoute[] = [
   { path: "/", key: "nav.dashboard", group: "overview", permission: "members.view" },
   { path: "/members", key: "nav.members", group: "daily", permission: "members.view" },
   { path: "/attendance", key: "nav.attendance", group: "daily", permission: "reception.view" },
-  { path: "/treasury", key: "nav.treasury", group: "daily", permissions: ["cash.daily_close", "payments.view"] },
+  { path: "/treasury", key: "nav.treasury", group: "daily", permission: "payments.view" },
   { path: "/subscriptions", key: "nav.subscriptions", group: "subscriptions", permission: "subscriptions.view" },
   { path: "/payments", key: "nav.payments", group: "finance", permission: "payments.view" },
   { path: "/expenses", key: "nav.expenses", group: "finance", permission: "expenses.view" },

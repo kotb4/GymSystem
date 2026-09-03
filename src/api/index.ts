@@ -66,17 +66,7 @@ import type {
   DashboardRange,
   DashboardStats,
   DashboardSeriesResult,
-  DashboardTreasurySection,
 } from "@/core/services/dashboard.service";
-import type {
-  CashBox,
-  CreateDailyClosingInput,
-  DailyClosingDetail,
-  DailyClosingListQuery,
-  DailyClosingSnapshot,
-  RecordCountedInput,
-  TreasurySnapshot,
-} from "@/core/services/daily-closing.service";
 import type { FinanceOverview } from "@/core/services/finance.service";
 import type { PeriodReport } from "@/core/services/financial-report.service";
 import type { StaffActivityReport } from "@/core/services/staff-activity.service";
@@ -296,35 +286,6 @@ const dashboardApi = {
     key: "today" | "7d" | "30d" | "month" | "year" | "custom",
     custom?: DashboardRange,
   ) => rpc<DashboardOverview>("dashboard", "getDashboardOverview", [key, custom]),
-  treasury: (businessDate?: string) =>
-    rpc<DashboardTreasurySection>("dashboard", "getTreasuryForDashboard", [businessDate ?? ""]),
-};
-
-const treasuryApi = {
-  getOrCreate: (input: CreateDailyClosingInput) =>
-    rpc<DailyClosingDetail>("dailyClosing", "getOrCreateDailyClosing", [input]),
-  recordCounted: (closingId: string, input: RecordCountedInput) =>
-    rpc<DailyClosingDetail>("dailyClosing", "recordCountedCash", [closingId, input]),
-  close: (closingId: string, input: RecordCountedInput) =>
-    rpc<DailyClosingDetail>("dailyClosing", "closeDailyClosing", [closingId, input]),
-  reopen: (closingId: string, reason: string) =>
-    rpc<DailyClosingDetail>("dailyClosing", "reopenDailyClosing", [closingId, reason]),
-  getById: (id: string) =>
-    rpc<DailyClosingDetail>("dailyClosing", "getDailyClosingById", [id]),
-  list: (query: DailyClosingListQuery = {}) =>
-    rpc<{ items: DailyClosingSnapshot[]; total: number }>(
-      "dailyClosing",
-      "listDailyClosings",
-      [query],
-    ),
-  snapshot: (businessDate: string, box: CashBox) =>
-    rpc<TreasurySnapshot>("dailyClosing", "getTreasurySnapshot", [businessDate, box]),
-  snapshotsForDate: (businessDate: string) =>
-    rpc<{ gym: TreasurySnapshot; store: TreasurySnapshot }>(
-      "dailyClosing",
-      "listTreasurySnapshotsForDate",
-      [businessDate],
-    ),
 };
 
 const financeApi = {
@@ -1134,7 +1095,6 @@ export const api = {
   crm: crmApi,
   lead: leadApi,
   trials: trialApi,
-  treasury: treasuryApi,
   files: { upload: uploadFile, url: fileUrl },
   auth: {
     /** Session probe used by the auth context; mirrors GET /api/auth/me. */
@@ -1253,18 +1213,6 @@ export type {
   TrialStatus,
   TrialType,
 } from "@/core/services/trials.service";
-export type {
-  CashBox,
-  DailyClosingStatus,
-  DailyClosingSnapshot,
-  DailyClosingDetail,
-  DailyClosingListQuery,
-  CreateDailyClosingInput,
-  RecordCountedInput,
-  TreasurySnapshot,
-  ExpectedBreakdown,
-} from "@/core/services/daily-closing.service";
-export type { DashboardTreasurySection } from "@/core/services/dashboard.service";
 export type {
   ReferralRow,
   ReferralStats,

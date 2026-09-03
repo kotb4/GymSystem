@@ -1,12 +1,12 @@
 # Current Development State
 
-- **Last updated:** 2026-09-02
-- **Current objective:** TASK-021 (page consolidation) — merged the two confusing cash/treasury pages (خزينة النادي + الإغلاق اليومي) into a **single one-page `/treasury`** (no tabs), where the **cash session (الوردية) is the primary daily tool** and the daily closing (الإغلاق اليومي) sits below it.
+- **Last updated:** 2026-09-03
+- **Current objective:** TASK-021 (page consolidation) final phase — **removed the daily closing (الإغلاق اليومي) feature entirely** (product decision). `/الخزينة` (`/treasury`) is now **cash sessions (الوردية) only**, gated by `payments.view`. `cash.daily_close`/`cash.daily_reopen` permissions removed; migration **v27** drops `daily_closings` + `daily_closing_audit_entries` + indexes + revokes the seeded grants; dashboard KPI card removed.
 - **Last agent/tool:** opencode (this session)
 
 ## Active tasks
 
-- **TASK-021** — extended: resolved الاشتراكات / الباقات duplicate. Attendance fast-tab removal pushed (`cc3bdb8`); subscriptions+packages+plans merge/tab-reorder pushed (`29de98e`); packages-primary interface pushed (`9f53d30`). This session phase 9 merged `/cash` + `/treasury` into a tabbed `/treasury` (pushed `7ac7420`), then phase 10 (current) removed the tabs → single `/treasury` page with the cash session as the primary daily tool + daily closing below. pushed.
+- **TASK-021** — extended: resolved الاشتراكات / الباقات duplicate. Attendance fast-tab removal pushed (`cc3bdb8`); subscriptions+packages+plans merge/tab-reorder pushed (`29de98e`); packages-primary interface pushed (`9f53d30`). This session: phase 9 merged `/cash` + `/treasury` into a tabbed `/treasury` (pushed `7ac7420`), phase 10 removed the tabs → single `/treasury` page (cash session primary + daily closing below), and phase 11 (current) **removed the daily-closing feature entirely** so `/الخزينة` = cash sessions (الوردية) only (migration v27, pending push).
 
 ## What was most recently completed (handoff context)
 
@@ -45,11 +45,20 @@ Broken-UI fixes in the closing panel: removed two dead `value="" onChange={()=>{
 - Forbidden (EmptyState) only if the actor has neither permission. A `payments.view`-only user sees just the وردية section; a `cash.daily_close`-only user sees just الإغلاق اليومي.
 Removed the now-unused tab keys from i18n: `tabClosing`/`tabSessions`/`tabClosingHint`/`tabSessionsHint`; added `treasury.dailyClosingTitle`/`dailyClosingSectionHint`/`sessionSectionHint`; updated `treasury.subtitle`. Removed the `Tabs` import + `TreasuryTab` type from `treasury/index.tsx`. Backend/schema untouched. Verification: `npm run typecheck` clean, i18n coverage 3/3, `npm test` 424/424 (33 files), `npm run build` OK (pre-existing seed.ts CJS `import.meta` warning, non-fatal).
 
+**Phase 11 (done, this session): removed the daily closing (الإغلاق اليومي) feature ENTIRELY — `/الخزينة` = الوردية only.** User decisions: "حذف الميزة كاملة من النظام" + "الخزينة = الوردية فقط" (Recommended). This is a full, clean removal across the whole stack:
+- `/treasury` (`src/pages/treasury/index.tsx`) rewritten to a minimal page = header + `<CashSessionsPanel/>` (cash sessions, gated `payments.view`). Deleted `closing-detail.tsx`/`closing-form.tsx`/`closing-list.tsx`/`print.tsx` + the `/treasury/print/:closingId` route.
+- Backend: deleted `src/core/services/daily-closing.service.ts` + `server/rpc/daily-closing.rpc.ts`; removed the `dailyClosing` registration from `server/rpc/registry.ts` and `getTreasuryForDashboard` from `dashboard.rpc.ts` + `dashboard.service.ts` (incl. `DashboardTreasurySection` type + the daily-closing import). Removed `api.treasury.*` wrappers + exported types in `src/api/index.ts`.
+- Permissions: removed `cash.daily_close` + `cash.daily_reopen` from `PERMS`/`MANAGER_PERMS`/`RECEPTION_PERMS` + i18n `perms` keys. Audit actions: removed `DAILY_CLOSING_*`. Dashboard: removed the treasury KPI card + related state/fetch from `dashboard-page.tsx`.
+- Migration **v27** (append-only): `DROP TABLE daily_closing_audit_entries` → 3 indexes → `daily_closings`, and `DELETE`s the seeded `cash.daily_close`/`cash.daily_reopen` permission + role-grant rows. Cash sessions (`cash_sessions`) untouched.
+- i18n: removed the unused `treasury.*` block (kept only `title`/`subtitle`/`sessionSectionHint`) and the unused `errors.treasury.*` block.
+- Tests: deleted `tests/daily-closing.test.ts` (was 30 cases); bumped the 3 hardcoded migration-version assertions 26→27 (`foundation.smoke.test.ts`, `part4-backup.test.ts`, `restore-authz.test.ts`).
+- Verification: `npm run typecheck` clean, `npm run typecheck:server` clean, i18n coverage 3/3, `npm test` **394/394** (32 files), `npm run build` OK (pre-existing seed.ts CJS `import.meta` warning non-fatal), `node scripts/check-rpc-consistency.cjs` ok (264 entries, no missing).
+
 ## Known issues / follow-ups
 
 - Browser camera capture still not live-tested (needs real webcam).
-- Legacy `/users`, `/permissions`, `/health`, `/scanner`, `/reception`, `/packages`, `/cash` routes still registered in `routes/index.tsx` (direct-bookmark compat) but no longer listed in the sidebar; could be removed once confirmed unused. (`/checkin` route removed this session.)
-- TODO (docs sync): `docs/ai/roadmap.md` may still list خزينة النادي and الإغلاق اليومي as separate pages; the UI is now merged under `/treasury`.
+- Legacy `/users`, `/permissions`, `/health`, `/scanner`, `/reception`, `/packages`, `/cash` routes still registered in `routes/index.tsx` (direct-bookmark compat) but no longer listed in the sidebar; could be removed once confirmed unused. (`/checkin` route removed this session.) `/cash` (legacy `CashSessionsPage` wrapper) and the canonical `/treasury` both render cash sessions; keep `/cash` until operators confirm the old bookmark is unused.
+- The daily-closing feature (الإغلاق اليومي) is fully removed (tables, permissions, service, RPC, UI, dashboard). Any stray references to `daily_closings`/`cash.daily_close`/`api.treasury` in `docs/ai/*` (e.g. `database.md`, `architecture.md`, `business-rules.md`, `roadmap.md`) are now stale and should be pruned by the next `sync:docs`/doc pass.
 - No i18n-coverage regression: shared `checkin.*` keys retained (used by dashboard `checkin.recent`/`checkin.noScans`, member-profile `checkin.deniedTitles`/`checkin.successTitle`, employee-checkin `checkin.submit`).
 - Some `checkin.*` fast-tab-only keys (e.g. `scanTitle`, `scanHint`, `quickTitle`, `fieldBarcode`) are now unused but retained (harmless; coverage test checks only that used keys exist).
 - `nav.packages` i18n key is now unused (sidebar entry removed) but retained harmlessly; `/packages` legacy route still used by some flows.
@@ -59,6 +68,20 @@ Removed the now-unused tab keys from i18n: `tabClosing`/`tabSessions`/`tabClosin
 - None.
 
 ## Files changed (TASK-021, this session)
+
+**Removed (phase 11 — daily-closing feature deleted entirely):**
+- `src/core/services/daily-closing.service.ts`, `server/rpc/daily-closing.rpc.ts` (deleted)
+- `src/pages/treasury/{closing-detail,closing-form,closing-list,print}.tsx` (deleted) + `src/pages/treasury/index.tsx` (rewritten to cash-sessions only)
+- `tests/daily-closing.test.ts` (deleted, 30 cases)
+- `src/routes/index.tsx` (`/treasury/print/:closingId` route + `TreasuryPrintPage` import removed; `/treasury` permission → `payments.view`), `src/routes/nav-routes.ts` (`/treasury` → `permissions: ["cash.daily_close","payments.view"]` → single `payments.view`)
+- `server/rpc/registry.ts` (removed `dailyClosing`), `server/rpc/dashboard.rpc.ts` + `src/core/services/dashboard.service.ts` (removed `getTreasuryForDashboard` + `DashboardTreasurySection` + import)
+- `src/api/index.ts` (removed `treasuryApi`, `api.treasury`, `dashboardApi.treasury`, exported daily-closing types + re-exports)
+- `src/core/permissions.ts` (removed `cash.daily_close`/`cash.daily_reopen`), `src/core/audit-actions.ts` (removed `DAILY_CLOSING_*`)
+- `src/pages/dashboard-page.tsx` (removed treasury KPI card + `treasury` state/fetch + type import)
+- `src/db/migrations.ts` (+ **v27**: drop `daily_closing_audit_entries` → indexes → `daily_closings`; delete seeded perms/grants)
+- `src/i18n/ar.ts` (removed `perms."cash.daily_close"`/`perms."cash.daily_reopen"`, unused `treasury.*` (kept title/subtitle/sessionSectionHint), unused `errors.treasury.*`)
+
+**Modified (phase 11 — migration-version bumps 26→27):** `tests/foundation.smoke.test.ts`, `tests/part4-backup.test.ts`, `tests/restore-authz.test.ts`
 
 **Modified (phase 9 — cash/treasury merge):**
 - `src/pages/treasury/index.tsx` (`DailyClosingPanel` extracted; new tabbed `TreasuryPage` -> later replaced by single-page in phase 10; removed dead `value=""` reason inputs ×2; removed misleading duplicate counted-cash box in detail financials; box cards retitled; cleaner date-row header)
