@@ -140,10 +140,10 @@ Check "unknown card denied CARD_UNKNOWN" ($rDupCard.result.kind -eq "denied" -an
 $rExp = RpcRaw "attendance" "recordCheckIn" @(@{ barcode="GYM-A-1004" }) $sess
 Check "expired subscription denied" ($rExp.result.kind -eq "denied")
 
-# freeze men's sub -> deny -> unfreeze -> grant
+# freeze men's sub -> auto-unfreeze on scan -> granted (current product behavior: auto-unfreeze-on-checkin)
 $null = Rpc "subscriptions" "freezeSubscription" @($sMen.id, @{ reason="سفر" }) $sess
 $rFrozen = RpcRaw "attendance" "recordCheckIn" @(@{ barcode="GYM-A-1001" }) $sess
-Check "frozen subscription denied" ($rFrozen.result.kind -eq "denied")
+Check "frozen sub auto-unfreezes on scan (granted)" ($rFrozen.result.kind -eq "success")
 $frz = Rpc "subscriptions" "listMemberSubscriptions" @($mMen.id) $sess
 Check "freeze recorded in history" (@($frz | Where-Object { $_.id -eq $sMen.id }).Count -gt 0)
 $null = Rpc "subscriptions" "unfreezeSubscription" @($sMen.id) $sess
@@ -272,7 +272,13 @@ $dupBook = RpcRaw "classes" "bookMember" @(@{ sessionId=$session.id; memberId=$m
 Check "duplicate booking rejected" (-not $dupBook.ok)
 
 # ---------- 13) Member photo roundtrip ----------
-$fakePhoto = [Text.Encoding]::UTF8.GetBytes("fake-image-data-for-audit-test-1234567890")
+# Build a real JPEG header (magic bytes FF D8 FF) as a true byte[] — a raw byte[]
+# is transmitted as binary; array concatenation yields object[] which PowerShell
+# would send as text and the server's MIME sniff (ADR-018 §4) would reject.
+$jpegBody = [Text.Encoding]::UTF8.GetBytes("fake-image-data-for-audit-test-1234567890")
+$fakePhoto = New-Object byte[] (4 + $jpegBody.Length)
+$fakePhoto[0] = 0xFF; $fakePhoto[1] = 0xD8; $fakePhoto[2] = 0xFF; $fakePhoto[3] = 0xE0
+[Array]::Copy($jpegBody, 0, $fakePhoto, 4, $jpegBody.Length)
 $uploadResp = Invoke-RestMethod "$base/api/files?kind=member_photo&name=test.jpg&mime=image/jpeg" -Method Post -ContentType "application/octet-stream" -WebSession $sess -Body $fakePhoto
 $photoId = $uploadResp.result.id
 Check "file upload succeeded" ($null -ne $photoId -and $uploadResp.ok)
