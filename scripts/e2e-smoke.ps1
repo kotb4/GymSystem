@@ -45,11 +45,8 @@ $base = "http://127.0.0.1:8890"
 $ping = Invoke-RestMethod "$base/api/ping"
 Check "GET /api/ping" ($ping.ok -eq $true)
 
-try {
-  Invoke-RestMethod "$base/api/auth/me" -ErrorAction Stop | Out-Null
-  $rejected = $false
-} catch { $rejected = ($_.Exception.Response.StatusCode.value__ -eq 401) }
-Check "unauthenticated /me rejected (401)" $rejected
+$meAnon = Invoke-RestMethod "$base/api/auth/me"
+Check "unauthenticated /me reports needsSetup (200, no crash)" ($meAnon.ok -and $null -eq $meAnon.result.user -and $meAnon.result.needsSetup -eq $true)
 
 # ---------- setup + session ----------
 $sess = $null
