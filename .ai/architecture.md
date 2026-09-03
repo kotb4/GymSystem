@@ -43,7 +43,7 @@ Shared kernel (`src/core/`): `permissions.ts` (73 perms, 4 roles, DB-grant cache
 
 - `engine.ts`: `Db` class — run/all/first/scalar/count/insert/exec, re-entrant `transaction()` (BEGIN IMMEDIATE), `onDirty` listeners fired after COMMIT.
 - `migrations.ts`: append-only v1..v6 applied at every boot inside transactions; tracked in `schema_migrations`.
-- `seed.ts`: optional demo data when `GYM_SEED_DEMO=1` (built) / `VITE_SEED_DEMO=1` (dev) and `settings.demo_seeded` unset.
+- `seed.ts`: optional demo data when `GYM_SEED_DEMO=1` (backend env var; the only trigger) and `settings.demo_seeded` unset. Note: the frontend `VITE_SEED_DEMO` in `.env.development` does not reach the Node backend, so it does not seed.
 - Tests use an in-memory/file driver via `tests/helpers/test-db.ts` (`createTestDb()`).
 
 ### Schema map (40+ tables, migrations v1..v6)

@@ -2,6 +2,9 @@
 
 > **Reading order for the next agent:** `AGENTS.md` → `.ai/project.md` → `.ai/current-state.md` → `.ai/tasks.md` → `.ai/decisions.md` (when relevant) → inspect the actual source. The repository files are the persistent memory; chat history is not part of the project.
 
+## TASK-022: Clean build warning + correct dev-seeding docs
+- Status: done (2026-09-04). Removed the **dead `import.meta` branch** in `shouldSeedDemo()` (`src/db/seed.ts:12-19`). It was never executed (only `server/context.ts` calls `shouldSeedDemo()`, always in the CJS backend bundle which uses the `process.env` path; no frontend code imports it) and tripped the esbuild CJS `import.meta` warning. `shouldSeedDemo()` now checks only `process.env.GYM_SEED_DEMO === "1"`. **`npm run build` is now fully clean** (`node scripts/build-server.mjs` → exit 0, no warning; the only remaining note is Vite's cosmetic chunk-size suggestion). Also corrected inaccurate docs: seeding runs only in the backend, so the frontend `VITE_SEED_DEMO` from `.env.development` never seeded — dev seeding is `set GYM_SEED_DEMO=1 && npm run dev:server` (the README already said this). Updated `AGENTS.md` §2, `.ai/architecture.md`, `docs/ai/security.md`. Verification: `npm run typecheck` clean, `npm test` **394/394**, `npm run build` clean.
+
 ## TASK-021: Page consolidation & sidebar reorganization
 - Status: done (2026-09-03) — all phases complete and pushed. Phase 11 (daily-closing removal) pushed in `5b540d0`; E2E smoke fix `a6263b4`; E2E-audit fixes `edc815b`.
 - Phase 1 (done): assign-card quick action on member profile (`members.qaAssignCard`, `BadgePlus`, gated `cards.assign`, wired to existing `cardModalOpen`).

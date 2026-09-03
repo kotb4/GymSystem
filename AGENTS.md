@@ -61,7 +61,7 @@ SQLite (WAL) at %LOCALAPPDATA%\GymSystem\Database\gym.db  + Files\ + Backups\ + 
 | Value-level doc sync (counts/versions from source) | `npm run sync:docs` (also auto-runs via pre-commit hook) |
 | One-shot commit+push (add all → commit "msg" → push) | `git a "commit message"` |
 
-Demo data seeding: set `GYM_SEED_DEMO=1` for the built backend or `VITE_SEED_DEMO=1` (already set in `.env.development`) for dev.
+Demo data seeding: seeding runs in the Node backend only (`server/context.ts`), opt-in via `GYM_SEED_DEMO=1`. Set it in the shell (e.g. `set GYM_SEED_DEMO=1 && npm run dev:server` for dev, or a `GYM_SEED_DEMO=1` system env for the built backend). The frontend-only `VITE_SEED_DEMO` in `.env.development` does NOT reach the backend process and does not trigger seeding.
 
 Data locations (override with `GYMSYSTEM_DATA_DIR`):
 - `%LOCALAPPDATA%\GymSystem\Database\gym.db`

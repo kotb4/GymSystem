@@ -81,5 +81,5 @@ The following MUST NEVER exist in this codebase:
 | `GYMSYSTEM_HOST` | Bind address | `127.0.0.1` |
 | `GYMSYSTEM_SECURE_COOKIES` | Enable Secure flag on cookies | off |
 | `GYMSYSTEM_DIST` | Frontend dist directory | `<cwd>/dist` |
-| `GYM_SEED_DEMO` | Seed demo data (built backend) | off |
-| `VITE_SEED_DEMO` | Seed demo data (dev server) | `1` in `.env.development` |
+| `GYM_SEED_DEMO` | Seed demo data (backend; the only trigger) | off |
+| `VITE_SEED_DEMO` | Frontend-only flag (does NOT reach the backend, does not seed) | `1` in `.env.development` |

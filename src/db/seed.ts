@@ -10,10 +10,11 @@ import type { RoleId } from "@/core/permissions";
 import type { Db } from "./engine";
 
 export function shouldSeedDemo(): boolean {
-  // Frontend (Vite): only in dev with an explicit flag.
-  const meta = import.meta as unknown as { env?: { DEV?: boolean; VITE_SEED_DEMO?: string } };
-  if (meta.env?.DEV) return String(meta.env.VITE_SEED_DEMO ?? "") === "1";
-  // Local backend (Node): opt-in via environment variable.
+  // Demo seeding lives in the Node backend only (server/context.ts). This module
+  // is bundled to CommonJS there, so `import.meta` is unavailable and the Vite
+  // branch would be dead code (and would trip the esbuild CJS warning). Opt-in
+  // via the backend environment variable GYM_SEED_DEMO (set it in the shell or
+  // via `dev.bat`/`npm run dev:server` for the built backend).
   const proc = globalThis as unknown as { process?: { env?: Record<string, string | undefined> } };
   return proc.process?.env?.GYM_SEED_DEMO === "1";
 }

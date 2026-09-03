@@ -1,7 +1,7 @@
 # Current Development State
 
-- **Last updated:** 2026-09-03
-- **Current objective:** TASK-021 (page consolidation) final phase — **removed the daily closing (الإغلاق اليومي) feature entirely** (product decision). `/الخزينة` (`/treasury`) is now **cash sessions (الوردية) only**, gated by `payments.view`. `cash.daily_close`/`cash.daily_reopen` permissions removed; migration **v27** drops `daily_closings` + `daily_closing_audit_entries` + indexes + revokes the seeded grants; dashboard KPI card removed.
+- **Last updated:** 2026-09-04
+- **Current objective (done):** TASK-021 — **removed the daily closing (الإغلاق اليومي) feature entirely** (product decision). `/الخزينة` (`/treasury`) is now **cash sessions (الوردية) only**, gated by `payments.view`. `cash.daily_close`/`cash.daily_reopen` permissions removed; migration **v27** drops `daily_closings` + `daily_closing_audit_entries` + indexes + revokes the seeded grants; dashboard KPI card removed. Cleanup (TASK-022-adjacent): removed the dead `import.meta` branch in `shouldSeedDemo()` → **`npm run build` is now fully clean (no CJS warning)**; corrected false `VITE_SEED_DEMO` dev-seeding claims in docs.
 - **Last agent/tool:** opencode (this session)
 
 ## Active tasks
@@ -53,6 +53,11 @@ Removed the now-unused tab keys from i18n: `tabClosing`/`tabSessions`/`tabClosin
 - i18n: removed the unused `treasury.*` block (kept only `title`/`subtitle`/`sessionSectionHint`) and the unused `errors.treasury.*` block.
 - Tests: deleted `tests/daily-closing.test.ts` (was 30 cases); bumped the 3 hardcoded migration-version assertions 26→27 (`foundation.smoke.test.ts`, `part4-backup.test.ts`, `restore-authz.test.ts`).
 - Verification: `npm run typecheck` clean, `npm run typecheck:server` clean, i18n coverage 3/3, `npm test` **394/394** (32 files), `npm run build` OK (pre-existing seed.ts CJS `import.meta` warning non-fatal), `node scripts/check-rpc-consistency.cjs` ok (264 entries, no missing).
+
+**Phase 12 (done, this session): cleaned build warning + corrected dev-seeding docs.**
+- Removed the **dead `import.meta` branch** in `shouldSeedDemo()` (`src/db/seed.ts:12-19`). This branch was never executed — `shouldSeedDemo()` is called only by `server/context.ts` (the Node/CJS backend bundle, which always took the `process.env` path), and no frontend code imports it. It tripped the esbuild CJS `import.meta` warning. `shouldSeedDemo()` now checks only `process.env.GYM_SEED_DEMO === "1"`. **`npm run build` is now fully clean** (`node scripts/build-server.mjs` → exit 0, no warning; the only remaining note is Vite's cosmetic chunk-size suggestion, unrelated).
+- Corrected inaccurate dev-seeding docs: seeding runs only in the backend; the frontend `VITE_SEED_DEMO` from `.env.development` does **not** reach the Node server process, so it never seeded. Dev seeding = `set GYM_SEED_DEMO=1 && npm run dev:server` (the README already said this). Fixed AGENTS.md (§2), `.ai/architecture.md`, `docs/ai/security.md`.
+- Verification: `npm run typecheck` clean, `npm test` **394/394**, `npm run build` clean.
 
 ## Known issues / follow-ups
 
