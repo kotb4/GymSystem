@@ -26,10 +26,6 @@ export function AppLayout() {
     licenseStatus && licenseStatus.state === "active" && licenseStatus.daysRemaining > 0
       ? t("license.bannerActive", { days: String(licenseStatus.daysRemaining) })
       : null;
-  const graceMsg =
-    licenseStatus && licenseStatus.state === "grace" && licenseStatus.graceDaysRemaining != null
-      ? t("license.bannerGrace", { days: String(licenseStatus.graceDaysRemaining) })
-      : null;
   const hardMsg =
     licenseStatus &&
     (licenseStatus.state === "expired" || licenseStatus.state === "tampered" || licenseStatus.readOnly)
@@ -38,7 +34,7 @@ export function AppLayout() {
         : t("license.bannerExpired")
       : null;
 
-  const bannerMsg = hardMsg ?? graceMsg ?? activeMsg;
+  const bannerMsg = hardMsg ?? activeMsg;
   const bannerTone = licenseStatus?.tampered
     ? "border-red/30 bg-red/10 text-red"
     : licenseStatus?.readOnly

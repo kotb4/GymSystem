@@ -48,9 +48,10 @@ export function errAccountLocked(retryAfterSeconds: number): AppError {
 }
 
 /**
- * A license-gate rejection (read-only hard lock). Uses the LOCKED code (HTTP
- * 423). `reason` is one of expired_readonly | tampered | invalid and maps to an
- * i18n key owned by the frontend's describeError.
+ * A license-gate rejection (hard lock; expired = total lockdown per ADR-022,
+ * tampered/invalid = read-only). Uses the LOCKED code (HTTP 423). `reason` is
+ * one of expired | tampered | invalid and maps to an i18n key owned by the
+ * frontend's describeError.
  */
 export function errLicenseLocked(reason: string): AppError {
   return new AppError("LOCKED", "errors.license.blocked", { reason });

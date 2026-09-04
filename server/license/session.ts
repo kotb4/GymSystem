@@ -14,7 +14,7 @@ import type { Db, Row } from "../../src/db/engine";
 // ceiling. `license_activation` (a row in gym.db, keyed by HWID) is written
 // whenever a VERIFIED payload is active and survives cert/state deletion. When
 // no signed payload is present at boot, the marker enforces the recorded grant
-// bounds (expiry + grace) and the monotonic last_active clock guard instead of
+// bounds (expiry) and the monotonic last_active clock guard instead of
 // falling back to `unlicensed`. Deleting license.json + license.lic therefore
 // can neither extend the grant nor re-open writes after it lapsed.
 // ---------------------------------------------------------------------------
@@ -111,7 +111,8 @@ function deleteMarker(database: Db | null, hwid: string): void {
 /**
  * Runtime license session. Loaded once at boot; the signed `.lic` is kept at
  * `configDir/license.lic` and re-verified at boot (never trust the state cache
- * payload alone). Provides the single RPC read-only gate.
+ * payload alone). Provides the single RPC gate (expired = total lockdown,
+ * tampered/invalid = read-only).
  */
 
 const LIC_FILE = "license.lic";
@@ -123,10 +124,8 @@ export type LicensePublicStatus = {
   expiresAt: number | null;
   issuedAt: number | null;
   tier: string | null;
-  /** Days left before the license expires (active) or before grace ends (grace). 0 when locked. */
+  /** Days left before the license expires (active). 0 when locked. */
   daysRemaining: number;
-  /** Alias kept for backward-compat: days left until the grace window ends. */
-  graceDaysRemaining: number | null;
   readOnly: boolean;
   needsActivation: boolean;
   tampered: boolean;
@@ -285,16 +284,8 @@ export function licenseStatus(): LicensePublicStatus {
   const p = current.payload;
   const DAY = 24 * 60 * 60 * 1000;
   const now = Date.now();
-  const graceRemaining =
-    p != null ? Math.max(0, Math.ceil((p.expiresAt + 5 * DAY - now) / DAY)) : null;
-  let daysRemaining = 0;
-  if (p != null) {
-    if (ev.name === "active") {
-      daysRemaining = Math.max(0, Math.ceil((p.expiresAt - now) / DAY));
-    } else if (ev.name === "grace") {
-      daysRemaining = graceRemaining ?? 0;
-    }
-  }
+  const daysRemaining =
+    p != null && ev.name === "active" ? Math.max(0, Math.ceil((p.expiresAt - now) / DAY)) : 0;
   return {
     state: ev.name,
     hwid: currentHwid,
@@ -303,7 +294,6 @@ export function licenseStatus(): LicensePublicStatus {
     issuedAt: p?.issuedAt ?? null,
     tier: p?.tier ?? null,
     daysRemaining,
-    graceDaysRemaining: graceRemaining,
     readOnly: isHardLocked(current),
     needsActivation: needsActivation(current),
     tampered: ev.name === "tampered",
@@ -348,10 +338,19 @@ export function deactivateLicense(): void {
 }
 
 // ---------------------------------------------------------------------------
-// Read-only gate. When the license is hard-locked (expired past grace,
-// tampered, invalid), ONLY the keys below (service.fn) are dispatched; every
-// other RPC returns a LOCKED error.
+// RPC gate. Every hard-locked state blocks dispatch, but with different scope:
+//  - expired  -> TOTAL lockdown (ADR-022): only the activation surface below is
+//                dispatched; NOTHING else — not even reads — is allowed.
+//  - tampered/invalid -> read-only: READONLY_ALLOWLIST (all pure reads) is
+//                dispatched; every other RPC returns a LOCKED error.
 // ---------------------------------------------------------------------------
+
+const FULL_LOCK_ALLOWLIST: ReadonlySet<string> = new Set([
+  "license.status",
+  "license.activate",
+  "license.deactivate",
+  "auth.needsSetup",
+]);
 
 const READONLY_ALLOWLIST: ReadonlySet<string> = new Set([
   "license.status",
@@ -484,19 +483,22 @@ const READONLY_ALLOWLIST: ReadonlySet<string> = new Set([
 ]);
 
 /**
- * Returns a short reason key when a RPC must be blocked in read-only mode,
- * else null (allowed).
+ * Returns a short reason key when a RPC must be blocked while hard-locked,
+ * else null (allowed). Expired = total lockdown (no reads); tampered/invalid =
+ * read-only (restricted pure reads still dispatch).
  */
 export function rpcBlockReason(
   service: string,
   fn: string,
-): "expired_readonly" | "tampered" | "invalid" | null {
+): "expired" | "tampered" | "invalid" | null {
   if (!isHardLocked(current)) return null;
-  if (READONLY_ALLOWLIST.has(`${service}.${fn}`)) return null;
   const ev = evaluate(current);
-  if (ev.name === "tampered") return "tampered";
-  if (ev.name === "invalid") return "invalid";
-  return "expired_readonly";
+  if (ev.name === "expired") {
+    if (FULL_LOCK_ALLOWLIST.has(`${service}.${fn}`)) return null;
+    return "expired";
+  }
+  if (READONLY_ALLOWLIST.has(`${service}.${fn}`)) return null;
+  return ev.name === "tampered" ? "tampered" : "invalid";
 }
 
 /** True when the session is in a usable (write-enabled) state. */

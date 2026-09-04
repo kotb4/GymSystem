@@ -72,16 +72,16 @@ export function AppRoutes() {
   const { user, booting, needsSetup } = useAuth();
   const license = useLicense();
   if (booting) return null;
-  // ADR-019: when the license needs activation or is hard-locked (expired
-  // past grace / tampered / invalid), block the app and show the license
-  // screen. Login (for activation) and setup remain reachable.
+  // ADR-019 / ADR-022: when the license needs activation or is hard-locked
+  // (expired / tampered / invalid), block the app and show the license screen.
+  // expired = TOTAL lockdown → the activation surface is the ONLY reachable
+  // screen; login/setup are not rendered (activate/deactivate are plain,
+  // unauthenticated functions so activation still works).
   const licenseBlocked =
     license.status != null && (license.status.needsActivation || license.status.readOnly);
   if (licenseBlocked && license.status) {
     return (
       <Routes>
-        <Route path="/login" element={<LoginPage />} />
-        <Route path="/setup" element={<SetupPage />} />
         <Route path="*" element={<LicensePage />} />
       </Routes>
     );

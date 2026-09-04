@@ -4,21 +4,18 @@
  * States:
  *  - unlicensed    no license state file yet (needs activation)
  *  - active        valid signature, HWID matches, not expired
- *  - grace         signature valid + HWID matches but past `expiresAt`,
- *                  within GRACE_DAYS — full writes allowed with a warning
- *  - expired       past `expiresAt` + GRACE_DAYS — read-only
+ *  - expired       past `expiresAt` — TOTAL lockdown (activation surface only;
+ *                  no read-only grace window, ADR-022)
  *  - tampered      system clock rolled back > tolerance vs lastActive — read-only
  *  - invalid       license file present but unverifiable/bound to another HWID
  */
 
-export const GRACE_DAYS = 5;
 export const CLOCK_ROLLBACK_TOLERANCE_MS = 60 * 60 * 1000; // 1 hour
 export const CLOCK_ROLLBACK_GRACE_MS = CLOCK_ROLLBACK_TOLERANCE_MS * 12; // allow small boot ambient
 
 export type LicenseStateName =
   | "unlicensed"
   | "active"
-  | "grace"
   | "expired"
   | "tampered"
   | "invalid";
@@ -46,39 +43,24 @@ export interface LicenseState {
   signatureValid: boolean;
 }
 
-/** Grace cutoff in ms: expiresAt + GRACE_DAYS. */
-export function graceDeadline(payload: SignedPayload): number {
-  return payload.expiresAt + GRACE_DAYS * 24 * 60 * 60 * 1000;
-}
-
-/**
- * True when writes are blocked outright (hard lockdown) — the read-only
- * RPC gate keys off this.
- */
-export function isHardLocked(state: LicenseState): boolean {
-  const name = evaluate(state).name;
-  return name === "expired" || name === "tampered" || name === "invalid";
-}
-
 /** True when the system is unlicensed and needs the activation screen. */
 export function needsActivation(state: LicenseState): boolean {
   const name = evaluate(state).name;
   return name === "unlicensed" || name === "invalid";
 }
 
-/** Human-facing snack: days remaining in grace for the banner. */
-export function graceDaysRemaining(state: LicenseState, nowMs: number): number {
-  const p = state.payload;
-  if (!p) return 0;
-  const msLeft = graceDeadline(p) - nowMs;
-  return Math.max(0, Math.ceil(msLeft / (24 * 60 * 60 * 1000)));
+/**
+ * True when the license is in a hard lockdown state — the RPC gate keys off
+ * this (expired = total lock, tampered/invalid = read-only).
+ */
+export function isHardLocked(state: LicenseState): boolean {
+  const name = evaluate(state).name;
+  return name === "expired" || name === "tampered" || name === "invalid";
 }
 
-function expiryState(state: LicenseState): "active" | "grace" | "expired" {
+function expiryState(state: LicenseState): "active" | "expired" {
   const p = state.payload!;
-  if (state.now >= graceDeadline(p)) return "expired";
-  if (state.now >= p.expiresAt) return "grace";
-  return "active";
+  return state.now >= p.expiresAt ? "expired" : "active";
 }
 
 /**
@@ -87,7 +69,7 @@ function expiryState(state: LicenseState): "active" | "grace" | "expired" {
  *  2. Signature/parse failed  -> invalid
  *  3. Clock rolled back       -> tampered (takes precedence over expiry so a
  *                                user can't rewind to dodge expiry)
- *  4. payload present         -> active/grace/expired by expiresAt vs now
+ *  4. payload present         -> active/expired by expiresAt vs now
  */
 export function evaluate(state: LicenseState): {
   name: LicenseStateName;

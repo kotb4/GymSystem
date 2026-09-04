@@ -187,9 +187,7 @@ export function LicensePage() {
 
           {!needsActivation && !readOnly && !tampered && (
             <div className="space-y-4">
-              <p className="text-[13px] leading-relaxed text-subtle">
-                {state === "grace" ? t("license.statusGraceDesc") : t("license.statusActiveDesc")}
-              </p>
+              <p className="text-[13px] leading-relaxed text-subtle">{t("license.statusActiveDesc")}</p>
               <div className="rounded-xl border border-line bg-base p-4 text-[13px]">
                 <Row label={t("license.gymLabel")} value={status?.gym ?? "-"} />
                 <Row label={t("license.hwidLabel")} value={status?.hwid ?? "-"} mono />

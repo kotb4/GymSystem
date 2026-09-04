@@ -1,7 +1,6 @@
 import type { Db } from "../../src/db/engine";
-import type { ServiceActor } from "../../src/core/permissions";
 import { errValidation } from "../../src/core/errors";
-import { a, p, defineService } from "./helpers";
+import { p, defineService } from "./helpers";
 import {
   licenseStatus,
   activateLicense as activate,
@@ -9,21 +8,22 @@ import {
 } from "../license/session";
 
 /**
- * Offline licensing surface. `status` is universally readable so the SPA can
- * decide whether to show the activation / grace / read-only screen even while
- * the license is blocked (it is in the read-only allowlist).
+ * Offline licensing surface. `status` is universally readable and `activate`/
+ * `deactivate` are PLAIN (unauthenticated) functions so the activation screen
+ * works WITHOUT a login — required by the total-lock policy (ADR-022: expired
+ * = activation surface only). All three are always in a lock allowlist.
  */
 export const license = defineService({
   status: p((_db: Db) => {
     return licenseStatus();
   }),
-  activate: a((_db: Db, _actor: ServiceActor, licJson: string) => {
+  activate: p((_db: Db, licJson: string) => {
     if (typeof licJson !== "string" || licJson.length === 0) {
       throw errValidation("errors.license.empty");
     }
     return activate(licJson);
   }),
-  deactivate: a((_db: Db, _actor: ServiceActor) => {
+  deactivate: p((_db: Db) => {
     deactivate();
     return { ok: true };
   }),

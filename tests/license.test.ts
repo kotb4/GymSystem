@@ -8,7 +8,6 @@ import {
   needsActivation,
   advanceLastActive,
   stateFromPayload,
-  GRACE_DAYS,
   CLOCK_ROLLBACK_TOLERANCE_MS,
   type LicenseState,
 } from "../server/license/policy";
@@ -79,16 +78,21 @@ describe("license policy (state machine)", () => {
     expect(isHardLocked(state({}))).toBe(false);
   });
 
-  it("grace when now is past expiresAt but within GRACE_DAYS", () => {
+  it("expired as soon as now is past expiresAt (no grace period)", () => {
     const s = state({ payload: payload({ expiresAt: Date.now() - 1 * DAY }) });
-    expect(evaluate(s).name).toBe("grace");
-    expect(isHardLocked(s)).toBe(false);
-  });
-
-  it("expired when now is past grace deadline", () => {
-    const s = state({ payload: payload({ expiresAt: Date.now() - (GRACE_DAYS + 1) * DAY }) });
     expect(evaluate(s).name).toBe("expired");
     expect(isHardLocked(s)).toBe(true);
+  });
+
+  it("expired exactly at the expiresAt boundary", () => {
+    const s = state({ payload: payload({ expiresAt: Date.now() - 1 }) });
+    expect(evaluate(s).name).toBe("expired");
+  });
+
+  it("stays active until NOW reaches expiresAt (boundary just before)", () => {
+    const s = state({ payload: payload({ expiresAt: Date.now() + 1 }) });
+    expect(evaluate(s).name).toBe("active");
+    expect(isHardLocked(s)).toBe(false);
   });
 
   it("tampered when clock rolled back beyond rollback tolerance", () => {
@@ -180,16 +184,23 @@ describe("license session (read-only gate)", () => {
     expect(rpcBlockReason("subscriptions", "createSubscription")).toBeNull();
   });
 
-  it("blocks mutating RPC and permits reads when expired past grace", () => {
+  it("total-locks ALL RPC (even reads) once expired — only the license surface stays", () => {
     _setSessionForTest({
       signatureValid: true,
       filePresent: true,
       lastActive: null,
-      payload: payload({ expiresAt: Date.now() - (GRACE_DAYS + 1) * DAY }),
+      payload: payload({ expiresAt: Date.now() - 1 * DAY }),
     });
-    expect(rpcBlockReason("cash", "openCashSession")).toBe("expired_readonly");
-    expect(rpcBlockReason("store", "createSale")).toBe("expired_readonly");
-    expect(rpcBlockReason("finance", "getFinanceOverview")).toBeNull();
+    expect(rpcBlockReason("cash", "openCashSession")).toBe("expired");
+    expect(rpcBlockReason("store", "createSale")).toBe("expired");
+    expect(rpcBlockReason("subscriptions", "createSubscription")).toBe("expired");
+    expect(rpcBlockReason("finance", "getFinanceOverview")).toBe("expired");
+    expect(rpcBlockReason("dashboard", "getDashboardStats")).toBe("expired");
+    expect(rpcBlockReason("members", "listMembers")).toBe("expired");
+    expect(rpcBlockReason("license", "status")).toBeNull();
+    expect(rpcBlockReason("license", "activate")).toBeNull();
+    expect(rpcBlockReason("license", "deactivate")).toBeNull();
+    expect(rpcBlockReason("auth", "needsSetup")).toBeNull();
     expect(canWrite()).toBe(false);
   });
 
@@ -246,27 +257,20 @@ describe("license session (read-only gate)", () => {
     expect(st.needsActivation).toBe(false);
     expect(st.hwid).toBeTruthy();
     expect(st.daysRemaining).toBe(30);
-    expect(st.graceDaysRemaining).toBe(35);
   });
 
-  it("daysRemaining counts down to expiry in active and until grace end in grace", () => {
+  it("daysRemaining counts down to expiry only while active", () => {
     const now = Date.now();
     _setSessionForTest({ payload: payload({ expiresAt: now + 3 * DAY }), signatureValid: true, filePresent: true, lastActive: null });
     const active = licenseStatus();
     expect(active.state).toBe("active");
     expect(active.daysRemaining).toBe(3);
-    expect(active.graceDaysRemaining).toBe(8);
 
     _setSessionForTest({ payload: payload({ expiresAt: now - 2 * DAY }), signatureValid: true, filePresent: true, lastActive: null });
-    const grace = licenseStatus();
-    expect(grace.state).toBe("grace");
-    expect(grace.daysRemaining).toBe(3);
-    expect(grace.graceDaysRemaining).toBe(3);
-
-    _setSessionForTest({ payload: payload({ expiresAt: now - 10 * DAY }), signatureValid: true, filePresent: true, lastActive: null });
     const expired = licenseStatus();
     expect(expired.state).toBe("expired");
     expect(expired.daysRemaining).toBe(0);
+    expect(expired.readOnly).toBe(true);
   });
 
   it("records the activation marker on activation and falls back to it when the signed files are deleted", () => {
@@ -299,7 +303,7 @@ describe("license session (read-only gate)", () => {
     expect(st.expiresAt).toBeGreaterThan(Date.now() - 40 * DAY);
   });
 
-  it("marker enforces grant period: deleting signed files does NOT escape expired read-only", () => {
+  it("marker enforces grant period: deleting signed files does NOT escape expired total lock", () => {
     const db = createTestDb();
     const tmp = mkTmpDir();
     _resetLicenseSession(tmp, db);
@@ -308,7 +312,7 @@ describe("license session (read-only gate)", () => {
     const priv = exportPrivateKeyPem(kp);
     const pub = exportPublicKeyPem(kp);
     // grant lapsed long ago — activation then marker fallback must be expired
-    const lic = issueLicense(priv, "GYM-AAAA-BBBB-CCCC-DDDD", "نادي", Date.now() - (GRACE_DAYS + 20) * DAY, Date.now() - (GRACE_DAYS + 10) * DAY);
+    const lic = issueLicense(priv, "GYM-AAAA-BBBB-CCCC-DDDD", "نادي", Date.now() - 30 * DAY, Date.now() - 20 * DAY);
 
     expect(_activateWithPublicKey(lic, pub).state).toBe("expired");
     fs.rmSync(path.join(tmp, "license.lic"), { force: true });
@@ -318,8 +322,9 @@ describe("license session (read-only gate)", () => {
     const st = licenseStatus();
     expect(st.state).toBe("expired");
     expect(st.readOnly).toBe(true);
-    expect(rpcBlockReason("cash", "openCashSession")).toBe("expired_readonly");
-    expect(rpcBlockReason("members", "listMembers")).toBeNull();
+    expect(rpcBlockReason("cash", "openCashSession")).toBe("expired");
+    expect(rpcBlockReason("members", "listMembers")).toBe("expired");
+    expect(rpcBlockReason("license", "status")).toBeNull();
   });
 
   it("marker keeps the clock-rollback guard working after the signed files are deleted", () => {

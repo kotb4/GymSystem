@@ -699,8 +699,8 @@ function buildMigrations(): Migration[] {
       // occurred" marker inside gym.db: written from a VERIFIED payload at
       // activation/boot, keyed by HWID, and survives cert/state file deletion.
       // At boot, when no valid signed payload is present, the marker enforces
-      // the recorded grant period (expiry + grace) and the monotonic
-      // last_active clock guard instead of falling back to unlicensed.
+      // the recorded grant period (expiry, no grace window since ADR-022) and
+      // the monotonic last_active clock guard instead of falling back to unlicensed.
       version: 29,
       statements: [
         "CREATE TABLE IF NOT EXISTS license_activation (\n  hwid TEXT PRIMARY KEY,\n  activated_at INTEGER NOT NULL,\n  issued_at INTEGER NOT NULL,\n  expires_at INTEGER NOT NULL,\n  gym TEXT,\n  tier TEXT,\n  last_active INTEGER,\n  created_at TEXT NOT NULL,\n  updated_at TEXT NOT NULL\n)",

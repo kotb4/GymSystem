@@ -1231,7 +1231,6 @@ export interface LicenseStatus {
   issuedAt: number | null;
   tier: string | null;
   daysRemaining: number;
-  graceDaysRemaining: number | null;
   readOnly: boolean;
   needsActivation: boolean;
   tampered: boolean;
