@@ -120,11 +120,6 @@ $lblExp.ForeColor = [System.Drawing.Color]::FromArgb(140, 233, 160)
 $lblExp.Location = New-Object System.Drawing.Point(16, 66)
 $lblExp.AutoSize = $true
 
-$txtUntil = New-Object System.Windows.Forms.TextBox
-$txtUntil.Location = New-Object System.Drawing.Point(16, 96)
-$txtUntil.Size = New-Object System.Drawing.Size(0, 0)
-$txtUntil.Visible = $false
-
 $btnIssue = New-Object System.Windows.Forms.Button
 $btnIssue.Text = "إصدار الرخصة"
 $btnIssue.Location = New-Object System.Drawing.Point(16, 128)
@@ -253,6 +248,13 @@ $form.Add_Shown({
   Update-Preview
   $form.Activate()
 })
+
+# ---------------- Assemble the window ----------------
+# The controls must be ADDED to the form/groups or nothing renders.
+$form.Controls.AddRange(@($title, $sub, $hwidGroup, $issueGroup, $actGroup, $status))
+$hwidGroup.Controls.AddRange(@($txtHwid, $btnCopyHwid))
+$issueGroup.Controls.AddRange(@($lblGym, $txtGym, $lblDays, $txtDays, $lblExp, $btnIssue, $lblIssueHint))
+$actGroup.Controls.AddRange(@($btnCopyLic, $btnOpenFolder))
 
 # ---------------- Run ----------------
 [System.Windows.Forms.Application]::EnableVisualStyles()
