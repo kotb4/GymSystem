@@ -10,6 +10,14 @@ import { activeTrialForMember } from "./trials.service";
 import { unfreezeSubscription } from "./subscriptions.service";
 import { applyEarnRule, loyaltyUsableCreditMinor } from "./loyalty.service";
 
+/**
+ * Internal sentinel used to abort a check-in write transaction when the
+ * duplicate-scan window (checked inside the transaction) is hit. Throwing it
+ * rolls the transaction back; the outer handler converts it into the
+ * "duplicate" CheckInResult instead of a client-facing error.
+ */
+const CHECKIN_DUPLICATE_SENTINEL = Object.freeze({ __checkinDuplicate: true });
+
 export type CheckInDenialReason =
   | "CARD_UNKNOWN"
   | "CARD_NOT_LINKED"
@@ -239,43 +247,62 @@ export async function recordCheckIn(
 
   const stampNow = nowStamp();
   const windowSeconds = duplicateWindowSeconds(db);
-  const lastVisit = db.first<AttendanceRow>(
-    "SELECT * FROM attendance WHERE deleted_at IS NULL AND member_id = ? ORDER BY checkin_at DESC LIMIT 1",
-    [member.id],
-  );
-  if (lastVisit) {
-    const secondsAgo = secondsBetweenStamps(stampNow, lastVisit.checkin_at);
-    if (secondsAgo < windowSeconds) {
-      return {
-        kind: "duplicate",
-        secondsAgo,
-        memberName: member.full_name,
+
+  // The duplicate-window check (read last visit + compare) is performed INSIDE
+  // the write transaction (BEGIN IMMEDIATE) so two very quick scans for the same
+  // member serialize and can't both pass before either insert commits — a
+  // double-scan must not consume two session credits or record two identical
+  // check-ins.
+  let duplicateResult: CheckInResult | null = null;
+
+  const attendanceId = crypto.randomUUID();
+  try {
+    await db.transaction(async () => {
+      const lastVisit = db.first<AttendanceRow>(
+        "SELECT * FROM attendance WHERE deleted_at IS NULL AND member_id = ? ORDER BY checkin_at DESC LIMIT 1",
+        [member.id],
+      );
+      if (lastVisit) {
+        const secondsAgo = secondsBetweenStamps(stampNow, lastVisit.checkin_at);
+        if (secondsAgo < windowSeconds) {
+          duplicateResult = {
+            kind: "duplicate",
+            secondsAgo,
+            memberName: member.full_name,
+            memberCode: member.member_code,
+          };
+          throw CHECKIN_DUPLICATE_SENTINEL;
+        }
+      }
+
+      db.run(
+        "INSERT INTO attendance (id, member_id, card_id, subscription_id, checkin_at, created_by, device_identifier, notes)\nVALUES (?, ?, ?, ?, ?, ?, ?, NULL)",
+        [
+          attendanceId,
+          member.id,
+          card.id,
+          subscription.id,
+          stampNow,
+          actor.userId,
+          input.deviceIdentifier ?? null,
+        ],
+      );
+      if (planKind === "sessions" && sessionsTotal != null) consumeSession(db, subscription.id);
+      recordAudit(db, actor, "CHECKIN_RECORDED", "attendance", attendanceId, {
         memberCode: member.member_code,
-      };
+        barcode,
+      });
+      applyEarnRule(db, actor, member.id, "checkin", "attendance", attendanceId, { reason: "checkin" });
+    });
+  } catch (error) {
+    if (error === CHECKIN_DUPLICATE_SENTINEL) {
+      // rollback already happened; swallow and report as a duplicate scan
+    } else {
+      throw error;
     }
   }
 
-  const attendanceId = crypto.randomUUID();
-  await db.transaction(async () => {
-    db.run(
-      "INSERT INTO attendance (id, member_id, card_id, subscription_id, checkin_at, created_by, device_identifier, notes)\nVALUES (?, ?, ?, ?, ?, ?, ?, NULL)",
-      [
-        attendanceId,
-        member.id,
-        card.id,
-        subscription.id,
-        stampNow,
-        actor.userId,
-        input.deviceIdentifier ?? null,
-      ],
-    );
-    if (planKind === "sessions" && sessionsTotal != null) consumeSession(db, subscription.id);
-    recordAudit(db, actor, "CHECKIN_RECORDED", "attendance", attendanceId, {
-      memberCode: member.member_code,
-      barcode,
-    });
-    applyEarnRule(db, actor, member.id, "checkin", "attendance", attendanceId, { reason: "checkin" });
-  });
+  if (duplicateResult) return duplicateResult;
 
   return {
     kind: "success",

@@ -247,6 +247,34 @@ it("surfaces outstanding money at check-in", async () => {
     const third = await recordCheckIn(db, reception, { barcode: "GYM-300001" });
     expect(third.kind).toBe("duplicate");
   });
+
+  it("double scanning a session-plan member within the window consumes only ONE session", async () => {
+    const member = await createMember(db, owner, { fullName: "حصص-مكرر" });
+    const plan = await createPlan(db, owner, {
+      name: "أعضاء-باقة",
+      durationDays: 30,
+      price: 300,
+      kind: "sessions",
+      sessionsCount: 5,
+    });
+    await createSubscription(db, owner, { memberId: member.id, planId: plan.id });
+    await assignCardByBarcode(db, reception, { barcodeValue: "GYM-SESS-01", memberId: member.id });
+
+    const first = await recordCheckIn(db, reception, { barcode: "GYM-SESS-01" });
+    expect(first.kind).toBe("success");
+    // Two very quick follow-up scans hit the duplicate window: both must be
+    // rejected as duplicates, not consume additional session credits.
+    const second = await recordCheckIn(db, reception, { barcode: "GYM-SESS-01" });
+    const third = await recordCheckIn(db, reception, { barcode: "GYM-SESS-01" });
+    expect(second.kind).toBe("duplicate");
+    expect(third.kind).toBe("duplicate");
+
+    const used = db.first<{ sessions_used: number }>(
+      "SELECT sessions_used FROM member_subscriptions WHERE member_id = ?",
+      [member.id],
+    )!;
+    expect(Number(used.sessions_used)).toBe(1);
+  });
 });
 
 function addDaysLocal(offset: number): string {

@@ -363,22 +363,22 @@ export async function bookMember(
   );
   if (existing && str(existing.status) !== "cancelled") throw errConflict("errors.bookingDuplicate");
 
-  const bookedCount = Number(
-    db.scalar(
-      "SELECT COUNT(*) FROM class_bookings WHERE session_id = ? AND status IN ('booked','attended')",
-      [input.sessionId],
-    ) ?? 0,
-  );
+  // Capacity is checked INSIDE the transaction (under BEGIN IMMEDIATE) so the
+  // count read and the insert are atomic: two concurrent bookings for the last
+  // seat can't both read the same free count and oversubscribe the class.
   const capacity = num(session.capacity);
-  const wantsOverride = bookedCount >= capacity;
-  if (wantsOverride) {
-    const allowed =
-      input.overrideCapacity === true &&
-      (actor.roleId === "owner" || roleHasPermission(actor.roleId, "classes.manage"));
-    if (!allowed) throw errConflict("errors.classFull", { capacity });
-  }
+  const wantsOverride = input.overrideCapacity === true && (actor.roleId === "owner" || roleHasPermission(actor.roleId, "classes.manage"));
 
   await db.transaction(async () => {
+    const bookedCount = Number(
+      db.scalar(
+        "SELECT COUNT(*) FROM class_bookings WHERE session_id = ? AND status IN ('booked','attended')",
+        [input.sessionId],
+      ) ?? 0,
+    );
+    if (bookedCount >= capacity && !wantsOverride) {
+      throw errConflict("errors.classFull", { capacity });
+    }
     if (existing) {
       db.run("UPDATE class_bookings SET status = 'booked', booked_at = ?, booked_by = ? WHERE id = ?", [
         stamp(),
