@@ -18,6 +18,7 @@
   - Verification (TASK-035): `npm run typecheck` + `typecheck:server` clean; `node scripts/check-rpc-consistency.cjs` clean (272 entries, no missing client calls); `npm test` **438/438** (one run had a single `restore-authz` load-timing flake that passes in isolation + on rerun); `npm run build` clean; `npm run sync:docs` → AGENTS.md (34→36 services, migrations v1..v28), docs/ai/architecture.md + database.md. i18n coverage 3/3 (included in suite).
 - **Previous objective (delivered earlier this session):** **TASK-034 — License Tool GUI v7 (batch issuer)** — committed+pushed `2666400`. See the TASK-034 record below.
 - **Earlier this session:** **TASK-031 offline licensing** committed+pushed (`4270511`), CLI ergonomics across `35d7ef0`+`17f225d`, **TASK-032** license folder + days-remaining banner, **TASK-033** WinForms GUI, **TASK-034** GUI v7 batch issuer — full records below.
+- **TASK-036 committed/pushed:** **`d833437`** (origin main, `2409078..d833437`).
 - **TASK-035 committed/pushed:** **`cf16e5f`** (origin main, `2666400..cf16e5f`).
 - **Last agent/tool:** opencode (this session)
 
