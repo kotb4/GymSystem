@@ -676,6 +676,21 @@ function buildMigrations(): Migration[] {
         db.run("DELETE FROM permissions WHERE code IN ('cash.daily_close', 'cash.daily_reopen')");
       },
     },
+    {
+      // ---- v28: class_recurrences (weekly recurring class schedule) ----
+      // TASK-035: the classes hub manages gym group classes (MMA, Karate, ...).
+      // A recurrence template stores the weekly pattern (days_of_week as
+      // comma-separated 0..6, Sunday=0), and class_sessions rows are
+      // materialized from it. Existing sessions/bookings/attendance untouched.
+      version: 28,
+      statements: [
+        "CREATE TABLE IF NOT EXISTS class_recurrences (\n  id TEXT PRIMARY KEY,\n  class_id TEXT NOT NULL REFERENCES classes(id),\n  days_of_week TEXT NOT NULL,\n  start_date TEXT NOT NULL,\n  start_time TEXT NOT NULL,\n  duration_min INTEGER NOT NULL CHECK (duration_min >= 5),\n  capacity INTEGER CHECK (capacity IS NULL OR capacity > 0),\n  is_active INTEGER NOT NULL DEFAULT 1 CHECK (is_active IN (0, 1)),\n  created_by TEXT NOT NULL REFERENCES users(id),\n  created_at TEXT NOT NULL,\n  updated_at TEXT NOT NULL\n)",
+        "CREATE INDEX IF NOT EXISTS idx_class_recurrences_class ON class_recurrences(class_id)",
+      ],
+      callback: () => {
+        // Validation lives in the service layer (classes.service.ts).
+      },
+    },
   ];
 }
 

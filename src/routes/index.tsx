@@ -22,7 +22,6 @@ import { SettingsPage } from "@/pages/settings-page";
 import { PaymentsPage } from "@/pages/payments-page";
 import { ExpensesPage } from "@/pages/expenses-page";
 import { ReportsPage } from "@/pages/reports-page";
-import { TrainersPage } from "@/pages/trainers-page";
 import { StorePage } from "@/pages/store-page";
 import { ClassesPage } from "@/pages/classes-page";
 import { EmployeesPage } from "@/pages/employees-page";
@@ -151,7 +150,7 @@ export function AppRoutes() {
         <Route
           path="classes"
           element={
-            <RequirePermission permission="classes.view">
+            <RequirePermission permissions={["classes.view", "trainers.view"]}>
               <ClassesPage />
             </RequirePermission>
           }
@@ -185,14 +184,6 @@ export function AppRoutes() {
           element={
             <RequirePermission permission="cards.view">
               <CardsPage />
-            </RequirePermission>
-          }
-        />
-        <Route
-          path="trainers"
-          element={
-            <RequirePermission permission="trainers.view">
-              <TrainersPage />
             </RequirePermission>
           }
         />

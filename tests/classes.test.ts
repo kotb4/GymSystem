@@ -15,6 +15,10 @@ import {
   bookMember,
   cancelBooking,
   setBookingStatus,
+  createClassRecurrence,
+  listClassRecurrences,
+  generateRecurrenceWeeks,
+  deactivateClassRecurrence,
 } from "@/core/services/classes.service";
 import { todayKey } from "@/core/dates";
 import type { Db } from "@/db/engine";
@@ -217,5 +221,123 @@ describe("class permission denials", () => {
   it("trainer only has classes.view", async () => {
     expect(() => listClasses(db, trainer)).not.toThrow();
     await expect(createClass(db, trainer, { name: "x", capacity: 5 })).rejects.toMatchObject({ code: "FORBIDDEN" });
+  });
+});
+
+describe("class recurrences", () => {
+  // 2027-01-04 is a Monday; days 1 (Mon) and 4 (Thu) make this deterministic.
+  const START = "2027-01-04";
+
+  it("creates a recurrence and materializes sessions for the selected days", async () => {
+    const cls = await createClass(db, owner, { name: "MMA", capacity: 10 });
+    const res = await createClassRecurrence(db, owner, {
+      classId: cls.id,
+      daysOfWeek: [1, 4],
+      startDate: START,
+      startTime: "18:00",
+      durationMin: 90,
+      weeks: 2,
+    });
+    expect(res.created).toBe(4);
+    expect(res.skipped).toBe(0);
+    expect(res.recurrence.capacity).toBeNull();
+    expect(res.recurrence.nextScheduledDate).toBe(START);
+
+    const sessions = listSessions(db, owner, { classId: cls.id, status: "all" });
+    expect(sessions).toHaveLength(4);
+    for (const s of sessions) {
+      expect(s.capacity).toBe(10);
+      expect(s.durationMin).toBe(90);
+      expect(s.startTime).toBe("18:00");
+    }
+  });
+
+  it("falls back to class capacity unless overridden", async () => {
+    const cls = await createClass(db, owner, { name: "كراتيه", capacity: 8 });
+    const capped = await createClassRecurrence(db, owner, {
+      classId: cls.id,
+      daysOfWeek: [1],
+      startDate: "2027-01-04",
+      startTime: "18:00",
+      capacity: 3,
+      weeks: 1,
+    });
+    expect(capped.created).toBe(1);
+    const session = listSessions(db, owner, { classId: cls.id, status: "all" })[0];
+    expect(session.capacity).toBe(3);
+  });
+
+  it("skips dates already occupied by a session", async () => {
+    const cls = await createClass(db, owner, { name: "بوكس", capacity: 10 });
+    await createClassSession(db, owner, cls.id, { sessionDate: START, startTime: "18:00", durationMin: 60 });
+    const res = await createClassRecurrence(db, owner, {
+      classId: cls.id,
+      daysOfWeek: [1],
+      startDate: START,
+      startTime: "18:00",
+      weeks: 1,
+    });
+    expect(res.created).toBe(0);
+    expect(res.skipped).toBe(1);
+  });
+
+  it("extends an existing recurrence with more weeks", async () => {
+    const cls = await createClass(db, owner, { name: "كاراتي", capacity: 10 });
+    const res = await createClassRecurrence(db, owner, {
+      classId: cls.id,
+      daysOfWeek: [1, 4],
+      startDate: START,
+      startTime: "18:00",
+      weeks: 2,
+    });
+    expect(res.created).toBe(4);
+    const extended = await generateRecurrenceWeeks(db, owner, res.recurrence.id, 1);
+    expect(extended.created).toBe(2);
+    expect(extended.skipped).toBe(0);
+    expect(listSessions(db, owner, { classId: cls.id, status: "all" })).toHaveLength(6);
+  });
+
+  it("stops generating but keeps existing sessions", async () => {
+    const cls = await createClass(db, owner, { name: "جودو", capacity: 10 });
+    const res = await createClassRecurrence(db, owner, {
+      classId: cls.id,
+      daysOfWeek: [1],
+      startDate: START,
+      startTime: "18:00",
+      weeks: 2,
+    });
+    await deactivateClassRecurrence(db, owner, res.recurrence.id);
+    expect(listClassRecurrences(db, owner, { activeOnly: true })).toHaveLength(0);
+    expect(listSessions(db, owner, { classId: cls.id, status: "all" })).toHaveLength(2);
+    await expect(generateRecurrenceWeeks(db, owner, res.recurrence.id)).rejects.toMatchObject({
+      code: "VALIDATION",
+    });
+  });
+
+  it("validates input and permissions", async () => {
+    const cls = await createClass(db, owner, { name: "تايكواندو", capacity: 10 });
+    await expect(
+      createClassRecurrence(db, owner, { classId: cls.id, daysOfWeek: [], startDate: START, startTime: "18:00" }),
+    ).rejects.toMatchObject({ code: "VALIDATION" });
+    await expect(
+      createClassRecurrence(db, owner, { classId: cls.id, daysOfWeek: [1], startDate: START, startTime: "30:00" }),
+    ).rejects.toMatchObject({ code: "VALIDATION" });
+    await expect(
+      createClassRecurrence(db, trainer, { classId: cls.id, daysOfWeek: [1], startDate: START, startTime: "18:00" }),
+    ).rejects.toMatchObject({ code: "FORBIDDEN" });
+  });
+
+  it("denies trainer from managing recurrences", async () => {
+    const cls = await createClass(db, owner, { name: "سباحة", capacity: 10 });
+    const res = await createClassRecurrence(db, owner, {
+      classId: cls.id,
+      daysOfWeek: [1],
+      startDate: START,
+      startTime: "18:00",
+      weeks: 1,
+    });
+    expect(() => listClassRecurrences(db, trainer)).not.toThrow();
+    await expect(generateRecurrenceWeeks(db, trainer, res.recurrence.id)).rejects.toMatchObject({ code: "FORBIDDEN" });
+    await expect(deactivateClassRecurrence(db, trainer, res.recurrence.id)).rejects.toMatchObject({ code: "FORBIDDEN" });
   });
 });

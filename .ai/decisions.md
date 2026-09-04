@@ -1,5 +1,17 @@
 # Architecture Decision Log
 
+## ADR-020: Class hub merge + weekly recurring sessions (class_recurrences)
+- Date: 2026-09-05
+- Status: accepted (TASK-035, per user's explicit three answers)
+- Context: The users wanted the التدريب section to manage gym group classes (MMA/كراتيه…) "more advanced", with trainer data. Open questions were settled by the user: (1) structure = merge trainers into one Classes hub page (تبويبات), (2) features = **weekly recurring sessions** + a **weekly timetable**, (3) trainers = full data + already-existing linking to classes. Constraints: recurring classes must not reinvent booking/attendance/consumption; must follow the append-only migration rule; must survive the legacy-adopt re-run path (migration DDL `IF NOT EXISTS` like all v6+ tables).
+- Decision:
+  1. **Template + materialization.** A recurrence is a lightweight template row in new table `class_recurrences` (fields: days_of_week as comma-separated JS weekday numbers 0..6 [Sun=0], start_date, start_time, duration_min≥5, optional capacity, is_active). Creating/accepting a recurrence **materializes real `class_sessions` rows** for the selected weekdays over `weeks` (clamped 1..12). Bookings/attendance/session-credit consumption therefore work unchanged on plain sessions — no branchy "recurring session" logic anywhere else.
+  2. **Duplicate guard reuse.** Generation reuses the same `(class_id, session_date, start_time)` UNIQUE constraint as `createClassSession`; conflicting dates are skipped and counted, never overwritten.
+  3. **Extend advances.** «توريع إضافي» (`generateRecurrenceWeeks`) starts from the day AFTER the latest existing session for that `(class_id, start_time)` (MAX(session_date)), so it adds the *following* weeks instead of re-skipping the initial window. Inactive templates reject generation (VALIDATION `classRecurrenceInactive`); stopping sets `is_active=0` and keeps already-materialized sessions.
+  4. **Permissions & single audit.** create/extend/stop require `classes.manage`; list requires `classes.view` (trainer role keeps `classes.view` only). Exactly one audit action per operation (`CLASS_RECURRENCE_CREATED/EXTENDED/STOPPED`).
+  5. **Hub merge.** `/classes` is a 4-tab page: الحصص + الجدول الأسبوعي (both `classes.view`), المدربون + خطط التدريب (both `trainers.view`). `/trainers` route, nav entry, and `pages/trainers-page.tsx` removed (its logic moved into `src/components/classes/` tabs unchanged — no silent removal; training plans tab preserved; member-profile training tab untouched). Route+nav gate is any-of `["classes.view","trainers.view"]` so trainer-only users keep access. Week grid is a fixed 7-column Saturday-first layout (order [6,0,1,2,3,4,5]) over `listSessions(fromDate,toDate)`; the day-name keys reuse the existing `dow.day0..6`.
+- Consequences: real recurring history is just sessions (reportable, cancelable individually, editable); a stopped template is inert but auditable; the trainer role sees the catalog + schedule but not the trainers/plans tabs. No permission grants changed. Schema version 28. Follow-ups NOT chosen by the user: sport/category field, per-session trainer override, class KPI cards.
+
 ## ADR-019: Offline licensing — HWID binding + Ed25519-signed license + clock guard + read-only lockdown
 - Date: 2026-09-04
 - Status: accepted

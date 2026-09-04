@@ -555,6 +555,24 @@ export interface BookingRow {
   consumedSubscriptionId: string | null;
   bookedAt: string;
 }
+export interface ClassRecurrence {
+  id: string;
+  classId: string;
+  className: string;
+  trainerName: string | null;
+  daysOfWeek: number[];
+  startDate: string;
+  startTime: string;
+  durationMin: number;
+  capacity: number | null;
+  isActive: boolean;
+  nextScheduledDate: string | null;
+}
+export interface RecurrenceResult {
+  recurrence: ClassRecurrence;
+  created: number;
+  skipped: number;
+}
 
 const classesApi = {
   list: (query?: { search?: string; includeInactive?: boolean }) =>
@@ -577,6 +595,20 @@ const classesApi = {
   cancelBooking: (bookingId: string) => rpc<void>("classes", "cancelBooking", [bookingId]),
   setBookingStatus: (bookingId: string, status: "booked" | "attended" | "no_show") =>
     rpc<BookingRow>("classes", "setBookingStatus", [bookingId, status]),
+  createRecurrence: (input: {
+    classId: string;
+    daysOfWeek: number[];
+    startDate: string;
+    startTime: string;
+    durationMin?: number;
+    capacity?: number | null;
+    weeks?: number;
+  }) => rpc<RecurrenceResult>("classes", "createClassRecurrence", [input]),
+  listRecurrences: (query?: { activeOnly?: boolean }) =>
+    rpc<ClassRecurrence[]>("classes", "listClassRecurrences", [query ?? {}]),
+  generateRecurrenceWeeks: (recurrenceId: string, weeks?: number) =>
+    rpc<{ created: number; skipped: number }>("classes", "generateRecurrenceWeeks", [recurrenceId, weeks ?? 2]),
+  stopRecurrence: (recurrenceId: string) => rpc<void>("classes", "deactivateClassRecurrence", [recurrenceId]),
 };
 
 // --------------------------- employees/salaries --------------------------

@@ -1,4 +1,4 @@
-﻿import { mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { DatabaseSync } from "node:sqlite";
@@ -32,7 +32,7 @@ beforeEach(async () => {
   owner = buildActor(
     await setup(db, {
       gymName: "Yassen Mohamed Kotb | 01288536381",
-      ownerFullName: "المالك",
+      ownerFullName: "??????",
       username: "owner",
       password: "Owner@2026",
     }),
@@ -41,7 +41,7 @@ beforeEach(async () => {
     await createUser(db, owner, {
       username: "trainer1",
       password: "Train@2026",
-      fullName: "مدرب أول",
+      fullName: "???? ???",
       roleId: "trainer",
     }),
   );
@@ -66,7 +66,7 @@ async function buildRealDbFile(): Promise<string> {
   runMigrations(realDb);
   await setup(realDb, {
     gymName: "Yassen Mohamed Kotb | 01288536381",
-    ownerFullName: "مالك الملف",
+    ownerFullName: "???? ?????",
     username: "fileowner",
     password: "Owner@2026",
   });
@@ -166,7 +166,7 @@ describe("validateRestoreFile", () => {
     const path = await buildRealDbFile();
     const bytes = readFileSync(path);
     const metadata = await validateRestoreFile(new Uint8Array(bytes), openFromBytesNode);
-    expect(metadata.migrationVersion).toBe(27);
+    expect(metadata.migrationVersion).toBe(28);
     expect(metadata.users).toBe(1);
     expect(metadata.members).toBe(0);
     expect(metadata.settings).toBeGreaterThan(0);
