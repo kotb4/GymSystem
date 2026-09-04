@@ -1,7 +1,16 @@
 # Current Development State
 
-- **Last updated:** 2026-09-04
-- **Current objective (done, this session):** **TASK-031 offline licensing** fully committed+pushed (`4270511`) and CLI ergonomics completed across 3 commits (`35d7ef0` menu restructure, `17f225d` ASCII-only BAT fix). Then this session added **TASK-032 — license tool folder + days-remaining banner**:
+- **Last updated:** 2026-09-05
+- **Current objective (done, this session):** **TASK-034 — License Tool GUI v7 (batch issuer for any machine)**. Per user request (Arabic): (1) the tool must NOT auto-create a license file for the machine it runs on; (2) ability to type in another machine's HWID manually and generate its activation file; (3) unlimited activations (batch); (4) polish the GUI; (5) show the owner's name "Yassen Mohamed Kotb | 01288536381" in the tool like the system.
+- **What changed (TASK-034):**
+  - `license-cli/license-tool.mjs`: `issue()` + `issueHere()` now `fs.mkdirSync(path.dirname(outPath), { recursive: true })` before `writeFileSync` — so `--out` into a new folder (`license-cli/issued/`) works.
+  - `license-cli/license-tool-gui.ps1` rewritten as **v7** (UTF-8 BOM kept, dark theme, zero deps): header title + owner-line branding "Yassen Mohamed Kotb | 01288536381"; issue group = manual **HWID field** (paste-from-clipboard button, regex `^GYM-[0-9A-Fa-f]{4}-{4}$` + auto-uppercase, duplicate rejection) + gym + days + live expiry preview + «+ إضافة للقائمة»; batch group = ListView (HWID/Gym/Days/Expiry/Status) + «توليد كل التراخيص» (one `.lic` per machine into `license-cli/issued/<HWID>.lic` + `log.txt` summary, per-row تم/خطأ status) + حذف المحدد / مسح الكل / فتح مجلد التراخيص; footer = «نسخ محتوى آخر ترخيص» + owner line + status console. **No `hwid`/`issue-here` calls anywhere in the GUI** (requirement 1). GUI shells out to `node license-tool.mjs issue <HWID> --gym ... --days ... --out ...` (one source of truth).
+  - `.gitignore` += `license-cli/issued/`.
+  - `license-cli/README.md` updated for the v7 workflow (GUI quick start describes add-machines → generate-all → open/copy).
+  - **No app-code changes** (no server/frontend/schema/permission/audit/test changes). CLI `issue`/`issue-here`/`npm run license:*` unchanged.
+  - Verification (TASK-034): `[scriptblock]::Create` parse OK; control-tree probe = form 8 top-level / issueGroup 9 (btnAdd+txtHwid Present) / listGroup 5 (lv+btnGenerate Present), `Contains()` all True; GUI watchdog launch → PrintWindow screenshot 656×739, **426 distinct colors** + 7.3k bright pixels (fully rendered, not a one-color screen); batch CLI smoke — `issue` ×3 different HWIDs with Arabic gym `--gym "نادي الأبطال"` → 3 separate `.lic` files in `issued/` (node-verified payload: correct HWID + Arabic gym + `tier:full` + 128-char signature). The earlier `????` in PowerShell show-string was console-display lossiness only — the file bytes are correct UTF-8 Arabic (verified via node codepoints).
+- Please note the `issued/` folder may contain leftover test `.lic` files locally; it is gitignored.
+- **Earlier this session:** **TASK-031 offline licensing** fully committed+pushed (`4270511`) and CLI ergonomics completed across 3 commits (`35d7ef0` menu restructure, `17f225d` ASCII-only BAT fix). Then **TASK-032 — license tool folder + days-remaining banner**:
   - **License CLI moved into a standalone folder** `license-cli/` (owns `license-tool.mjs`, `package.json` with `bin`, `README.md`, `LicenseTool.bat`, `License Tool.bat`, `license-cli.bat` v5 menu — license-only actions [HWID / issue / help / open-folder / exit]; removed app build+run+stop options; the app is run via `dev.bat`). Root `npm run license:*` scripts delegate to `node license-cli/license-tool.mjs`. Keys moved to `license-cli/config/` (gitignored via `license-cli/config/`). `.gitignore` extended (`license-cli/config/`, `license-cli/license.lic`). `ROOT` in the tool = own dir.
   - **Days-remaining banner**: `LicensePublicStatus` gained `daysRemaining` (active → days to `expiresAt`; grace → days to grace end; locked → 0); frontend `LicenseStatus` type + a persistent banner in `AppLayout` shows "تبقّى X يوم على انتهاء ترخيص النظام" on active, plus existing grace/expired/tampered banners. New i18n key `license.bannerActive`. Server recomputes on every `licenseStatus()` call.
   - Server core (`server/license/{policy,crypto,hwid,store,session}.ts`) + RPC `license.*` + `errLicenseLocked` unchanged. Embedded public key matches keypair in `license-cli/config/` (dev key — regenerate before real sale).
@@ -10,14 +19,14 @@
 - **TASK-031 delivered earlier this session and pushed** (see below for the full record).
 - **Last agent/tool:** opencode (this session)
 
-## Active tasks
-
 - **TASK-030** — **done this session** (loyalty rewards execution fix, pending user report/commit). See `.ai/tasks.md`.
 - **TASK-029** — **done this session** (anti-passback race fix, pending user report/commit). See `.ai/tasks.md`.
 - **TASK-028** — **done this session** (class capacity race fix, pending user report/commit). See `.ai/tasks.md`.
 - **TASK-027** — **done this session** (same-day freeze phantom-day fix, pending user report/commit). See `.ai/tasks.md`.
 - **TASK-026** — **done this session** (freeze allowance bypass fix, pending user report/commit). See `.ai/tasks.md`.
 - **TASK-025** — **done this session** (new reports tab). Committed **`48dbb6d`** and pushed to `origin/main`. See Phase 16 below for full detail.
+
+## Active tasks
 - **TASK-021** — extended: resolved الاشتراكات / الباقات duplicate. Attendance fast-tab removal pushed (`cc3bdb8`); subscriptions+packages+plans merge/tab-reorder pushed (`29de98e`); packages-primary interface pushed (`9f53d30`). This session: phase 9 merged `/cash` + `/treasury` into a tabbed `/treasury` (pushed `7ac7420`), phase 10 removed the tabs → single `/treasury` page (cash session primary + daily closing below), and phase 11 removed the daily-closing feature entirely so `/الخزينة` = cash sessions (الوردية) only (migration v27).
 
 ## What was most recently completed (handoff context)

@@ -155,6 +155,7 @@ function issue(argv) {
   const licJson = JSON.stringify({ payload, signature });
 
   const outPath = flags.out ? path.resolve(flags.out) : path.join(ROOT, "license.lic");
+  fs.mkdirSync(path.dirname(outPath), { recursive: true });
   fs.writeFileSync(outPath, licJson, "utf8");
   console.log(`Issued license for HWID ${hwid} (${gym}, expires ${new Date(expiresAt).toISOString()})`);
   console.log(`Wrote ${outPath}. Hand this file to the client to activate via the app.`);
@@ -198,6 +199,7 @@ function issueHere(argv) {
   const licJson = JSON.stringify({ payload, signature });
 
   const outPath = flags.out ? path.resolve(flags.out) : path.join(ROOT, "license.lic");
+  fs.mkdirSync(path.dirname(outPath), { recursive: true });
   fs.writeFileSync(outPath, licJson, "utf8");
   console.log(`This machine's HWID  : ${hwid}`);
   console.log(`Issued license        : ${gym}, expires ${new Date(expiresAt).toISOString()}`);

@@ -13,4 +13,5 @@ config/
 license-cli/config/
 license.lic
 license-cli/license.lic
+license-cli/issued/
 *.pem
