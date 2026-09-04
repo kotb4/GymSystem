@@ -50,7 +50,7 @@ describe("i18n coverage", () => {
     for (const dir of ["src/core/services", "src/core", "server"]) {
       for (const f of walk(dir)) {
         const content = readFileSync(f, "utf8");
-        const re = /err(?:Validation|NotFound|Conflict|Forbidden|Unauthorized|AccountLocked)\(\s*"([^"]+)"/g;
+        const re = /err(?:Validation|NotFound|Conflict|Forbidden|Unauthorized|AccountLocked|LicenseLocked)\(\s*"([^"]+)"/g;
         let m: RegExpExecArray | null;
         while ((m = re.exec(content)) !== null) {
           if (!flat.has(m[1])) missing.push(`${m[1]} (${f})`);

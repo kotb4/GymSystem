@@ -1167,6 +1167,14 @@ export const api = {
     redeemReward: (memberId: string, rewardId: string) =>
       rpc<RedemptionResult>("loyalty", "redeemReward", [memberId, rewardId]),
   },
+  license: {
+    status: () =>
+      rpc<LicenseStatus>("license", "status", []),
+    activate: (licJson: string) =>
+      rpc<LicenseStatus>("license", "activate", [licJson]),
+    deactivate: () =>
+      rpc<{ ok: boolean }>("license", "deactivate", []),
+  },
 };
 
 export default api;
@@ -1181,6 +1189,19 @@ export interface ScannerConfig {
   minLength: number;
   timeoutMs: number;
   maxKeyIntervalMs: number;
+}
+
+export interface LicenseStatus {
+  state: string;
+  hwid: string;
+  gym: string | null;
+  expiresAt: number | null;
+  issuedAt: number | null;
+  tier: string | null;
+  graceDaysRemaining: number | null;
+  readOnly: boolean;
+  needsActivation: boolean;
+  tampered: boolean;
 }
 
 export type { AuditListQuery, AuditAction, AuditLogItem } from "@/core/services/audit.service";

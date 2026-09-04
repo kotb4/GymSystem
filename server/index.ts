@@ -10,6 +10,7 @@ import {
   pruneExpiredSessions,
 } from "./sessions";
 import { invokeRpc } from "./rpc";
+import { licenseStateName, refreshLicenseClock } from "./license/session";
 import { createServerBackup, readSnapshotBytes, importDatabaseBytes } from "./backups";
 import { toAppError, errValidation } from "../src/core/errors";
 import type { ServiceActor } from "../src/core/permissions";
@@ -470,6 +471,16 @@ export function startHttpServer(): void {
       /* logged below if it recurs; never crash the loop */
     }
   }, 60 * 60 * 1000).unref();
+  // ADR-019: advance the monotonic last-active clock periodically so the
+  // anti-rollback guard has a reference point even with no RPC traffic.
+  setInterval(() => {
+    try {
+      refreshLicenseClock();
+      logLine(`license clock: ${licenseStateName()}`);
+    } catch (error) {
+      logLine(`license: clock refresh failed: ${String(error)}`);
+    }
+  }, 15 * 60 * 1000).unref();
   const server = http.createServer(async (req, res) => {
     const url = new URL(req.url ?? "/", `http://${req.headers.host ?? "localhost"}`);
     const ctx: Ctx = { req, res, url };

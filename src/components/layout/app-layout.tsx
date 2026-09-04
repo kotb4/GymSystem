@@ -3,6 +3,7 @@ import { useEffect } from "react";
 import { useT } from "@/i18n";
 import { routeTitleKey } from "@/routes/nav-routes";
 import { useAuth } from "@/contexts/auth-context";
+import { useLicense } from "@/contexts/license-context";
 import { useBootMaintenance } from "@/hooks/use-boot-maintenance";
 import { Sidebar } from "./sidebar";
 import { Header } from "./header";
@@ -12,12 +13,24 @@ export function AppLayout() {
   const t = useT();
   const location = useLocation();
   const { actor } = useAuth();
+  const license = useLicense();
 
   useBootMaintenance(actor);
 
   useEffect(() => {
     document.title = `${t(routeTitleKey(location.pathname))} — ${t("app.name")}`;
   }, [location.pathname, t]);
+
+  const graceMsg =
+    license.status && license.status.state === "grace" && license.status.graceDaysRemaining != null
+      ? t("license.bannerGrace", { days: String(license.status.graceDaysRemaining) })
+      : null;
+  const hardMsg =
+    license.status && (license.status.state === "expired" || license.status.state === "tampered" || license.status.readOnly)
+      ? license.status.tampered
+        ? t("license.bannerTampered")
+        : t("license.bannerExpired")
+      : null;
 
   return (
     <div className="relative isolate flex h-screen overflow-hidden">
@@ -30,6 +43,19 @@ export function AppLayout() {
       <div className="flex min-w-0 flex-1 flex-col">
         <Header />
         <NewsTicker />
+        {(graceMsg || hardMsg) && (
+          <div
+            className={`border-b px-4 py-2 text-center text-[13px] font-semibold ${
+              license.status?.tampered
+                ? "border-red/30 bg-red/10 text-red"
+                : license.status?.readOnly
+                  ? "border-amber/40 bg-amber/10 text-amber"
+                  : "border-neon/30 bg-neon/10 text-neon"
+            }`}
+          >
+            {hardMsg ?? graceMsg}
+          </div>
+        )}
         <main className="flex-1 overflow-y-auto">
           <div key={location.pathname} className="mx-auto w-full max-w-[1440px] animate-fade-up px-6 py-6">
             <Outlet />

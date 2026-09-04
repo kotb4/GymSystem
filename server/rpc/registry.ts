@@ -1,6 +1,7 @@
-import { toAppError, AppError, errForbidden } from "../../src/core/errors";
+import { toAppError, AppError, errForbidden, errLicenseLocked } from "../../src/core/errors";
 import type { ServiceActor } from "../../src/core/permissions";
 import { getDbContext, logLine } from "../context";
+import { rpcBlockReason, refreshLicenseClock } from "../license/session";
 import type { Exposed } from "./helpers";
 
 import { members } from "./members.rpc";
@@ -37,6 +38,7 @@ import { dev } from "./dev.rpc";
 import { memberProfile } from "./member-profile.rpc";
 import { referral } from "./referral.rpc";
 import { loyalty } from "./loyalty.rpc";
+import { license } from "./license.rpc";
 
 /**
  * The frontend never touches SQLite. It calls whitelisted service functions
@@ -79,6 +81,7 @@ export const REGISTRY: Record<string, Record<string, Exposed>> = {
   memberProfile,
   referral,
   loyalty,
+  license,
 };
 
 export interface SerializedError {
@@ -135,9 +138,12 @@ export async function invokeRpc(
 ): Promise<RpcOutcome> {
   const { db } = getDbContext();
   try {
+    refreshLicenseClock();
     const service = REGISTRY[serviceName];
     const exposed = service?.[fnName];
     if (!service || !exposed) throw errForbidden();
+    const blocked = rpcBlockReason(serviceName, fnName);
+    if (blocked) throw errLicenseLocked(blocked);
     const callArgs = [db, ...(exposed.actor ? [actor] : []), ...args] as never[];
     const result = await exposed.fn(...callArgs);
     return { status: 200, body: { ok: true, result } };

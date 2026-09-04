@@ -9,6 +9,7 @@ import { existsSync, renameSync, unlinkSync, createWriteStream } from "node:fs";
 import type { WriteStream } from "node:fs";
 import path from "node:path";
 import { setFilesRoot, sweepPendingDeletes } from "./files.service";
+import { initLicenseSession, refreshLicenseClock, licenseStateName } from "./license/session";
 
 export interface AppContext {
   dirs: AppDirs;
@@ -126,6 +127,16 @@ export function openDatabase(): AppContext {
   }
 
   context = { dirs, db, driver };
+  // ADR-019: initialize the offline-license session (HWID + signed .lic +
+  // clock guard). Must run after dirs are resolved so license.json/.lic live
+  // in Config/. Best-effort: a broken perms cache/policy should not crash boot.
+  try {
+    initLicenseSession(dirs.configDir);
+    refreshLicenseClock();
+    logLine(`license state: ${licenseStateName()}`);
+  } catch (error) {
+    logLine(`license: boot init failed: ${String(error)}`);
+  }
   logLine(`database ready at ${dirs.dbFile}`);
   return context;
 }

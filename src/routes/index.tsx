@@ -6,6 +6,8 @@ import { useAuth } from "@/contexts/auth-context";
 import { AppLayout } from "@/components/layout/app-layout";
 import { EmptyState } from "@/components/ui/empty-state";
 import { useT } from "@/i18n";
+import { useLicense } from "@/contexts/license-context";
+import { LicensePage } from "@/pages/license-page";
 import { LoginPage } from "@/pages/login-page";
 import { SetupPage } from "@/pages/setup-page";
 import { DashboardPage } from "@/pages/dashboard-page";
@@ -68,7 +70,22 @@ function RequirePermission({ permission, permissions, children }: { permission?:
 
 export function AppRoutes() {
   const { user, booting, needsSetup } = useAuth();
+  const license = useLicense();
   if (booting) return null;
+  // ADR-019: when the license needs activation or is hard-locked (expired
+  // past grace / tampered / invalid), block the app and show the license
+  // screen. Login (for activation) and setup remain reachable.
+  const licenseBlocked =
+    license.status != null && (license.status.needsActivation || license.status.readOnly);
+  if (licenseBlocked && license.status) {
+    return (
+      <Routes>
+        <Route path="/login" element={<LoginPage />} />
+        <Route path="/setup" element={<SetupPage />} />
+        <Route path="*" element={<LicensePage />} />
+      </Routes>
+    );
+  }
   return (
     <Routes>
       <Route path="/login" element={user ? <Navigate to="/" replace /> : needsSetup ? <Navigate to="/setup" replace /> : <LoginPage />} />

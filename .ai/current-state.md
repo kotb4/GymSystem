@@ -1,12 +1,17 @@
 # Current Development State
 
 - **Last updated:** 2026-09-04
-- **Current objective (done):** TASK-025 — **advanced analytics: Retention & Activity Insights** — a genuinely new non-duplicative reports module added as a 4th "الاحتفاظ والنشاط" tab in `/reports`. New service `getRetentionInsights` (at-risk/inactive members via `inactive_days`, new-vs-returning visitor split, avg check-ins, day-of-week + department patterns), gated `reports.view`, department-scoped, pure reads (no migration/perm/audit changes). Verification clean: typecheck ×2, RPC consistency (265 entries, no missing), `npm test` **399/399** (33 files), `npm run build`, `sync:docs`.
+- **Current objective (done):** TASK-031 — **offline licensing** (server + frontend). HWID-bound Ed25519-signed `.lic` activation, grace period, clock-tamper guard, and read-only lockdown via an allowlist RPC gate. Server core (`server/license/{policy,crypto,hwid,store,session}.ts`) + RPC `license.*` + `errLicenseLocked` + boot/session wiring + frontend: `LicenseProvider`, `LicensePage`, read-only/grace banner in `AppLayout`, and route gating in `AppRoutes`. Full stack wired; verify: typecheck ×2 clean, i18n-coverage 3/3, RPC consistency ok (268 entries, no missing), `npm test` **430/430** (34 files, +22 license), `npm run build` clean. **Known limitation (Phase 3 item):** while `unlicensed` the system is fully writable with no expiry — an actor who deletes `license.lic`/`license.json` reverts to untracked full-write; true anti-rollback needs an "ever-activated" marker persisted outside the deletable license state (e.g. SQLite) + expiry enforcement even when not activated. No commit yet.
 - **Last agent/tool:** opencode (this session)
 
 ## Active tasks
 
-- **TASK-025** — **done this session** (new reports tab, pending user report/commit). See Phase 16 below for full detail.
+- **TASK-030** — **done this session** (loyalty rewards execution fix, pending user report/commit). See `.ai/tasks.md`.
+- **TASK-029** — **done this session** (anti-passback race fix, pending user report/commit). See `.ai/tasks.md`.
+- **TASK-028** — **done this session** (class capacity race fix, pending user report/commit). See `.ai/tasks.md`.
+- **TASK-027** — **done this session** (same-day freeze phantom-day fix, pending user report/commit). See `.ai/tasks.md`.
+- **TASK-026** — **done this session** (freeze allowance bypass fix, pending user report/commit). See `.ai/tasks.md`.
+- **TASK-025** — **done this session** (new reports tab). Committed **`48dbb6d`** and pushed to `origin/main`. See Phase 16 below for full detail.
 - **TASK-021** — extended: resolved الاشتراكات / الباقات duplicate. Attendance fast-tab removal pushed (`cc3bdb8`); subscriptions+packages+plans merge/tab-reorder pushed (`29de98e`); packages-primary interface pushed (`9f53d30`). This session: phase 9 merged `/cash` + `/treasury` into a tabbed `/treasury` (pushed `7ac7420`), phase 10 removed the tabs → single `/treasury` page (cash session primary + daily closing below), and phase 11 removed the daily-closing feature entirely so `/الخزينة` = cash sessions (الوردية) only (migration v27).
 
 ## What was most recently completed (handoff context)
@@ -94,6 +99,7 @@ Removed the now-unused tab keys from i18n: `tabClosing`/`tabSessions`/`tabClosin
 
 ## Known issues / follow-ups
 
+- **TASK-031 Phase 3 hardening (discovered):** while the license state is `unlicensed`, `isHardLocked=false` so all writes are allowed and there is **no expiry ceiling** — an actor can simply delete `configDir/license.json` + `license.lic` to revert a never-expired state and escape the grace/read-only lockdown. The approved Phase 1+2 scope relies on the cert/state file persisting; full anti-rollback requires an auxiliary "activation ever occurred" marker that survives cert/state deletion (e.g. a row in SQLite keyed by HWID) plus enforcing the grant period even before reactivation. Recorded for a follow-up; not enabled here (would change approved scope).
 - Browser camera capture still not live-tested (needs real webcam).
 - `scripts/e2e-audit.ps1` (66-check audit) now **passes all 66 checks** (exit 0). Two stale audit assertions fixed (test-data only, no product change): (1) "frozen subscription denied" asserted the old deny-on-frozen-scan behavior, but the product intentionally **auto-unfreezes on check-in** (unit-tested in `tests/subscriptions.freeze.enhanced.test.ts`) — the audit now asserts the scan is granted; (2) the member-photo upload sent an `object[]` body that PowerShell transmitted as text, failing the JPEG magic-byte sniff (ADR-018 §4) — now built as a true `byte[]` with `FF D8 FF E0` header so it uploads as binary.
 - `npm run e2e` (e2e-smoke) **passes all 24 checks**; corrected the stale `unauthenticated /me` check in `scripts/e2e-smoke.ps1` — the server intentionally returns `200 {needsSetup:true}` (not 401) for unauthenticated `/api/auth/me`, so the old check asserted the opposite of the documented behavior.
