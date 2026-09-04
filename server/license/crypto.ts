@@ -29,7 +29,7 @@ export function payloadBytes(payload: string): Buffer {
  * a checked resource). This dev keypair is only for offline testing.
  */
 const EMBEDDED_PUBLIC_PEM = `-----BEGIN PUBLIC KEY-----
-MCowBQYDK2VwAyEAirKi0nK8dLJ5n0PZU2P6wNX8P0fJm7qGfXpBVfBtUPQ=
+MCowBQYDK2VwAyEAYclQ5OZ7JEsutSRpRNKJdF/nYdtNbl+5juTMjqqJrVw=
 -----END PUBLIC KEY-----
 `;
 
