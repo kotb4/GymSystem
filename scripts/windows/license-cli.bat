@@ -1,31 +1,35 @@
 @echo off
 rem ============================================================
-rem  Yassen Mohamed Kotb | 01288536381  -  License Tool menu v3
-rem  This is the LICENSE TOOL — NOT dev.bat.
-rem  Use this to issue licenses and run the app.
+rem  Yassen Mohamed Kotb | 01288536381  -  License Tool v4
+rem  English-only echoes (Arabic in the SPA / i18n, NOT in the BAT).
+rem  Double-click this file: shows a small CLI menu for:
+rem    [1] Show HWID
+rem    [2] Issue a license for THIS machine
+rem    [3] Build + run the app
+rem    [4] Stop the app
+rem    [5] Exit
 rem ============================================================
 setlocal enabledelayedexpansion
 cd /d "%~dp0..\.."
-chcp 65001 >nul
-title GymSystem - License Tool v3
+title GymSystem - License Tool v4
 
 :menu
 cls
 echo.
 echo   ============================================
-echo     GymSystem - License Tool v3
+echo     GymSystem - License Tool v4
 echo     (this is the LICENSE TOOL, not dev.bat)
 echo   ============================================
 echo.
-echo     [1] عرض رمز الجهاز (HWID)
-echo     [2] إصدار رخصة لهذا الجهاز  (يكتب license.lic)
-echo     [3] بناء وتشغيل التطبيق
-echo     [4] إيقاف التطبيق (يقفل السيرفر)
-echo     [5] خروج
+echo     [1] Show HWID
+echo     [2] Issue a license for this machine
+echo     [3] Build + run the app
+echo     [4] Stop the app
+echo     [5] Exit
 echo.
-echo   ! اكتب رقما ثم Enter لاختيار العملية !
+echo   ! Type a number then Enter !
 echo.
-set /p choice="  اختر رقم (1-5): "
+set /p choice="  Choose (1-5): "
 set "choice=%choice: =%"
 if "%choice%"=="1" goto hwid
 if "%choice%"=="2" goto issue
@@ -33,18 +37,18 @@ if "%choice%"=="3" goto run
 if "%choice%"=="4" goto stop
 if "%choice%"=="5" exit /b 0
 if "%choice%"=="" (
-  echo   لم يتم اختيار شيء - ارجع للقائمة ...
+  echo   No choice entered - back to menu ...
   timeout /t 1 /nobreak >nul
   goto menu
 )
-echo   اختيار غير صالح: "%choice%"
+echo   Invalid choice: "%choice%"
 timeout /t 1 /nobreak >nul
 goto menu
 
 :hwid
 cls
 echo.
-echo   رمز الجهاز (HWID):
+echo   HWID for this machine:
 echo.
 call npm run license:hwid
 echo.
@@ -54,15 +58,15 @@ goto menu
 :issue
 cls
 echo.
-echo   إصدار رخصة لهذا الجهاز
+echo   Issue a license for THIS machine
 echo.
-set /p days="  عدد أيام الرخصة (مثال: 365): "
+set /p days="  License duration in days (e.g. 365): "
 if "%days%"=="" set days=365
-set /p gym="  اسم النادي (مثال: نادي التجربة): "
+set /p gym="  Gym name (e.g. Test Gym): "
 if "%gym%"=="" set gym=GymSystem
 call npm run license:issue-here -- --gym "%gym%" --days %days%
 echo.
-echo   تم إصدار الرخصة - ارفع/الصق ملف license.lic في شاشة التفعيل داخل التطبيق.
+echo   Done. Upload / paste the license.lic file in the app activation screen.
 echo.
 pause
 goto menu
@@ -70,24 +74,24 @@ goto menu
 :run
 cls
 echo.
-echo   بناء المشروع ثم تشغيل التطبيق ...
-echo   (سيفتح السيرفر ثم المتصفح على http://localhost:8890)
+echo   Build project then run the app ...
+echo   (will open the server, then the browser at http://localhost:8890)
 echo.
-set /p confirm="  متأكد؟ اكتب y ثم Enter للمواصلة: "
+set /p confirm="  Sure? Type y then Enter to continue: "
 if /i not "%confirm%"=="y" (
-  echo   تم الإلغاء.
+  echo   Cancelled.
   pause
   goto menu
 )
 call npm run build
 if errorlevel 1 (
-  echo   فشل البناء. تحقق من الأخطاء أعلاه.
+  echo   Build failed. Check the errors above.
   pause
   goto menu
 )
-echo   تم البناء بنجاح. جاري تشغيل السيرفر في نافذة منفصلة ...
+echo   Build OK. Starting the server in a separate window ...
 start "GymSystem Backend" /min cmd /c "node dist-server\index.cjs"
-echo   انتظار الجاهزية ...
+echo   Waiting for the server to come up ...
 set /a tries=0
 :wait_run
 timeout /t 1 /nobreak >nul
@@ -95,12 +99,12 @@ curl -s -o nul http://127.0.0.1:8890/api/ping
 if errorlevel 1 (
   set /a tries+=1
   if !tries! lss 15 goto wait_run
-  echo   السيرفر لم يستجب. تحقق من نافذة الـ Backend.
+  echo   Server did not respond. Check the Backend window.
   pause
   goto menu
 )
 start "" http://127.0.0.1:8890/
-echo   جارٍ فتح المتصفح ...
+echo   Opening the browser ...
 echo.
 pause
 goto menu
@@ -108,9 +112,9 @@ goto menu
 :stop
 cls
 echo.
-echo   إيقاف أي عملية سيرفر (node dist-server\index.cjs) ...
+echo   Stopping any running GymSystem server (node dist-server\index.cjs) ...
 taskkill /f /im node.exe >nul 2>&1
-echo   تم الإيقاف.
+echo   Stopped.
 echo.
 pause
 goto menu
