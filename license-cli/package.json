@@ -1,0 +1,19 @@
+{
+  "name": "gymsystem-license-cli",
+  "version": "1.0.0",
+  "private": true,
+  "description": "Standalone offline-license tool for GymSystem. Issues Ed25519-signed .lic files bound to a machine HWID. No dependencies — uses node:crypto only.",
+  "bin": {
+    "gymsystem-license": "license-tool.mjs"
+  },
+  "type": "module",
+  "scripts": {
+    "keygen": "node license-tool.mjs keygen",
+    "issue": "node license-tool.mjs issue",
+    "hwid": "node license-tool.mjs hwid",
+    "issue-here": "node license-tool.mjs issue-here"
+  },
+  "engines": {
+    "node": ">=18"
+  }
+}

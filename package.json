@@ -14,10 +14,10 @@
     "test": "vitest run",
     "test:watch": "vitest",
     "sync:docs": "node scripts/sync-docs.mjs",
-    "license:keygen": "node scripts/license-tool.mjs keygen",
-    "license:issue": "node scripts/license-tool.mjs issue",
-    "license:hwid": "node scripts/license-tool.mjs hwid",
-    "license:issue-here": "node scripts/license-tool.mjs issue-here",
+    "license:keygen": "node license-cli/license-tool.mjs keygen",
+    "license:issue": "node license-cli/license-tool.mjs issue",
+    "license:hwid": "node license-cli/license-tool.mjs hwid",
+    "license:issue-here": "node license-cli/license-tool.mjs issue-here",
     "e2e": "powershell -NoProfile -ExecutionPolicy Bypass -File scripts/e2e-smoke.ps1"
   },
   "dependencies": {

@@ -20,6 +20,9 @@ export type LicensePublicStatus = {
   expiresAt: number | null;
   issuedAt: number | null;
   tier: string | null;
+  /** Days left before the license expires (active) or before grace ends (grace). 0 when locked. */
+  daysRemaining: number;
+  /** Alias kept for backward-compat: days left until the grace window ends. */
   graceDaysRemaining: number | null;
   readOnly: boolean;
   needsActivation: boolean;
@@ -142,10 +145,18 @@ export function licenseStatus(): LicensePublicStatus {
   current.now = Date.now();
   const ev = evaluate(current);
   const p = current.payload;
-  const remaining =
-    p != null
-      ? Math.max(0, Math.ceil((p.expiresAt + 5 * 24 * 60 * 60 * 1000 - Date.now()) / (24 * 60 * 60 * 1000)))
-      : null;
+  const DAY = 24 * 60 * 60 * 1000;
+  const now = Date.now();
+  const graceRemaining =
+    p != null ? Math.max(0, Math.ceil((p.expiresAt + 5 * DAY - now) / DAY)) : null;
+  let daysRemaining = 0;
+  if (p != null) {
+    if (ev.name === "active") {
+      daysRemaining = Math.max(0, Math.ceil((p.expiresAt - now) / DAY));
+    } else if (ev.name === "grace") {
+      daysRemaining = graceRemaining ?? 0;
+    }
+  }
   return {
     state: ev.name,
     hwid: currentHwid,
@@ -153,7 +164,8 @@ export function licenseStatus(): LicensePublicStatus {
     expiresAt: p?.expiresAt ?? null,
     issuedAt: p?.issuedAt ?? null,
     tier: p?.tier ?? null,
-    graceDaysRemaining: remaining,
+    daysRemaining,
+    graceDaysRemaining: graceRemaining,
     readOnly: isHardLocked(current),
     needsActivation: needsActivation(current),
     tampered: ev.name === "tampered",

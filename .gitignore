@@ -10,5 +10,7 @@ dist-server
 tmp-*
 # License signing secrets (never ship the private key or issued licenses)
 config/
+license-cli/config/
 license.lic
+license-cli/license.lic
 *.pem

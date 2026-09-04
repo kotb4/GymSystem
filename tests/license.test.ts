@@ -241,5 +241,27 @@ describe("license session (read-only gate)", () => {
     expect(st.state).toBe("active");
     expect(st.needsActivation).toBe(false);
     expect(st.hwid).toBeTruthy();
+    expect(st.daysRemaining).toBe(30);
+    expect(st.graceDaysRemaining).toBe(35);
+  });
+
+  it("daysRemaining counts down to expiry in active and until grace end in grace", () => {
+    const now = Date.now();
+    _setSessionForTest({ payload: payload({ expiresAt: now + 3 * DAY }), signatureValid: true, filePresent: true, lastActive: null });
+    const active = licenseStatus();
+    expect(active.state).toBe("active");
+    expect(active.daysRemaining).toBe(3);
+    expect(active.graceDaysRemaining).toBe(8);
+
+    _setSessionForTest({ payload: payload({ expiresAt: now - 2 * DAY }), signatureValid: true, filePresent: true, lastActive: null });
+    const grace = licenseStatus();
+    expect(grace.state).toBe("grace");
+    expect(grace.daysRemaining).toBe(3);
+    expect(grace.graceDaysRemaining).toBe(3);
+
+    _setSessionForTest({ payload: payload({ expiresAt: now - 10 * DAY }), signatureValid: true, filePresent: true, lastActive: null });
+    const expired = licenseStatus();
+    expect(expired.state).toBe("expired");
+    expect(expired.daysRemaining).toBe(0);
   });
 });

@@ -21,16 +21,29 @@ export function AppLayout() {
     document.title = `${t(routeTitleKey(location.pathname))} — ${t("app.name")}`;
   }, [location.pathname, t]);
 
+  const licenseStatus = license.status;
+  const activeMsg =
+    licenseStatus && licenseStatus.state === "active" && licenseStatus.daysRemaining > 0
+      ? t("license.bannerActive", { days: String(licenseStatus.daysRemaining) })
+      : null;
   const graceMsg =
-    license.status && license.status.state === "grace" && license.status.graceDaysRemaining != null
-      ? t("license.bannerGrace", { days: String(license.status.graceDaysRemaining) })
+    licenseStatus && licenseStatus.state === "grace" && licenseStatus.graceDaysRemaining != null
+      ? t("license.bannerGrace", { days: String(licenseStatus.graceDaysRemaining) })
       : null;
   const hardMsg =
-    license.status && (license.status.state === "expired" || license.status.state === "tampered" || license.status.readOnly)
-      ? license.status.tampered
+    licenseStatus &&
+    (licenseStatus.state === "expired" || licenseStatus.state === "tampered" || licenseStatus.readOnly)
+      ? licenseStatus.tampered
         ? t("license.bannerTampered")
         : t("license.bannerExpired")
       : null;
+
+  const bannerMsg = hardMsg ?? graceMsg ?? activeMsg;
+  const bannerTone = licenseStatus?.tampered
+    ? "border-red/30 bg-red/10 text-red"
+    : licenseStatus?.readOnly
+      ? "border-amber/40 bg-amber/10 text-amber"
+      : "border-neon/30 bg-neon/10 text-neon";
 
   return (
     <div className="relative isolate flex h-screen overflow-hidden">
@@ -43,19 +56,11 @@ export function AppLayout() {
       <div className="flex min-w-0 flex-1 flex-col">
         <Header />
         <NewsTicker />
-        {(graceMsg || hardMsg) && (
-          <div
-            className={`border-b px-4 py-2 text-center text-[13px] font-semibold ${
-              license.status?.tampered
-                ? "border-red/30 bg-red/10 text-red"
-                : license.status?.readOnly
-                  ? "border-amber/40 bg-amber/10 text-amber"
-                  : "border-neon/30 bg-neon/10 text-neon"
-            }`}
-          >
-            {hardMsg ?? graceMsg}
+        {(bannerMsg && (
+          <div className={`border-b px-4 py-2 text-center text-[13px] font-semibold ${bannerTone}`}>
+            {bannerMsg}
           </div>
-        )}
+        ))}
         <main className="flex-1 overflow-y-auto">
           <div key={location.pathname} className="mx-auto w-full max-w-[1440px] animate-fade-up px-6 py-6">
             <Outlet />

@@ -1,19 +1,26 @@
 #!/usr/bin/env node
 /**
- * Developer-only offline-license tool (the client never has this).
- * Uses node:crypto Ed25519 — no dependencies.
+ * Standalone offline-license tool for GymSystem.
+ * Lives in license-cli/ alongside its own package.json. Uses node:crypto
+ * Ed25519 — no dependencies. Reads the HWID using the same algorithm the
+ * app uses (reg query + os.networkInterfaces) so an issued license binds
+ * to the right machine.
  *
  * Usage:
- *   node scripts/license-tool.mjs keygen [outDir]        # generate keypair PEMs
- *   node scripts/license-tool.mjs issue <hwid> [--gym NAME] [--days N] [--until YYYY-MM-DD] [--key private.pem]
+ *   node license-tool.mjs keygen [outDir]        # generate keypair PEMs
+ *   node license-tool.mjs issue <hwid> [--gym NAME] [--days N] [--until YYYY-MM-DD] [--key private.pem] [--out path]
+ *   node license-tool.mjs hwid [--json]
+ *   node license-tool.mjs issue-here [--gym NAME] [--days N] [--until YYYY-MM-DD] [--key path] [--out path]
  *
- * `keygen` prints/saves:
+ * `keygen` prints/saves (default: <this-dir>/config/):
  *   - id_ed25519_private.pem  (keep on THIS machine; never ship)
  *   - id_ed25519_public.pem   (PEM to embed as EMBEDDED_PUBLIC_PEM in server/license/crypto.ts)
  *
  * `issue` reads the private key, embeds hwid + gym + expiry into a signed
- * JSON payload and writes `<out>/.lic` (or prints it). Client pastes/uploads
- * this as the activation file.
+ * JSON payload and writes a .lic file (default: <this-dir>/license.lic).
+ * The client pastes/uploads this in the app's activation screen.
+ *
+ * SECURITY: Never commit config/id_ed25519_private.pem or any *.lic file.
  */
 import crypto from "node:crypto";
 import fs from "node:fs";
@@ -22,14 +29,14 @@ import path from "node:path";
 import { execFileSync } from "node:child_process";
 import { fileURLToPath } from "node:url";
 
-const ROOT = path.dirname(path.dirname(fileURLToPath(import.meta.url)));
+const ROOT = path.dirname(fileURLToPath(import.meta.url));
 
 function printHelp() {
   console.log(`Usage:
-  node scripts/license-tool.mjs keygen [dir]
-  node scripts/license-tool.mjs issue <hwid> [--gym NAME] [--days N] [--until YYYY-MM-DD] [--key path] [--out path]
-  node scripts/license-tool.mjs hwid [--json]
-  node scripts/license-tool.mjs issue-here [--gym NAME] [--days N] [--until YYYY-MM-DD] [--key path] [--out path]
+  node license-tool.mjs keygen [dir]
+  node license-tool.mjs issue <hwid> [--gym NAME] [--days N] [--until YYYY-MM-DD] [--key path] [--out path]
+  node license-tool.mjs hwid [--json]
+  node license-tool.mjs issue-here [--gym NAME] [--days N] [--until YYYY-MM-DD] [--key path] [--out path]
 
 Commands
   keygen       generate a fresh Ed25519 keypair (writes config/id_ed25519_*.pem)
@@ -168,7 +175,7 @@ function issueHere(argv) {
   const hwid = computeHwIdHere();
   const keyPath = flags.key ? path.resolve(flags.key) : path.join(ROOT, "config", "id_ed25519_private.pem");
   if (!fs.existsSync(keyPath)) {
-    console.error(`Private key not found at ${keyPath}. Run "npm run license:keygen" first (its public key must be embedded).`);
+    console.error(`Private key not found at ${keyPath}. Run "node license-tool.mjs keygen" first (its public key must be embedded in the app).`);
     process.exit(1);
   }
   const privPem = fs.readFileSync(keyPath, "utf8");
