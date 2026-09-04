@@ -1,21 +1,20 @@
 @echo off
 rem ============================================================
-rem  Yassen Mohamed Kotb | 01288536381  -  License CLI menu
-rem  Double-click me: opens a small command-line menu for the
-rem  offline-license workflow (show HWID, issue a license,
-rem  build + start the app, stop the app).
-rem  No typing of HWID needed - "issue-here" reads it for you.
+rem  Yassen Mohamed Kotb | 01288536381  -  License Tool menu v3
+rem  This is the LICENSE TOOL — NOT dev.bat.
+rem  Use this to issue licenses and run the app.
 rem ============================================================
 setlocal enabledelayedexpansion
-cd /d "%~dp0"
+cd /d "%~dp0..\.."
 chcp 65001 >nul
-title GymSystem - License & Dev Tools
+title GymSystem - License Tool v3
 
 :menu
 cls
 echo.
 echo   ============================================
-echo     GymSystem - أدوات الترخيص والتطوير
+echo     GymSystem - License Tool v3
+echo     (this is the LICENSE TOOL, not dev.bat)
 echo   ============================================
 echo.
 echo     [1] عرض رمز الجهاز (HWID)
@@ -24,13 +23,21 @@ echo     [3] بناء وتشغيل التطبيق
 echo     [4] إيقاف التطبيق (يقفل السيرفر)
 echo     [5] خروج
 echo.
-choice /C 12345 /N /M "  اختر رقم: "
-if errorlevel 5 exit /b 0
-if errorlevel 4 goto stop
-if errorlevel 3 goto run
-if errorlevel 2 goto issue
-if errorlevel 1 goto hwid
-echo   اختيار غير صالح
+echo   ! اكتب رقما ثم Enter لاختيار العملية !
+echo.
+set /p choice="  اختر رقم (1-5): "
+set "choice=%choice: =%"
+if "%choice%"=="1" goto hwid
+if "%choice%"=="2" goto issue
+if "%choice%"=="3" goto run
+if "%choice%"=="4" goto stop
+if "%choice%"=="5" exit /b 0
+if "%choice%"=="" (
+  echo   لم يتم اختيار شيء - ارجع للقائمة ...
+  timeout /t 1 /nobreak >nul
+  goto menu
+)
+echo   اختيار غير صالح: "%choice%"
 timeout /t 1 /nobreak >nul
 goto menu
 
@@ -66,6 +73,12 @@ echo.
 echo   بناء المشروع ثم تشغيل التطبيق ...
 echo   (سيفتح السيرفر ثم المتصفح على http://localhost:8890)
 echo.
+set /p confirm="  متأكد؟ اكتب y ثم Enter للمواصلة: "
+if /i not "%confirm%"=="y" (
+  echo   تم الإلغاء.
+  pause
+  goto menu
+)
 call npm run build
 if errorlevel 1 (
   echo   فشل البناء. تحقق من الأخطاء أعلاه.
