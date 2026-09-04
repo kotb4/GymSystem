@@ -28,6 +28,7 @@ import { EmployeesPage } from "@/pages/employees-page";
 import { EmployeeCheckInPage } from "@/pages/employee-checkin-page";
 import { CrmPage } from "@/pages/crm-page";
 import { LoyaltyPage } from "@/pages/loyalty-page";
+import { ReferralsPage } from "@/pages/referrals-page";
 import { TreasuryPage } from "@/pages/treasury";
 
 function RequireAuth({ children }: { children: ReactNode }) {
@@ -200,6 +201,14 @@ export function AppRoutes() {
           element={
             <RequirePermission permission="loyalty.manage">
               <LoyaltyPage />
+            </RequirePermission>
+          }
+        />
+        <Route
+          path="referrals"
+          element={
+            <RequirePermission permission="referrals.view">
+              <ReferralsPage />
             </RequirePermission>
           }
         />

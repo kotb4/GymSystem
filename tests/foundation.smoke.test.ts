@@ -16,11 +16,12 @@ describe("database bootstrap", () => {
     expect(db.count("SELECT COUNT(*) FROM permissions")).toBeGreaterThan(20);
     expect(db.count("SELECT COUNT(*) FROM role_permissions")).toBeGreaterThan(20);
     expect(db.scalar("SELECT value FROM counters WHERE name = 'card_barcode'")).toBe(100);
-    expect(db.count("SELECT COUNT(*) FROM schema_migrations")).toBe(28);
+    expect(db.count("SELECT COUNT(*) FROM schema_migrations")).toBe(29);
     expect(db.count("SELECT COUNT(*) FROM payment_methods")).toBeGreaterThan(0);
     expect(db.count("SELECT COUNT(*) FROM trainers")).toBe(0);
     expect(db.count("SELECT COUNT(*) FROM training_plans")).toBe(0);
     expect(db.count("SELECT COUNT(*) FROM backups_log")).toBe(0);
+    expect(db.count("SELECT COUNT(*) FROM license_activation")).toBe(0);
   });
 
   it("rolls back failed transactions", async () => {

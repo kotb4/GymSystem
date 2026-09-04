@@ -131,7 +131,7 @@ export function openDatabase(): AppContext {
   // clock guard). Must run after dirs are resolved so license.json/.lic live
   // in Config/. Best-effort: a broken perms cache/policy should not crash boot.
   try {
-    initLicenseSession(dirs.configDir);
+    initLicenseSession(dirs.configDir, db);
     refreshLicenseClock();
     logLine(`license state: ${licenseStateName()}`);
   } catch (error) {

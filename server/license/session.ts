@@ -1,9 +1,112 @@
 import fs from "node:fs";
 import path from "node:path";
-import { evaluate, isHardLocked, needsActivation, advanceLastActive, type LicenseState } from "./policy";
+import { evaluate, isHardLocked, needsActivation, advanceLastActive, type LicenseState, type SignedPayload } from "./policy";
 import { computeHwId } from "./hwid";
 import { parseAndVerifyLicense } from "./crypto";
 import { readLicenseState, writeLicenseState, deleteLicenseState, type LicenseStateFile } from "./store";
+import { nowStamp } from "../../src/core/dates";
+import type { Db, Row } from "../../src/db/engine";
+
+// ---------------------------------------------------------------------------
+// License anti-rollback marker (TASK-036-F1). The signed `.lic` and
+// `license.json` live in configDir OUTSIDE SQLite, so a user could simply
+// delete them to revert to an unlicensed, fully-writable state with no expiry
+// ceiling. `license_activation` (a row in gym.db, keyed by HWID) is written
+// whenever a VERIFIED payload is active and survives cert/state deletion. When
+// no signed payload is present at boot, the marker enforces the recorded grant
+// bounds (expiry + grace) and the monotonic last_active clock guard instead of
+// falling back to `unlicensed`. Deleting license.json + license.lic therefore
+// can neither extend the grant nor re-open writes after it lapsed.
+// ---------------------------------------------------------------------------
+
+interface ActivationMarkerRow {
+  activatedAt: number;
+  issuedAt: number;
+  expiresAt: number;
+  gym: string | null;
+  tier: string | null;
+  lastActive: number | null;
+}
+
+function readMarker(database: Db | null, hwid: string): ActivationMarkerRow | null {
+  if (!database) return null;
+  try {
+    const row = database.first<Row>(
+      "SELECT activated_at, issued_at, expires_at, gym, tier, last_active\nFROM license_activation WHERE hwid = ?",
+      [hwid],
+    );
+    if (!row) return null;
+    return {
+      activatedAt: Number(row.activated_at),
+      issuedAt: Number(row.issued_at),
+      expiresAt: Number(row.expires_at),
+      gym: row.gym == null ? null : String(row.gym),
+      tier: row.tier == null ? null : String(row.tier),
+      lastActive: row.last_active == null ? null : Number(row.last_active),
+    };
+  } catch {
+    return null;
+  }
+}
+
+/** Write/refresh the marker from a VERIFIED payload. Best-effort, never breaks the app. */
+function upsertMarker(
+  database: Db | null,
+  hwid: string,
+  payload: SignedPayload | null,
+  lastActive: number | null,
+): void {
+  if (!database || !payload) return;
+  try {
+    database.run(
+      "INSERT INTO license_activation (hwid, activated_at, issued_at, expires_at, gym, tier, last_active, created_at, updated_at)\n" +
+        "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)\n" +
+        "ON CONFLICT(hwid) DO UPDATE SET\n" +
+        "  issued_at = excluded.issued_at,\n" +
+        "  expires_at = excluded.expires_at,\n" +
+        "  gym = excluded.gym,\n" +
+        "  tier = excluded.tier,\n" +
+        "  last_active = MAX(license_activation.last_active, excluded.last_active),\n" +
+        "  updated_at = excluded.updated_at",
+      [
+        hwid,
+        Date.now(),
+        payload.issuedAt,
+        payload.expiresAt,
+        payload.gym,
+        payload.tier,
+        lastActive,
+        nowStamp(),
+        nowStamp(),
+      ],
+    );
+  } catch {
+    /* marker upkeep must never break boot/store */
+  }
+}
+
+/** Advance the marker's monotonic clock. Best-effort. */
+function updateMarkerLastActive(database: Db | null, hwid: string, lastActive: number | null): void {
+  if (!database || lastActive == null) return;
+  try {
+    database.run(
+      "UPDATE license_activation SET last_active = MAX(license_activation.last_active, ?), updated_at = ? WHERE hwid = ?",
+      [lastActive, nowStamp(), hwid],
+    );
+  } catch {
+    /* best effort */
+  }
+}
+
+/** Remove the marker. Used ONLY by explicit in-app deactivation (user consent). */
+function deleteMarker(database: Db | null, hwid: string): void {
+  if (!database) return;
+  try {
+    database.run("DELETE FROM license_activation WHERE hwid = ?", [hwid]);
+  } catch {
+    /* best effort */
+  }
+}
 
 /**
  * Runtime license session. Loaded once at boot; the signed `.lic` is kept at
@@ -30,7 +133,9 @@ export type LicensePublicStatus = {
 };
 
 let dir: string | null = null;
+let db: Db | null = null;
 let currentHwid = computeHwId();
+let testHwidOverride: string | null = null;
 let current: LicenseState = {
   hwid: currentHwid,
   lastActive: null,
@@ -52,10 +157,17 @@ function emptyState(): LicenseState {
 }
 
 /** Reset module state between boots/tests. */
-export function _resetLicenseSession(nextDir?: string): void {
+export function _resetLicenseSession(nextDir?: string, database?: Db | null): void {
   dir = nextDir ?? null;
-  currentHwid = computeHwId();
+  db = database ?? null;
+  currentHwid = testHwidOverride ?? computeHwId();
   current = emptyState();
+}
+
+/** Test-only: pin the expected HWID across boots. Never call in production code. */
+export function _overrideHwIdForTest(hwid: string | null): void {
+  testHwidOverride = hwid;
+  currentHwid = hwid ?? computeHwId();
 }
 
 function licFile(dirP: string): string {
@@ -94,34 +206,60 @@ function persistCurrent(): void {
     payload: current.payload,
   };
   writeLicenseState(dir, file);
+  upsertMarker(db, current.hwid, current.payload, current.lastActive);
 }
 
 /**
  * Boot-time initialization: load state + .lic, re-verify, evaluate, advance
- * lastActive. Call once after directories are resolved.
+ * lastActive. Call once after directories are resolved. When an optional Db
+ * is provided, the license_activation marker is kept in sync and used as the
+ * fallback grant source if the signed files are ever deleted.
  */
-export function initLicenseSession(dataDir: string): void {
+export function initLicenseSession(dataDir: string, database?: Db | null): void {
   dir = dataDir;
-  currentHwid = computeHwId();
+  db = database ?? null;
+  currentHwid = testHwidOverride ?? computeHwId();
   const file = readLicenseState(dir);
-  if (!file) {
-    current = emptyState();
-    return;
-  }
   const licBytes = readLicFileBytes(dir);
   const payload = licBytes ? parseAndVerifyLicense(licBytes) : null;
-  current = {
-    hwid: currentHwid,
-    lastActive: file.lastActive,
-    payload,
-    now: Date.now(),
-    filePresent: payload != null,
-    signatureValid: payload != null,
-  };
+  const marker = payload ? null : readMarker(db, currentHwid);
+  if (payload) {
+    current = {
+      hwid: currentHwid,
+      lastActive: file?.lastActive ?? null,
+      payload,
+      now: Date.now(),
+      filePresent: true,
+      signatureValid: true,
+    };
+  } else if (marker) {
+    // Signed files are gone, but this HWID was activated before — honour the
+    // recorded grant period and keep enforcing the clock guard.
+    current = {
+      hwid: currentHwid,
+      lastActive: marker.lastActive,
+      payload: {
+        hwid: currentHwid,
+        gym: marker.gym ?? "",
+        issuedAt: marker.issuedAt,
+        expiresAt: marker.expiresAt,
+        tier: marker.tier ?? "",
+      },
+      now: Date.now(),
+      filePresent: true,
+      signatureValid: true,
+    };
+  } else {
+    current = emptyState();
+  }
   const advanced = advanceLastActive(current.lastActive, Date.now());
   if (advanced != null) {
     current.lastActive = advanced;
     persistCurrent();
+  } else {
+    // Keep the marker self-healing/backfilled even when the clock did not move.
+    updateMarkerLastActive(db, currentHwid, current.lastActive);
+    upsertMarker(db, currentHwid, payload, current.lastActive);
   }
 }
 
@@ -205,6 +343,7 @@ export function _activateWithPublicKey(licJson: string, publicKeyPem?: string): 
 export function deactivateLicense(): void {
   if (dir) deleteLicFile(dir);
   if (dir) deleteLicenseState(dir);
+  deleteMarker(db, currentHwid);
   current = emptyState();
 }
 

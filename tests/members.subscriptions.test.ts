@@ -1,4 +1,7 @@
 import { beforeEach, describe, expect, it } from "vitest";
+import fs from "node:fs";
+import os from "node:os";
+import path from "node:path";
 import { buildActor, login, setup } from "@/core/services/auth.service";
 import {
   createMember,
@@ -278,6 +281,41 @@ describe("subscriptions service", () => {
     expect(
       db.count("SELECT COUNT(*) AS c FROM audit_logs WHERE action = 'MEMBER_PURGED'"),
     ).toBe(1);
+  });
+
+  it("purge unlinks a trashed member's photo bytes from disk (registry + Files/)", async () => {
+    const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "gym-purge-files-"));
+    try {
+      const { setFilesRoot, _resetFilesRootForTests, saveRawBytes } = await import("../server/files.service");
+      const { members } = await import("../server/rpc/members.rpc");
+      setFilesRoot(tmp);
+      const m = await member({ fullName: "عضو بالصورة" });
+      const jpeg = Uint8Array.from([0xff, 0xd8, 0xff, 0xe0, 0x00, 0x10, 0x4a, 0x46, 0x49, 0x46]);
+      const meta = saveRawBytes(db, owner, {
+        id: "file-purge-photo",
+        kind: "member_photo",
+        originalName: "photo.jpg",
+        mimeType: "image/jpeg",
+        bytes: jpeg,
+      });
+      db.run("UPDATE members SET photo_file_id = ? WHERE id = ?", [meta.id, m.id]);
+      const live = path.join(tmp, "member_photo", "file-purge-photo.jpg");
+      expect(fs.existsSync(live)).toBe(true);
+
+      const { trashMember } = await import("@/core/services/members.service");
+      await trashMember(db, owner, m.id, "اختبار");
+      const purgeHandler = (members.purgeMember as unknown as { fn: (d: Db, a: typeof owner, id: string) => Promise<void> }).fn;
+      await purgeHandler(db, owner, m.id);
+
+      expect(db.count("SELECT COUNT(*) AS c FROM files WHERE id = 'file-purge-photo'")).toBe(0);
+      // bytes moved to trash, not left at the live path
+      expect(fs.existsSync(live)).toBe(false);
+      const trash = fs.readdirSync(path.join(tmp, ".trash"));
+      expect(trash.some((f) => f.includes("file-purge-photo.jpg"))).toBe(true);
+      _resetFilesRootForTests();
+    } finally {
+      fs.rmSync(tmp, { recursive: true, force: true });
+    }
   });
 });
 

@@ -1,5 +1,16 @@
 # Architecture Decision Log
 
+## ADR-021: License activation marker (license_activation) — anti-rollback hardening
+- Date: 2026-09-05
+- Status: accepted (TASK-036-F1, extends ADR-019)
+- Context: ADR-019's Phase-1+2 gate had a known gap: in state `unlicensed` the system is fully writable with no expiry ceiling, so an actor could simply delete `configDir/license.json` + `license.lic` and revert a previously-granted license to untracked full-write mode. The fix must survive deletion of both license files, must stay offline/dependency-free, and must not re-issue any grant on its own.
+- Decision:
+  1. **A SQLite marker written from VERIFIED payloads only.** New table `license_activation` (migration v29: `hwid` PK, `activated_at`, `issued_at`, `expires_at`, `gym`, `tier`, `last_active`, timestamps) inside `gym.db`. It is written ONLY when a signature-verified `.lic`/`license.json` payload has passed `_activateWithPublicKey` (also reflected on every boot). It can never itself mint a license — it only records that one existed.
+  2. **Marker is the fallback, not the primary.** If the signed/license-state files are missing at boot, the session synthesizes a state payload from the marker (with the marker's expiry/grace window and the `last_active` clock-rollback guard still enforced, wall-clock-based). Deleting license files therefore can no longer escape the grant period; a user who wants read-only-escape still needs an in-app deactivation, which explicitly clears the marker (`deleteMarker`).
+  3. **Marker upkeep is monotonic + best-effort.** `last_active` advances via `MAX(old, new)` (never rewinds); upsert preserves `activated_at`. Marker upkeep failures never break boot (log-only). In the cross-machine copy case the marker HWID mismatches so it stays inert on the new box.
+  4. **Test seam:** `_overrideHwIdForTest(hwid)` pins the expected HWID across consecutive `initLicenseSession` calls so the marker path is testable deterministically.
+- Consequences: `unlicensed`-only machines (never activated) are unchanged. Restoring a `.gymbak` older than the activation drops the marker from the DB, but the `.lic`/`license.json` files (outside the DB, per ADR-019 §3) would still persist, so the grant cannot be lost in practice. Schema version 29.
+
 ## ADR-020: Class hub merge + weekly recurring sessions (class_recurrences)
 - Date: 2026-09-05
 - Status: accepted (TASK-035, per user's explicit three answers)
@@ -74,7 +85,7 @@
 - Status: accepted (product-owner request during UAT)
 - Context: The original design refused hard-delete whenever any financial/attendance record referenced a member, leaving trashed members undeletable forever. Owner explicitly requested full deletion from the trash.
 - Decision: `purgeMember` (requires `members.purge`) cascades all 17 related tables in FK-safe order inside one transaction — including payments, refunds, financial_ledger rows, attendance, subscriptions/freezes, cards, store sales/items/debts/repayments, CRM messages, bookings, training plans, assessments, fitness results — then deletes the member and audits `MEMBER_PURGED` with the cascade count.
-- Consequences: Financial/cash-trail rows for that member are permanently destroyed; reports reflect their absence. Supersedes the refuse-on-history guard and its docstring. Known follow-up (audit F-05): `files` registry rows/disk bytes for member photos are not yet cleaned by the cascade.
+- Consequences: Financial/cash-trail rows for that member are permanently destroyed; reports reflect their absence. Supersedes the refuse-on-history guard and its docstring. Follow-up audit F-05 (purge orphaned `files` rows/disk bytes) is **CLOSED**: the registry row is deleted inside the transaction and the disk bytes are unlinked post-commit in `server/rpc/members.rpc.ts::purgeMember` (regression-tested in `tests/members.subscriptions.test.ts`).
 
 ## ADR-002: RPC authorization policy for plain reads
 - Date: 2026-08-25

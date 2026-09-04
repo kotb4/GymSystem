@@ -25,10 +25,14 @@ import {
   _resetLicenseSession,
   _setSessionForTest,
   _activateWithPublicKey,
+  _overrideHwIdForTest,
+  initLicenseSession,
+  deactivateLicense,
   rpcBlockReason,
   canWrite,
   licenseStatus,
 } from "../server/license/session";
+import { createTestDb } from "./helpers/test-db";
 
 const HOUR = 3600 * 1000;
 const DAY = 24 * HOUR;
@@ -264,4 +268,102 @@ describe("license session (read-only gate)", () => {
     expect(expired.state).toBe("expired");
     expect(expired.daysRemaining).toBe(0);
   });
+
+  it("records the activation marker on activation and falls back to it when the signed files are deleted", () => {
+    const db = createTestDb();
+    const tmp = mkTmpDir();
+    _resetLicenseSession(tmp, db);
+    _overrideHwIdForTest( "GYM-AAAA-BBBB-CCCC-DDDD");
+    const kp = generateKeyPair();
+    const priv = exportPrivateKeyPem(kp);
+    const pub = exportPublicKeyPem(kp);
+    const lic = issueLicense(priv, "GYM-AAAA-BBBB-CCCC-DDDD", "نادي", Date.now() - 10 * DAY, Date.now() + 30 * DAY);
+
+    expect(_activateWithPublicKey(lic, pub).state).toBe("active");
+    const marker = db.first<{ hwid: string; expires_at: number; last_active: number | null }>(
+      "SELECT hwid, expires_at, last_active FROM license_activation WHERE hwid = 'GYM-AAAA-BBBB-CCCC-DDDD'",
+    );
+    expect(marker).not.toBeNull();
+    expect(Number(marker!.expires_at)).toBeGreaterThan(Date.now());
+
+    // Simulate the attack: delete the signed files, keep only the DB.
+    fs.rmSync(path.join(tmp, "license.lic"), { force: true });
+    fs.rmSync(path.join(tmp, "license.json"), { force: true });
+
+    initLicenseSession(tmp, db);
+    const st = licenseStatus();
+    expect(st.state).toBe("active");
+    expect(st.needsActivation).toBe(false);
+    expect(canWrite()).toBe(true);
+    // expiry comes from the marker-recorded grant
+    expect(st.expiresAt).toBeGreaterThan(Date.now() - 40 * DAY);
+  });
+
+  it("marker enforces grant period: deleting signed files does NOT escape expired read-only", () => {
+    const db = createTestDb();
+    const tmp = mkTmpDir();
+    _resetLicenseSession(tmp, db);
+    _overrideHwIdForTest( "GYM-AAAA-BBBB-CCCC-DDDD");
+    const kp = generateKeyPair();
+    const priv = exportPrivateKeyPem(kp);
+    const pub = exportPublicKeyPem(kp);
+    // grant lapsed long ago — activation then marker fallback must be expired
+    const lic = issueLicense(priv, "GYM-AAAA-BBBB-CCCC-DDDD", "نادي", Date.now() - (GRACE_DAYS + 20) * DAY, Date.now() - (GRACE_DAYS + 10) * DAY);
+
+    expect(_activateWithPublicKey(lic, pub).state).toBe("expired");
+    fs.rmSync(path.join(tmp, "license.lic"), { force: true });
+    fs.rmSync(path.join(tmp, "license.json"), { force: true });
+
+    initLicenseSession(tmp, db);
+    const st = licenseStatus();
+    expect(st.state).toBe("expired");
+    expect(st.readOnly).toBe(true);
+    expect(rpcBlockReason("cash", "openCashSession")).toBe("expired_readonly");
+    expect(rpcBlockReason("members", "listMembers")).toBeNull();
+  });
+
+  it("marker keeps the clock-rollback guard working after the signed files are deleted", () => {
+    const db = createTestDb();
+    const tmp = mkTmpDir();
+    _resetLicenseSession(tmp, db);
+    _overrideHwIdForTest( "GYM-AAAA-BBBB-CCCC-DDDD");
+    const kp = generateKeyPair();
+    const priv = exportPrivateKeyPem(kp);
+    const pub = exportPublicKeyPem(kp);
+    const lic = issueLicense(priv, "GYM-AAAA-BBBB-CCCC-DDDD", "نادي", Date.now() - 10 * DAY, Date.now() + 30 * DAY);
+    _activateWithPublicKey(lic, pub);
+
+    fs.rmSync(path.join(tmp, "license.lic"), { force: true });
+    fs.rmSync(path.join(tmp, "license.json"), { force: true });
+    initLicenseSession(tmp, db);
+
+    // last_active was advanced at activation/boot; rewind beyond the tolerance
+    // (simulated by writing a future last_active into the marker) trips tampered.
+    db.run(
+      "UPDATE license_activation SET last_active = ? WHERE hwid = 'GYM-AAAA-BBBB-CCCC-DDDD'",
+      [Date.now() + (CLOCK_ROLLBACK_TOLERANCE_MS + 14 * HOUR)],
+    );
+    initLicenseSession(tmp, db);
+    expect(licenseStatus().state).toBe("tampered");
+    expect(rpcBlockReason("subscriptions", "createSubscription")).toBe("tampered");
+  });
+
+  it("explicit deactivation clears the marker, so a truly fresh install stays writable", () => {
+    const db = createTestDb();
+    const tmp = mkTmpDir();
+    _resetLicenseSession(tmp, db);
+    _overrideHwIdForTest( "GYM-AAAA-BBBB-CCCC-DDDD");
+    const kp = generateKeyPair();
+    const priv = exportPrivateKeyPem(kp);
+    const pub = exportPublicKeyPem(kp);
+    const lic = issueLicense(priv, "GYM-AAAA-BBBB-CCCC-DDDD", "نادي", Date.now() - 10 * DAY, Date.now() + 30 * DAY);
+    _activateWithPublicKey(lic, pub);
+    expect(db.count("SELECT COUNT(*) AS c FROM license_activation")).toBe(1);
+
+    deactivateLicense();
+    expect(db.count("SELECT COUNT(*) AS c FROM license_activation")).toBe(0);
+    expect(licenseStatus().state).toBe("unlicensed");
+    expect(canWrite()).toBe(true);
+  });
 });
+
