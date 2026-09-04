@@ -130,7 +130,7 @@ Browser (React)
 
 ### Major modules
 
-Members (+trash/restore/purge, photos), Plans & Subscriptions (time/sessions/open kinds, freeze history, renew, cancel), Cards & barcode check-in/out, Payments/refunds/voids + financial ledger, Expenses (+BLOB attachments ≤2 MB) & categories, dual cash boxes (gym/store) with counted-vs-expected discrepancy, financial reports & dashboard, Store/POS (products, stock movements, sales, credit debts, repayments, profit), Classes (sessions, bookings, capacity, session-consuming plans), Trainers & training plans (auto-sweep of expired plans), Employees & salaries (monthly/daily/per_class/custom; pay→expense+ledger), InBody body assessments + custom fitness tests, CRM templates/messages (WhatsApp manual-open flow), Notifications digest, Backups/restore/legacy IndexedDB import, Settings, Users management, Audit log, Permissions editor.
+Members (+trash/restore/purge, photos), Plans & Subscriptions (time/sessions/open kinds, freeze history, renew, cancel), Cards & barcode check-in/out, Payments/refunds/voids + financial ledger, Expenses (+filesystem attachments ≤2 MB) & categories, dual cash boxes (gym/store) with counted-vs-expected discrepancy, financial reports & dashboard, Store/POS (products, stock movements, sales, credit debts, repayments, profit), Classes (sessions, bookings, capacity, session-consuming plans), Trainers & training plans (auto-sweep of expired plans), Employees & salaries (monthly/daily/per_class/custom; pay→expense+ledger), InBody body assessments + custom fitness tests, CRM templates/messages (WhatsApp manual-open flow), Notifications digest, Backups/restore/legacy IndexedDB import, Settings, Users management, Audit log, Permissions editor.
 
 ## 4. Database Rules
 

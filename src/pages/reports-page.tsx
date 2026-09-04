@@ -1,5 +1,5 @@
 ﻿import { useEffect, useMemo, useState } from "react";
-import { BarChart3, CalendarCheck, Clock3, ReceiptText, ScrollText, TrendingDown, TrendingUp, Users, Banknote } from "lucide-react";
+import { BarChart3, CalendarCheck, CalendarDays, Clock3, Layers, ReceiptText, Repeat, ScrollText, TrendingDown, TrendingUp, UserRoundX, Users, Banknote } from "lucide-react";
 import { useAuth } from "@/contexts/auth-context";
 import { useT } from "@/i18n";
 import { api } from "@/api";
@@ -9,6 +9,12 @@ import type {
   MemberVisitRow,
 } from "@/core/services/attendance-analytics.service";
 import type { StaffActivityEntry } from "@/core/services/staff-activity.service";
+import type {
+  RetentionInsights,
+  InactiveMemberRow,
+  DayOfWeekPoint,
+  DepartmentPoint,
+} from "@/core/services/activity-insights.service";
 import { formatMinor } from "@/core/money";
 import { addDaysKey, todayKey } from "@/core/dates";
 import { formatNumber } from "@/services/format";
@@ -25,7 +31,7 @@ import { DataTable, type Column } from "@/components/ui/table";
 import { AttendanceChart } from "@/components/charts/attendance-chart";
 
 type PeriodValue = "today" | "week" | "month" | "custom";
-type ReportView = "finance" | "attendance" | "staff";
+type ReportView = "finance" | "attendance" | "retention" | "staff";
 
 const PERIODS: Array<{ value: string; key: string }> = [
   { value: "today", key: "rpt.periodToday" },
@@ -37,6 +43,7 @@ const PERIODS: Array<{ value: string; key: string }> = [
 const VIEWS: Array<{ value: ReportView; key: string }> = [
   { value: "finance", key: "rpt.tabFinance" },
   { value: "attendance", key: "rpt.tabAttendance" },
+  { value: "retention", key: "rpt.tabRetention" },
   { value: "staff", key: "rpt.tabStaff" },
 ];
 
@@ -384,6 +391,10 @@ export function ReportsPage() {
         <AttendanceReportView range={activeRange} />
       )}
 
+      {view === "retention" && (
+        <RetentionView range={activeRange} />
+      )}
+
       {view === "staff" && (
         <StaffActivityView actor={actor} range={activeRange} />
       )}
@@ -525,6 +536,181 @@ function AttendanceReportView({ range }: { range: { fromKey: string; toKey: stri
           )}
         </Card>
       </section>
+    </div>
+  );
+}
+
+function RetentionView({ range }: { range: { fromKey: string; toKey: string } }) {
+  const t = useT();
+  const { actor, hasPermission } = useAuth();
+  const [data, setData] = useState<RetentionInsights | null>(null);
+
+  useEffect(() => {
+    if (!actor || !hasPermission("reports.view")) return;
+    let alive = true;
+    api.reports
+      .retentionInsights(range)
+      .then((r) => {
+        if (alive) setData(r);
+      })
+      .catch((err) => {
+        console.error(err);
+        if (alive) setData(null);
+      });
+    return () => {
+      alive = false;
+    };
+  }, [actor, hasPermission, range]);
+
+  if (!data) return <EmptyState icon={<UserRoundX />} title={t("rpt.emptyRange")} />;
+
+  const inactiveColumns: Column<InactiveMemberRow>[] = [
+    {
+      key: "member",
+      header: t("common.member"),
+      render: (row) => (
+        <span>
+          <span className="block font-bold">{row.memberName}</span>
+          <span dir="ltr" className="block text-[11px] text-faint">{row.memberCode}</span>
+        </span>
+      ),
+    },
+    {
+      key: "department",
+      header: t("rpt.department"),
+      render: (row) => (
+        <span className="text-subtle">
+          {row.department === "men"
+            ? t("members.deptMen")
+            : row.department === "women"
+              ? t("members.deptWomen")
+              : t("members.deptGeneral")}
+        </span>
+      ),
+    },
+    {
+      key: "lastVisit",
+      header: t("rpt.lastVisit"),
+      render: (row) => (
+        <span dir="ltr" className="tabnum text-subtle">{row.lastVisitAt?.slice(0, 16) ?? "—"}</span>
+      ),
+    },
+    {
+      key: "days",
+      header: t("rpt.daysSinceVisit"),
+      render: (row) => (
+        <span className="font-extrabold tabnum text-red">{t("rpt.dayUnit", { count: row.daysSinceLastVisit })}</span>
+      ),
+    },
+  ];
+
+  const dowLabels: Record<number, string> = {
+    0: t("dow.day0"),
+    1: t("dow.day1"),
+    2: t("dow.day2"),
+    3: t("dow.day3"),
+    4: t("dow.day4"),
+    5: t("dow.day5"),
+    6: t("dow.day6"),
+  };
+  const maxDow = Math.max(1, ...data.byDayOfWeek.map((d) => d.count));
+  const maxDept = Math.max(1, ...data.byDepartment.map((d) => d.count));
+
+  return (
+    <div className="space-y-4">
+      <section className="grid gap-4 sm:grid-cols-2 xl:grid-cols-4">
+        <StatCard
+          title={t("rpt.retentionInactive")}
+          value={String(data.inactiveWithActiveSub)}
+          icon={<UserRoundX className="size-5" />}
+          accent="red"
+          subtitle={`${t("rpt.inactiveThreshold")}: ${data.inactiveThresholdDays} ${t("rpt.dayUnit", { count: data.inactiveThresholdDays })}`}
+        />
+        <StatCard
+          title={t("rpt.retentionNewVisitors")}
+          value={String(data.visitorSplit.newMembers)}
+          icon={<Repeat className="size-5" />}
+          accent="neon"
+          subtitle={`${t("rpt.retentionReturning")}: ${data.visitorSplit.returning}`}
+        />
+        <StatCard
+          title={t("rpt.retentionAvgCheckins")}
+          value={String(data.avgCheckinsPerVisitingMember)}
+          icon={<CalendarCheck className="size-5" />}
+          accent="cyan"
+          subtitle={`${t("rpt.uniqueMembers")}: ${data.visitorSplit.newMembers + data.visitorSplit.returning}`}
+        />
+        <StatCard
+          title={t("rpt.visits")}
+          value={String(data.totalVisitors)}
+          icon={<CalendarDays className="size-5" />}
+          accent="amber"
+        />
+      </section>
+
+      <section className="grid gap-4 xl:grid-cols-2">
+        <Card>
+          <CardHeader title={t("rpt.dayOfWeekTitle")} />
+          {data.byDayOfWeek.every((d) => d.count === 0) ? (
+            <EmptyState icon={<CalendarDays />} title={t("rpt.emptyRange")} />
+          ) : (
+            <ul className="space-y-2 p-5">
+              {data.byDayOfWeek.map((p: DayOfWeekPoint) => (
+                <li key={p.dow} className="flex items-center gap-3">
+                  <span className="w-12 shrink-0 font-bold">{dowLabels[p.dow]}</span>
+                  <span aria-hidden className="h-2.5 flex-1 overflow-hidden rounded-full bg-white/5">
+                    <span
+                      className="block h-full rounded-full bg-neon/70"
+                      style={{ width: `${Math.max(6, Math.round((p.count / maxDow) * 100))}%` }}
+                    />
+                  </span>
+                  <span className="w-10 shrink-0 font-bold tabnum text-subtle">{p.count}</span>
+                </li>
+              ))}
+            </ul>
+          )}
+        </Card>
+
+        <Card>
+          <CardHeader title={t("rpt.departmentSplitTitle")} />
+          {data.byDepartment.length === 0 ? (
+            <EmptyState icon={<Layers />} title={t("rpt.emptyRange")} />
+          ) : (
+            <ul className="space-y-2 p-5">
+              {data.byDepartment.map((p: DepartmentPoint) => (
+                <li key={p.department} className="flex items-center gap-3">
+                  <span className="w-20 shrink-0 font-bold">
+                    {p.department === "men"
+                      ? t("members.deptMen")
+                      : p.department === "women"
+                        ? t("members.deptWomen")
+                        : t("members.deptGeneral")}
+                  </span>
+                  <span aria-hidden className="h-2.5 flex-1 overflow-hidden rounded-full bg-white/5">
+                    <span
+                      className="block h-full rounded-full bg-cyan/70"
+                      style={{ width: `${Math.max(6, Math.round((p.count / maxDept) * 100))}%` }}
+                    />
+                  </span>
+                  <span className="w-10 shrink-0 font-bold tabnum text-subtle">{p.count}</span>
+                </li>
+              ))}
+            </ul>
+          )}
+        </Card>
+      </section>
+
+      <Card>
+        <CardHeader
+          title={t("rpt.inactiveListTitle")}
+          description={t("rpt.inactiveListHint")}
+        />
+        {data.inactiveMembers.length === 0 ? (
+          <EmptyState icon={<UserRoundX />} title={t("rpt.inactiveListEmpty")} />
+        ) : (
+          <DataTable columns={inactiveColumns} data={data.inactiveMembers} rowKey={(r) => r.memberId} />
+        )}
+      </Card>
     </div>
   );
 }

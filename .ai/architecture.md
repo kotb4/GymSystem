@@ -60,7 +60,7 @@ v4 growth   plan kinds time|sessions|open (+sessions_total/used, freeze cols),
             attendance.checkout_at, body_assessments, fitness_test_defs/results,
             product_categories(seed), products, stock_movements, store_sales,
             store_sale_items, store_debts, store_debt_payments, classes, class_sessions,
-            class_bookings, employees, salaries, expense_attachments(BLOB≤2MB),
+            class_bookings, employees, salaries, expense_attachments(BLOB≤2MB; dropped v15, backfilled v26 to Files/),
             dual box on cash_sessions+ledger, crm_templates(seed), crm_messages
 v5 sessions auth_sessions
 v6 files    files(kind registry), members.photo_file_id, employees.salary_type/base,

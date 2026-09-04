@@ -8,7 +8,7 @@
 - Barcode cards (register, assign, unassign, lost, blocked, bulk register)
 - Check-in/check-out with duplicate window
 - Payments (record, partial, discount, refund, void) + financial ledger
-- Expenses (+BLOB attachments, categories, void)
+- Expenses (+filesystem attachments, categories, void)
 - Dual cash boxes (gym/store) with close discrepancy
 - Financial reports & dashboard (revenue, refunds, expenses, net, by method/plan, daily series)
 - Store/POS (products, stock, sales, credit debts, repayments, void, profit)

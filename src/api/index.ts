@@ -71,6 +71,7 @@ import type { FinanceOverview } from "@/core/services/finance.service";
 import type { PeriodReport } from "@/core/services/financial-report.service";
 import type { StaffActivityReport } from "@/core/services/staff-activity.service";
 import type { AttendanceAnalytics } from "@/core/services/attendance-analytics.service";
+import type { RetentionInsights } from "@/core/services/activity-insights.service";
 import type { TrainerListQuery, PublicTrainer } from "@/core/services/trainers.service";
 import type {
   PublicTrainingPlan,
@@ -306,6 +307,8 @@ const reportsApi = {
     rpc<StaffActivityReport>("reports", "getStaffActivity", [range]),
   attendanceAnalytics: (range: { fromKey: string; toKey: string }) =>
     rpc<AttendanceAnalytics>("reports", "getAttendanceAnalytics", [range]),
+  retentionInsights: (range: { fromKey: string; toKey: string }) =>
+    rpc<RetentionInsights>("reports", "getRetentionInsights", [range]),
 };
 
 const trainersApi = {

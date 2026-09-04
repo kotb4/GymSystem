@@ -646,7 +646,7 @@ function buildMigrations(): Migration[] {
       },
     },
     {
-      // ---- ADR-018 §8: backfill is handled by `src/db/expense-attachments-backfill.ts`
+      // ---- ADR-018 §8: backfill is handled by `server/expense-attachments-backfill.ts`
       // after `runMigrations` finishes (called from `server/context.ts`).
       // This migration is a no-op to keep `src/db/migrations.ts` free of
       // node-only globals so the frontend tsconfig still typechecks.

@@ -38,7 +38,7 @@ Every rule below was read from the actual implementation. Anything unverified is
 
 ## Expenses & Cash Boxes
 
-- Expense: category + method + description ≥3 chars + date not in future; void writes reversal entry, editing writes compensating adjustment; attachments ≤2 MB BLOBs in DB.
+- Expense: category + method + description ≥3 chars + date not in future; void writes reversal entry, editing writes compensating adjustment; attachments (PDF/JPEG/PNG, ≤2 MB) are stored on disk under `Files/expense_attachment/` and registered in the `files` table (kind `expense_attachment`).
 - Categories can't be disabled while referenced by past expenses.
 - Dual boxes `gym` | `store`; exactly ONE open session per box (partial unique index); store sale payments, credit-sale reversals, and debt installments are tagged `box='store'` in the ledger; expected closing = opening + cash-in − cash-out **scoped to the session's box**; counted-vs-expected difference stored permanently with audit when ≠ 0. Sessions accept an optional `box` input (default `gym`).
 

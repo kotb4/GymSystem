@@ -97,8 +97,7 @@
 **`expenses`** — Expense records
 - id (PK), category_id (FK→expense_categories), amount_minor, method_code, description, expense_date, reference_no, status (active/voided), void_reason, voided_by, voided_at, created_by, updated_at, created_at
 
-**`expense_attachments`** — BLOB-embedded expense attachments (≤2 MB)
-- id (PK), expense_id (FK→expenses), file_name, mime_type, size_bytes, data (BLOB), created_by, created_at
+**`expense_attachments`** — *removed.* The legacy BLOB table was dropped in migration v15; legacy rows were backfilled to the filesystem (migration v26, `server/expense-attachments-backfill.ts`). Expense attachments now live in the `files` registry with `kind='expense_attachment'` and are read from `Files/expense_attachment/<id><ext>` on disk.
 
 **`cash_sessions`** — Cash register open/close
 - id (PK), opened_by, opened_at, opening_balance_minor, closed_by, closed_at, expected_closing_minor, counted_closing_minor, difference_minor, close_note, status (open/closed), box (gym/store)
@@ -180,8 +179,8 @@
 **`auth_sessions`** — Server-side session tokens
 - token_hash (PK), user_id (FK→users), created_at, last_seen_at, expires_at
 
-**`files`** — Filesystem file registry
-- id (PK), kind (member_photo/inbody_report/expense_attachment/other), original_name, mime_type, size_bytes, sha256, created_by, created_at
+**`files`** — Filesystem file registry (bytes live on disk under `Files/<kind>/<id><ext>`)
+- id (PK), kind (member_photo/inbody_report/expense_attachment/other), original_name, mime_type, size_bytes, sha256, relative_path (v25+), created_by, created_at
 
 **`audit_logs`** — Audit trail (AUTOINCREMENT)
 - id (PK), user_id, user_name, action, entity_type, entity_id, metadata (JSON), created_at

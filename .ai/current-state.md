@@ -1,12 +1,13 @@
 # Current Development State
 
 - **Last updated:** 2026-09-04
-- **Current objective (done):** TASK-021 — **removed the daily closing (الإغلاق اليومي) feature entirely** (product decision). `/الخزينة` (`/treasury`) is now **cash sessions (الوردية) only**, gated by `payments.view`. `cash.daily_close`/`cash.daily_reopen` permissions removed; migration **v27** drops `daily_closings` + `daily_closing_audit_entries` + indexes + revokes the seeded grants; dashboard KPI card removed. Cleanup (TASK-022-adjacent): removed the dead `import.meta` branch in `shouldSeedDemo()` → **`npm run build` is now fully clean (no CJS warning)**; corrected false `VITE_SEED_DEMO` dev-seeding claims in docs.
+- **Current objective (done):** TASK-025 — **advanced analytics: Retention & Activity Insights** — a genuinely new non-duplicative reports module added as a 4th "الاحتفاظ والنشاط" tab in `/reports`. New service `getRetentionInsights` (at-risk/inactive members via `inactive_days`, new-vs-returning visitor split, avg check-ins, day-of-week + department patterns), gated `reports.view`, department-scoped, pure reads (no migration/perm/audit changes). Verification clean: typecheck ×2, RPC consistency (265 entries, no missing), `npm test` **399/399** (33 files), `npm run build`, `sync:docs`.
 - **Last agent/tool:** opencode (this session)
 
 ## Active tasks
 
-- **TASK-021** — extended: resolved الاشتراكات / الباقات duplicate. Attendance fast-tab removal pushed (`cc3bdb8`); subscriptions+packages+plans merge/tab-reorder pushed (`29de98e`); packages-primary interface pushed (`9f53d30`). This session: phase 9 merged `/cash` + `/treasury` into a tabbed `/treasury` (pushed `7ac7420`), phase 10 removed the tabs → single `/treasury` page (cash session primary + daily closing below), and phase 11 (current) **removed the daily-closing feature entirely** so `/الخزينة` = cash sessions (الوردية) only (migration v27, pending push).
+- **TASK-025** — **done this session** (new reports tab, pending user report/commit). See Phase 16 below for full detail.
+- **TASK-021** — extended: resolved الاشتراكات / الباقات duplicate. Attendance fast-tab removal pushed (`cc3bdb8`); subscriptions+packages+plans merge/tab-reorder pushed (`29de98e`); packages-primary interface pushed (`9f53d30`). This session: phase 9 merged `/cash` + `/treasury` into a tabbed `/treasury` (pushed `7ac7420`), phase 10 removed the tabs → single `/treasury` page (cash session primary + daily closing below), and phase 11 removed the daily-closing feature entirely so `/الخزينة` = cash sessions (الوردية) only (migration v27).
 
 ## What was most recently completed (handoff context)
 
@@ -68,6 +69,28 @@ Removed the now-unused tab keys from i18n: `tabClosing`/`tabSessions`/`tabClosin
 
 **Phase 14 (done, this session): removed orphaned `nav.*` i18n keys.**
 - Removed 6 unused `nav.*` keys from `ar.ts`: `checkin`, `reception`, `packages`, `scannerDiagnostics`, `health`, `inbody` — all confirmed unused via repo-wide grep (their sidebar entries/routes were removed in earlier phases/TASK-023). Kept `nav.users`/`nav.permissions` (still used as tab titles in `/staff`). Verified: i18n coverage 3/3, `npm run typecheck` clean, `npm test` **394/394**, `npm run build` clean.
+
+**Phase 15 (done, this session): resolved "expense attachments BLOBs → `Files\`" — already implemented; synced stale docs.**
+- User asked for the roadmap "move expense-attachment BLOBs from SQLite to Files\" item. **Investigation showed the code migration was already fully implemented (ADR-018):** `server/files.service.ts` is a complete secure filesystem registry (kind `expense_attachment`, MIME whitelist + magic-byte sniffing, path-traversal guards, atomic writes, crash-safe trash delete); `server/expense-attachments-backfill.ts` idempotently backfills legacy BLOB rows to `Files/expense_attachment/<id>.<ext>` at boot (`server/context.ts:111`); migrations **v15** drops the old `expense_attachments` BLOB table (when empty), **v25** adds `files.relative_path`, **v26** is the backfill marker; `server/index.ts` uploads (`POST /api/files`) + serves (`GET /api/files/:id`). `expenses.service.ts` has zero BLOB code. Backups already archive `Files/` into `.gymbak` trailers.
+- No code re-build was done (nothing to build). Instead corrected the **stale docs/AI-state** that still described the removed BLOB storage: removed the `expense_attachments` schema section in `docs/ai/database.md` (replaced with "removed; backfilled to Files/"), added `relative_path` to the `files` table doc, fixed `.ai/project.md` (removed stale known-limitation + feature-list), `.ai/business-rules.md:41`, `docs/ai/business-rules.md:75`, `docs/ai/roadmap.md:11`, `AGENTS.md:133`, `README.md:151`, `.ai/architecture.md:63` (v4 + "(dropped v15)"), and corrected factual errors in `.ai/decisions.md` ADR-018 (v20→v25, v21→v26, `unlinkPendingForPaths`→`unlinkFileBytes`+`sweepPendingDeletes`) and the `migrations.ts:649` comment path (`src/db/`→`server/`).
+- Verification: `npm run sync:docs` (docs in sync), `npm run typecheck` + `npm run typecheck:server` clean, `npm run build` clean, targeted tests pass (`finance` 42, `i18n-coverage` 3, `part4-backup` 8).
+
+**Phase 16 (done, this session): advanced analytics — Retention & Activity Insights (TASK-025).**
+- The `/reports` page already covered finance + attendance (visits/peak-hours/top-members) + staff activity. The genuine missing gap was **member retention/churn + activity insight**. Built a new, non-duplicative module as a 4th tab "الاحتفاظ والنشاط" (`retention`) in `reports-page.tsx`.
+- New `src/core/services/activity-insights.service.ts` → `getRetentionInsights(db, actor, {fromKey,toKey})`, gated `reports.view`, department-scoped for men/women staff, pure reads (no schema/migration/permission/audit change):
+  - `inactiveMembers` — active members with an active paid-ish subscription whose last visit is older than the configured `inactive_days` (reuses `getInactiveDays`), incl. code/name/department/lastVisitAt/daysSinceLastVisit.
+  - `visitorSplit {newMembers, returning}` — a visitor is "new" when this period holds their **all-time** first check-in (computed from global MIN; a subtle range-scoping bug was caught+fixed during testing).
+  - `totalVisitors` + `avgCheckinsPerVisitingMember` (total / unique, 2dp).
+  - `byDayOfWeek` (7 buckets, Sun=0) + `byDepartment` (general/men/women).
+- Wiring: `server/rpc/reports.rpc.ts` (+`getRetentionInsights`), `src/api/index.ts` (`api.reports.retentionInsights(range)`). Reused existing `reports.view` — no new permission (avoids permission-count churn in tests/docs).
+- UI: `RetentionView` in `reports-page.tsx` — 4 StatCards (inactive count w/ threshold, new vs returning, avg check-ins, total visits), day-of-week + department neon bars, at-risk members DataTable. i18n keys in `src/i18n/ar.ts`: `rpt.tabRetention`, `rpt.department`, `rpt.daysSinceVisit`, `rpt.dayUnit`, `rpt.retentionInactive`, `rpt.inactiveThreshold`, `rpt.retentionNewVisitors`, `rpt.retentionReturning`, `rpt.retentionAvgCheckins`, `rpt.dayOfWeekTitle`, `rpt.departmentSplitTitle`, `rpt.inactiveListTitle`/`Hint`/`Empty` + new `dow.day0..day6` namespace; dept labels reuse `members.dept*`.
+- Tests: `tests/activity-insights.test.ts` (5) — aggregation math, `reports.view` denials, range/date validation, `inactive_days` threshold respect, archived exclusion. Dept scoping delegated to the already-covered `departmentScopeCondition` helper.
+- Verification: `npm run typecheck` + `typecheck:server` clean, `node scripts/check-rpc-consistency.cjs` ok (265 entries, no missing client call), `npm test` **399/399** (33 files, +5 new), `npm run build` clean, `npm run sync:docs` in sync. No commit made (user-facing report pending).
+
+**Files changed (TASK-025 — retention & activity insights):**
+- Created: `src/core/services/activity-insights.service.ts`, `tests/activity-insights.test.ts`
+- Modified: `server/rpc/reports.rpc.ts`, `src/api/index.ts`, `src/pages/reports-page.tsx`, `src/i18n/ar.ts`, `.ai/tasks.md` (+TASK-025), `.ai/current-state.md` (this file)
+- No DB changes (no migration), no permission/audit changes.
 
 ## Known issues / follow-ups
 

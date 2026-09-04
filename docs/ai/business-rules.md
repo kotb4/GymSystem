@@ -72,7 +72,7 @@
 - Categories: seeded 10 (rent, salaries, utilities, equipment, maintenance, marketing, supplies, insurance, other, transportation). Admin can add more.
 - Each expense writes a ledger entry (`entry_type = 'expense'`, `direction = -1`).
 - Void: writes a reversal entry (`entry_type = 'reversal_expense'`, `direction = +1`).
-- Attachments: BLOB-embedded (≤2 MB), stored in `expense_attachments` table. Can also use `files` registry for newer uploads.
+- Attachments: stored on disk under `Files/expense_attachment/<id><ext>` and registered in the `files` table (kind `expense_attachment`). Limited to PDF/JPEG/PNG, ≤2 MB, magic-byte verified at upload.
 
 ## Cash Sessions
 
