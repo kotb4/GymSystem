@@ -189,4 +189,18 @@ describe("restore/import authorization (audit F-01)", () => {
       importDatabaseBytes(legacySystemActor(), v6Bytes, { kind: "legacy_import" }),
     ).rejects.toMatchObject({ code: "VALIDATION" });
   });
+
+  it("rejects legacy import once setup has completed (no post-setup abuse)", async () => {
+    const ctx = await boot();
+    await setupOwner(ctx); // system initialized before the request
+    const { importDatabaseBytes } = await import("../server/backups");
+
+    await expect(
+      importDatabaseBytes(legacySystemActor(), Uint8Array.from([1, 2, 3, 4]), { kind: "legacy_import" }),
+    ).rejects.toMatchObject({ code: "CONFLICT" });
+
+    // The live database must be untouched by the rejected import.
+    const { countActiveOwners } = await import("@/core/services/users.service");
+    expect(countActiveOwners(ctx.db as never)).toBe(1);
+  });
 });

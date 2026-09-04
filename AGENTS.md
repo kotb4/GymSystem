@@ -29,7 +29,7 @@ Yassen Mohamed Kotb | 01288536381 (`yassen`) is a fully Arabic, RTL-first, offli
 
 ```
 React SPA (dist/, served by the backend)
-        │  HTTP on 0.0.0.0:8890
+        │  HTTP on 127.0.0.1:8890
         ▼
 Local Node.js backend (server/index.ts, bundled to dist-server/index.cjs)
         │  whitelisted RPC + REST endpoints, business logic, sessions, backups
@@ -47,7 +47,7 @@ SQLite (WAL) at %LOCALAPPDATA%\GymSystem\Database\gym.db  + Files\ + Backups\ + 
 | Purpose | Command |
 | --- | --- |
 | Frontend dev server (proxies `/api` → 8890) | `npm run dev` |
-| Build + run backend (0.0.0.0:8890) | `npm run dev:server` |
+| Build + run backend (127.0.0.1:8890) | `npm run dev:server` |
 | Both at once (Windows) | `dev.bat` |
 | Full build (typecheck client + server, vite build, esbuild server bundle) | `npm run build` |
 | Typecheck frontend | `npm run typecheck` |

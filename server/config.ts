@@ -21,6 +21,20 @@ export interface AppDirs {
   dbFile: string;
 }
 
+/**
+ * Secure default bind address: loopback only. The app is a local desktop
+ * application; exposing it on 0.0.0.0 would put the HTTP API (and the
+ * unauthenticated first-run setup route) on the LAN. Opt into LAN exposure
+ * explicitly via `GYMSYSTEM_HOST`. See ADR-023 (supersedes ADR-010).
+ */
+export const DEFAULT_HTTP_HOST = "127.0.0.1";
+
+/** Resolve the bind host: env override wins, else loopback default. */
+export function resolveHttpHost(override?: string): string {
+  const candidate = override ?? process.env.GYMSYSTEM_HOST;
+  return candidate && candidate.trim() !== "" ? candidate.trim() : DEFAULT_HTTP_HOST;
+}
+
 function resolveRoot(): string {
   const override = process.env.GYMSYSTEM_DATA_DIR;
   if (override && override.trim() !== "") return path.resolve(override.trim());

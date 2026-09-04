@@ -63,8 +63,8 @@ function migrationMax() {
 }
 
 function hostBind() {
-  const src = read("server/index.ts");
-  const m = src.match(/GYMSYSTEM_HOST\s*\?\?\s*"([^"]+)"/);
+  const src = read("server/config.ts");
+  const m = src.match(/DEFAULT_HTTP_HOST\s*=\s*"([^"]+)"/);
   return m ? m[1] : null;
 }
 

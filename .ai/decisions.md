@@ -1,5 +1,15 @@
 # Architecture Decision Log
 
+## ADR-023: Revert LAN binding — secure loopback-only default (host + first-run hardening)
+- Date: 2026-09-05
+- Status: accepted (security task; supersedes ADR-010's `0.0.0.0` default, keeps its env override + doc-sync machinery)
+- Context: The app is a **local desktop application** (`scripts/windows/start-gymsystem.bat` opens `127.0.0.1`). ADR-010 made the backend bind `0.0.0.0` by default for LAN/Tailscale reachability, putting the HTTP API — including the **unauthenticated** first-run `/api/auth/setup` and legacy-import routes — on the wire by default. A security review made these the highest-priority fixes: default binding must be loopback-only, and first-setup/import must be race-safe and non-abusable post-initialization.
+- Decision:
+  1. **Loopback-only default.** `server/config.ts` gains `DEFAULT_HTTP_HOST = "127.0.0.1"` + `resolveHttpHost(override?)`; `server/index.ts` binds `127.0.0.1` unless `GYMSYSTEM_HOST` is explicitly set (override still supported, now documented as an opt-in to LAN exposure). `scripts/sync-docs.mjs` reads the default from `config.ts`.
+  2. **First-setup is transactional and race-safe.** `auth.service.setup()` re-checks `countActiveOwners(db)` **inside** the `BEGIN IMMEDIATE` write transaction (mirrors the existing pre-check) so two concurrent requests cannot both create owners; exactly one wins, the other fails with `CONFLICT errors.setupAlreadyDone`. No schema change (a partial-UNIQUE on active owners was rejected: `users.manage` legitimately supports additional active owner users).
+  3. **Legacy import is one-time only.** `server/backups.ts::importDatabaseBytes` now rejects `kind: "legacy_import"` whenever the live DB already has an active owner (`CONFLICT errors.setupAlreadyDone`), checked synchronously before any heavy work — closing the TOCTOU where a setup could finish during the upload and the stale unauthenticated import would still adopt over it. The route fast-fails unauth `POST /api/system/import-legacy` with 401 once an owner exists.
+- Consequences: Out-of-the-box the API is only reachable on the loopback interface; LAN exposure requires an explicit `GYMSYSTEM_HOST`. First-run setup is single-winner and legacy import cannot run after initialization (restore is unaffected — still permission-gated/authenticated). Docs normalized to loopback. No schema, permission, audit-action, or i18n changes.
+
 ## ADR-022: Remove the license grace period — expiry = total lockdown
 - Date: 2026-09-05
 - Status: accepted (TASK-038, supersedes ADR-019 §5 grace window; owner decision in Arabic: «لو التفعيل 10 أيام يقفل بالظبط في اليوم الأخير»)
@@ -155,6 +165,7 @@
 - Consequences: Oversized bodies on ordinary routes fail fast with the standard validation error instead of consuming memory.
 
 ## ADR-010: LAN bind on 0.0.0.0 (default) + value-level auto doc sync
+- Status: **superseded by ADR-023** (loopback-only default restored; the `GYMSYSTEM_HOST` override and the sync:docs host facts are kept)
 - Date: 2026-08-27
 - Status: accepted (product-owner request)
 - Context: The backend defaulted to loopback-only (`127.0.0.1`), so it was unreachable from other LAN devices / Tailscale IPs. Separately, the AI documentation (`AGENTS.md`, `.ai/*`, `docs/ai/*`) repeatedly drifted from the code (e.g. migrations "v1..v6" while code has v1..v11), because nothing kept counts/versions in sync after edits.

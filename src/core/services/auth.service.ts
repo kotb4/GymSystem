@@ -61,6 +61,10 @@ export async function setup(db: Db, input: SetupInput): Promise<PublicUser> {
   const hash = await hashPassword(input.password);
 
   await db.transaction(() => {
+    // Re-check inside the write transaction: `BEGIN IMMEDIATE` serializes the
+    // first-time setup so two concurrent `setup()` calls cannot both pass the
+    // pre-check and create competing owners. Only one owner ever wins.
+    if (countActiveOwners(db) !== 0) throw errConflict("errors.setupAlreadyDone");
     db.run(
       "INSERT INTO users (id, username, email, password_hash, full_name, role_id, is_active, created_at, updated_at)\nVALUES (?, ?, NULL, ?, ?, 'owner', 1, ?, ?)",
       [id, username, hash, fullName, stamp, stamp],

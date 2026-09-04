@@ -11,6 +11,7 @@ import { listAuditLogs, recordAudit } from "@/core/services/audit.service";
 import { readAllSettings, updateSetting } from "@/core/services/settings.service";
 import {
   createUser,
+  countActiveOwners,
   listUsers,
   resetPassword,
   setUserActive,
@@ -49,6 +50,26 @@ describe("setup", () => {
     await expect(
       setup(db, { gymName: "x", ownerFullName: "y", username: "other", password: "Password1" }),
     ).rejects.toMatchObject({ code: "CONFLICT" });
+  });
+});
+
+describe("setup concurrency (race regression)", () => {
+  it("creates exactly one owner when two setups race", async () => {
+    db = createTestDb(); // fresh, uninitialized DB
+    const results = await Promise.allSettled([
+      setup(db, { gymName: "Gym A", ownerFullName: "Owner A", username: "ownerA", password: "Owner@2026" }),
+      setup(db, { gymName: "Gym B", ownerFullName: "Owner B", username: "ownerB", password: "Owner@2026" }),
+    ]);
+    const fulfilled = results.filter(
+      (r): r is PromiseFulfilledResult<Awaited<ReturnType<typeof setup>>> => r.status === "fulfilled",
+    );
+    const rejected = results.filter((r): r is PromiseRejectedResult => r.status === "rejected");
+    // Exactly one wins; the loser must fail safely (CONFLICT), never a third owner.
+    expect(fulfilled.length).toBe(1);
+    expect(rejected.length).toBe(1);
+    expect((rejected[0] as PromiseRejectedResult).reason).toMatchObject({ code: "CONFLICT" });
+    expect(countActiveOwners(db)).toBe(1);
+    expect(needsSetup(db)).toBe(false);
   });
 });
 

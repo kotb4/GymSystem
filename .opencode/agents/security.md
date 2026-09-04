@@ -13,7 +13,7 @@ Read `AGENTS.md` and `.ai/current-state.md` first to know what's already been ve
 
 ## Threat model notes
 
-Single-machine deployment by default (`HOST=127.0.0.1`), but `GYMSYSTEM_HOST` allows LAN binding (default is now `0.0.0.0`, see ADR-010) — review with that in mind. The browser is untrusted: frontend checks are cosmetic; the backend is the only enforcement point. One DB writer process; FKs enforced.
+Single-machine deployment by default (`HOST=127.0.0.1`), and `GYMSYSTEM_HOST` is the only way an operator can opt into LAN binding (default is now loopback-only again; ADR-023 reversed ADR-010) — review with that in mind. The browser is untrusted: frontend checks are cosmetic; the backend is the only enforcement point. One DB writer process; FKs enforced.
 
 ## Audit checklist (inspect actual code, cite file:line)
 

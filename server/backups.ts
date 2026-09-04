@@ -11,9 +11,10 @@ import path from "node:path";
 import { DatabaseSync } from "node:sqlite";
 import { getDbContext, adoptDatabaseFile, logLine } from "./context";
 import { NodeSqliteDriver } from "./driver";
-import { errValidation } from "../src/core/errors";
+import { errConflict, errValidation } from "../src/core/errors";
 import { requirePermission } from "../src/core/permissions";
 import type { ServiceActor } from "../src/core/permissions";
+import { countActiveOwners } from "../src/core/services/users.service";
 import {
   buildBackupFileName,
   pruneBackupsForActor,
@@ -326,6 +327,14 @@ export async function importDatabaseBytes(
   options: { kind: "restore" | "legacy_import" },
 ): Promise<RestoreFileReport> {
   requirePermission(actor, "backup.restore");
+  // Legacy import (`kind: "legacy_import"`) is a ONE-TIME first-run adoption:
+  // it may only run while the system is still uninitialized (no active owner).
+  // Re-checked here — synchronously, right before any heavy work — so a setup
+  // that completed during the upload cannot be overwritten by a stale
+  // unauthenticated import request. Restore (authenticated) is unaffected.
+  if (options.kind === "legacy_import" && countActiveOwners(getDbContext().db) > 0) {
+    throw errConflict("errors.setupAlreadyDone");
+  }
   if (bytes.length < 100 || bytes[0] === 0) throw errValidation("errors.backupInvalidFile");
   // Probe just the SQLite prefix (the trailing bytes, if any, are stripped).
   const header = Buffer.from(bytes.slice(0, 16)).toString("latin1");

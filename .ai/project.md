@@ -22,7 +22,7 @@ Verified against the repository on 2026-08-25. If code changes, run `/docs` to r
 ## Runtime
 
 - No Electron/Tauri. Desktop experience = local Node backend + browser window in Edge App Mode launched by `scripts/windows/start-gymsystem.bat`.
-- Backend listens on `0.0.0.0:8890` by default (override: `GYMSYSTEM_HOST`/`GYMSYSTEM_PORT`; LAN exposure enabled — binds all interfaces).
+- Backend listens on `127.0.0.1:8890` by default (override: `GYMSYSTEM_HOST`/`GYMSYSTEM_PORT`; the default is loopback-only — LAN exposure is opt-in via `GYMSYSTEM_HOST`, ADR-023).
 - Data under `%LOCALAPPDATA%\GymSystem\`: `Database\gym.db`, `Files\`, `Backups\`, `Logs\server.log`. Override root with `GYMSYSTEM_DATA_DIR`.
 
 ## Important Commands
@@ -36,7 +36,7 @@ Members & trash/purge/photos · Plans & subscriptions (time/sessions/open kinds,
 ## Known Limitations
 
 - Arabic-only UI (single locale by design).
-- Single-machine app; the backend binds `0.0.0.0` (LAN reachable) but there is no built-in multi-user collaborative workflow beyond the shared local SQLite — one writer process at a time (ADR-010/ADR-011: source is on private GitHub for collab, live DB stays local).
+- Single-machine app; the backend binds `127.0.0.1` (loopback-only by default) but there is no built-in multi-user collaborative workflow beyond the shared local SQLite — one writer process at a time (ADR-011: source is on private GitHub for collab, live DB stays local; ADR-010's LAN default was reversed by ADR-023).
 - WhatsApp sending is manual-open flow; no automated provider transport.
 - File assets (member photos, InBody reports, expense attachments) live on disk under `Files\` and are registered in the `files` table; they are included in `.gymbak` backups (ADR-018).
 - No EXE/installer packaging yet (bat launcher only).

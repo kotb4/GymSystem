@@ -2,6 +2,7 @@
 import path from "node:path";
 import fs from "node:fs";
 import { getDbContext, openDatabase, logLine, isMaintenanceMode, flushLogging } from "./context";
+import { resolveHttpHost } from "./config";
 import {
   SESSION_COOKIE,
   createSessionToken,
@@ -25,8 +26,8 @@ import {
 import { requirePermission } from "../src/core/permissions";
 
 const PORT = Number(process.env.GYMSYSTEM_PORT ?? 8890);
-/** Loopback only by default — never exposed publicly (spec section 22). */
-const HOST = process.env.GYMSYSTEM_HOST ?? "0.0.0.0";
+/** Secure default: loopback-only (ADR-023). GYMSYSTEM_HOST still allows LAN exposure. */
+const HOST = resolveHttpHost(process.env.GYMSYSTEM_HOST);
 const MAX_BODY_BYTES = 256 * 1024 * 1024;
 /** Default cap for JSON/small uploads; DB-sized transfers opt into MAX_BODY_BYTES explicitly. */
 const DEFAULT_BODY_LIMIT = 8 * 1024 * 1024;
