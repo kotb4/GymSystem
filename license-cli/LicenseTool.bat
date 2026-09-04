@@ -1,7 +1,7 @@
 @echo off
 rem ============================================================
 rem  Yassen Mohamed Kotb | 01288536381  -  License Tool shortcut
-rem  Opens the License Tools menu (license-cli\license-cli.bat)
+rem  Opens the License Tools GUI (license-cli\license-cli.bat)
 rem ============================================================
 setlocal
 cd /d "%~dp0"

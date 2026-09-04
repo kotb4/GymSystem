@@ -29,6 +29,17 @@
 - **Days-remaining banner:** `server/license/session.ts::licenseStatus()` now returns `daysRemaining` (number, not nullable): `active` = ceil days to `expiresAt`; `grace` = days to grace end; `expired/tampered/invalid` = 0. `graceDaysRemaining` kept as alias. Frontend `LicenseStatus` type updated; `AppLayout` shows a persistent neon banner `license.bannerActive` = "تبقّى {days} يوم على انتهاء ترخيص النظام" whenever `state==='active' && daysRemaining>0` (plus existing grace/expired/tampered banners). No backend re-check loop needed — every `licenseStatus()` RPC recomputes from the real clock.
 - Tests: `tests/license.test.ts` +1 (`daysRemaining` in active/grace/expired). Verification: typecheck ×2 clean, i18n-coverage 3/3 (bannerActive registered), RPC consistency clean, `npm test` **431/431** (34 files), `npm run build` clean, `license-cli.bat` + `npm run license:hwid`/`issue-here` smoke-tested from the new folder. No schema/permission/audit changes.
 
+## TASK-033: License tool → GUI (WinForms), no CLI menu
+- Status: done (2026-09-04). User: "حول الاداه انها تشتغل بواجهه مش cli". Replaced the console menu with a native **Windows Forms GUI** — zero dependencies (built-in PowerShell 5.1 + the existing `license-tool.mjs` as the signing engine under the hood).
+- **New `license-cli/license-tool-gui.ps1`** (UTF-8 **with BOM** so Arabic renders correctly in PowerShell 5.1), dark-themed, Arabic:
+  1) **HWID** — readonly box (auto-filled on open) + «نسخ المعرّد».
+  2) **Issue license for this machine** — gym name + days fields, **live expiry preview** recomputed on change, «إصدار الرخصة» runs `node license-tool.mjs issue-here --gym ... --days ...`, shows output, success MessageBox.
+  3) **Tools** — «نسخ محتوى license.lic» (reads `license-cli/license.lic` to clipboard for the app's activation screen), «فتح مجلد الأداة».
+  - Status console (monospace) for all feedback; elnk compromise: `-WindowStyle Hidden` launcher so no console flash.
+- **Launchers:** `license-cli.bat` v6 is now a thin launcher → `powershell -NoProfile -ExecutionPolicy Bypass -WindowStyle Hidden -File license-tool-gui.ps1`. `LicenseTool.bat` + `License Tool.bat` unchanged (they `call license-cli.bat`).
+- **README** updated (GUI quick start; CLI still documented for keygen/embed). CLI remains the engine + `npm run license:*` untouched.
+- Verification: script parses via `[scriptblock]::Create`, GUI smoke-test (form stays up 6s, then killed) via both `license-tool-gui.ps1` and the full `LicenseTool.bat` double-click path; `node license-tool.mjs hwid` confirmed from PowerShell exactly as the GUI calls it. No schema/permission/audit changes.
+
 ## TASK-030: Fix loyalty rewards execution disconnect (loyalty.service.ts redeemReward)
 - Status: done (2026-09-04). **Logic bug — "مكافآت نقاط الولاء تُستهلك النقاط دون أثر حقيقي (الايام/الجلسات/المنتج)".** `redeemReward` deducted points (and granted `discount` credit) but `free_days`, `pt_session`, `product`, and `custom` had **no side effect** — the member paid points for literally nothing.
 - Fix (per user decision): inside the redeem transaction, before committing the points deduction —
