@@ -336,7 +336,7 @@ describe("package subscription snapshot + check-in", () => {
       durationDays: 30,
       price: 20000,
       allowedFreezes: 1,
-      freezeAllowanceDays: 5,
+      freezeAllowanceDays: 90,
     });
     const member = await createMember(db, owner, { fullName: "تجميد" });
     const sub = await createSubscription(db, owner, {

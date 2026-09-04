@@ -115,7 +115,7 @@ describe("enhanced freeze system - explicit date range", () => {
     ).rejects.toMatchObject({ messageKey: "errors.subscriptionAlreadyFrozen" });
   });
 
-  it("manual unfreeze always extends end_date by the actual frozen days (today is start)", async () => {
+  it("any unfreeze extends by actual elapsed days; a same-day freeze/unfreeze grants 0 days", async () => {
     const m = await createMember(db, owner, { fullName: "عضو 7" });
     const plan = await createPlan(db, owner, { name: "شهري", durationDays: 30, price: 200 });
     const sub = await createSubscription(db, owner, { memberId: m.id, planId: plan.id });
@@ -127,16 +127,44 @@ describe("enhanced freeze system - explicit date range", () => {
         sub.id,
       ])!
     ).end_date;
+    // Freeze starts today, unfreeze happens today (unfreeze date == start date):
+    // manual unfreeze is allowed, but no full calendar day elapsed → 0 days added.
     await freezeSubscription(db, owner, sub.id, { endDate: freezeEnd });
     const updated = await unfreezeSubscription(db, owner, sub.id);
-    const actualFrozenDays = 1;
-    const expected = addDaysKey(endBefore, actualFrozenDays);
+    expect(updated.endDate).toBe(endBefore);
+    const after = db.first<{ frozen_days: number }>(
+      "SELECT frozen_days FROM member_subscriptions WHERE id = ?",
+      [sub.id]
+    );
+    expect(Number(after?.frozen_days)).toBe(0);
+  });
+
+  it("unfreezing a freeze that started on a previous day extends by the elapsed days", async () => {
+    const m = await createMember(db, owner, { fullName: "عضو 7b" });
+    const plan = await createPlan(db, owner, { name: "شهري", durationDays: 30, price: 200 });
+    const sub = await createSubscription(db, owner, { memberId: m.id, planId: plan.id });
+    writeSettingInternal(db, SETTING_KEYS.freezeExtendsExpiry, "0");
+    const today = todayKey();
+    const endBefore = (
+      db.first<{ end_date: string }>("SELECT end_date FROM member_subscriptions WHERE id = ?", [
+        sub.id,
+      ])!
+    ).end_date;
+    // Create a freeze starting today, then backdate its start_date so it spans
+    // yesterday + today (inclusive endpoints) before the same-day unfreeze → +2 days.
+    await freezeSubscription(db, owner, sub.id, { endDate: addDaysKey(today, 2) });
+    db.run("UPDATE subscription_freezes SET start_date = ? WHERE subscription_id = ?", [
+      addDaysKey(today, -1),
+      sub.id,
+    ]);
+    const updated = await unfreezeSubscription(db, owner, sub.id);
+    const expected = addDaysKey(endBefore, 2);
     expect(updated.endDate).toBe(expected);
     const after = db.first<{ frozen_days: number }>(
       "SELECT frozen_days FROM member_subscriptions WHERE id = ?",
       [sub.id]
     );
-    expect(Number(after?.frozen_days)).toBe(actualFrozenDays);
+    expect(Number(after?.frozen_days)).toBe(2);
   });
 
   it("auto-unfreeze on check-in respects the freeze_extends_expiry setting (off)", async () => {
@@ -177,6 +205,12 @@ describe("enhanced freeze system - explicit date range", () => {
       ])!
     ).end_date;
     await freezeSubscription(db, owner, sub.id, { endDate: freezeEnd });
+    // Backdate the freeze start so it spans yesterday + today (inclusive
+    // endpoints) by the same-day auto-unfreeze → +2 days (non-same-day extends).
+    db.run("UPDATE subscription_freezes SET start_date = ? WHERE subscription_id = ?", [
+      addDaysKey(today, -1),
+      sub.id,
+    ]);
     const { assignCardByBarcode } = await import("@/core/services/cards.service");
     const { card } = await assignCardByBarcode(db, owner, { memberId: m.id, barcodeValue: `GYM-F2-${m.id.slice(0, 4)}` });
     await recordCheckIn(db, owner, { barcode: card.barcodeValue });
@@ -184,7 +218,7 @@ describe("enhanced freeze system - explicit date range", () => {
       "SELECT end_date, status FROM member_subscriptions WHERE id = ?",
       [sub.id]
     )!;
-    const actualFrozenDays = 1;
+    const actualFrozenDays = 2;
     const expected = addDaysKey(endBefore, actualFrozenDays);
     expect(after.end_date).toBe(expected);
     expect(after.status).toBe("active");
@@ -213,5 +247,67 @@ describe("enhanced freeze system - explicit date range", () => {
     await expect(
       freezeSubscription(db, owner, sub.id, { endDate: addDaysKey(today, 2) })
     ).rejects.toMatchObject({ messageKey: "errors.freezeMaxReached" });
+  });
+
+  it("rejects a freeze that would exceed the cumulative days allowance (bypass guard)", async () => {
+    const { createPackage } = await import("@/core/services/packages.service");
+    const pkg = await createPackage(db, owner, {
+      name: "باقة أيام تجميد",
+      model: "time",
+      durationDays: 60,
+      price: 60000,
+      allowedFreezes: 99,
+      freezeAllowanceDays: 7,
+    });
+    const m = await createMember(db, owner, { fullName: "عضو 11" });
+    const sub = await createSubscription(db, owner, {
+      memberId: m.id,
+      planId: pkg.syntheticPlanId!,
+      packageId: pkg.id,
+    });
+    const today = todayKey();
+
+    // Simulate 5 of the 7 allowed days already consumed (as would accumulate over
+    // past freezes), leaving 2 remaining.
+    db.run("UPDATE member_subscriptions SET frozen_days = 5 WHERE id = ?", [sub.id]);
+
+    // A within-allowance freeze (5 + 2 = 7, not > 7) is still permitted.
+    await expect(
+      freezeSubscription(db, owner, sub.id, { endDate: addDaysKey(today, 1) })
+    ).resolves.toBeTruthy();
+    await unfreezeSubscription(db, owner, sub.id);
+
+    // Reset to the reported "5 consumed" state, then the 30-day request
+    // (5 + 30 = 35 > 7) must be rejected.
+    db.run("UPDATE member_subscriptions SET frozen_days = 5 WHERE id = ?", [sub.id]);
+    await expect(
+      freezeSubscription(db, owner, sub.id, { endDate: addDaysKey(today, 29) })
+    ).rejects.toMatchObject({ messageKey: "errors.freezeAllowanceExhausted" });
+  });
+
+  it("repeated same-day freeze/unfreeze does NOT inflate the expiry (phantom-day guard)", async () => {
+    const m = await createMember(db, owner, { fullName: "عضو 12" });
+    const plan = await createPlan(db, owner, { name: "شهري", durationDays: 30, price: 200 });
+    const sub = await createSubscription(db, owner, { memberId: m.id, planId: plan.id });
+    const today = todayKey();
+    const endBefore = (
+      db.first<{ end_date: string }>("SELECT end_date FROM member_subscriptions WHERE id = ?", [
+        sub.id,
+      ])!
+    ).end_date;
+
+    // The reported exploit: the same-day cycle repeated 3 times must NOT add
+    // 3 free days. Each freeze+unfreeze happens on the same calendar day.
+    for (let i = 0; i < 3; i++) {
+      await freezeSubscription(db, owner, sub.id, { endDate: addDaysKey(today, 2) });
+      await unfreezeSubscription(db, owner, sub.id);
+    }
+
+    const after = db.first<{ end_date: string; frozen_days: number }>(
+      "SELECT end_date, frozen_days FROM member_subscriptions WHERE id = ?",
+      [sub.id],
+    )!;
+    expect(after.end_date).toBe(endBefore);
+    expect(Number(after.frozen_days)).toBe(0);
   });
 });

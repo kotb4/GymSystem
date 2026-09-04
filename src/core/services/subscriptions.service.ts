@@ -606,20 +606,18 @@ export async function freezeSubscription(
     throw errValidation("errors.freezeWindowInvalid");
   }
 
-  // Package freeze limits: enforce allowed freeze COUNT and cumulative frozen
-  // DAYS allowance captured at purchase time (history-safe snapshot).
+  // Package freeze limits: enforce allowed freeze COUNT (captured at purchase
+  // time, history-safe snapshot). The cumulative DAYS allowance is checked below
+  // once the requested duration is known.
   const allowedFreezes = Number(row.package_allowed_freezes ?? 0);
   const allowanceDays = Number(row.package_freeze_allowance_days ?? 0);
-  if (allowedFreezes > 0 || allowanceDays > 0) {
+  if (allowedFreezes > 0) {
     const freezesSoFar = db.count(
       "SELECT COUNT(*) FROM subscription_freezes WHERE subscription_id = ?",
       [subscriptionId],
     );
-    if (allowedFreezes > 0 && freezesSoFar >= allowedFreezes) {
+    if (freezesSoFar >= allowedFreezes) {
       throw errValidation("errors.freezeMaxReached", { max: allowedFreezes });
-    }
-    if (allowanceDays > 0 && Number(row.frozen_days ?? 0) >= allowanceDays) {
-      throw errValidation("errors.freezeAllowanceExhausted", { days: allowanceDays });
     }
   }
 
@@ -637,6 +635,12 @@ export async function freezeSubscription(
 
   const durationDays = diffDaysKeys(startDate, endDate) + 1;
   if (durationDays <= 0) throw errValidation("errors.freezeDurationInvalid");
+
+  // Cumulative DAYS allowance: the new request must not push the member past the
+  // allowed total (frozen_days already consumed + this request's duration).
+  if (allowanceDays > 0 && Number(row.frozen_days ?? 0) + durationDays > allowanceDays) {
+    throw errValidation("errors.freezeAllowanceExhausted", { days: allowanceDays });
+  }
 
   // Check for overlapping freezes (only open freezes with actual_resume_date IS NULL)
   const overlapFreeze = db.first<{ id: string }>(
@@ -708,14 +712,22 @@ export async function unfreezeSubscription(
 
   const today = todayKey();
 
+  // Actual frozen days: from freeze start_date to today (capped at planned
+  // duration). A same-day freeze/unfreeze (unfreeze date == start date) grants
+  // NO extension — otherwise a freeze followed by an immediate unfreeze would
+  // inflate the subscription end date by one day, repeatable for free days.
+  const actualFrozenDays = openFreeze
+    ? today === openFreeze.start_date
+      ? 0
+      : Math.max(0, Math.min(
+          diffDaysKeys(openFreeze.start_date, today) + 1,
+          Number(openFreeze.duration_days ?? 0)
+        ))
+    : 0;
+
   await db.transaction(async () => {
     let endDate = row.end_date;
     if (openFreeze) {
-      // Calculate actual frozen days: from freeze start_date to today (capped at planned duration)
-      const actualFrozenDays = Math.max(0, Math.min(
-        diffDaysKeys(openFreeze.start_date, today) + 1,
-        Number(openFreeze.duration_days ?? 0)
-      ));
       if (actualFrozenDays > 0) {
         // Manual unfreeze always extends; auto-unfreeze only if setting enabled
         const extendsExpirySetting = db.first<{ value: string }>(
@@ -743,7 +755,7 @@ export async function unfreezeSubscription(
     );
     recordAudit(db, actor, "SUBSCRIPTION_UNFROZEN", "subscription", subscriptionId, {
       extendedEndDate: endDate,
-      actualFrozenDays: openFreeze ? Math.max(0, Math.min(diffDaysKeys(openFreeze.start_date, today) + 1, Number(openFreeze.duration_days ?? 0))) : 0,
+      actualFrozenDays,
       isAutoUnfreeze: !!options.isAutoUnfreeze,
     });
   });
