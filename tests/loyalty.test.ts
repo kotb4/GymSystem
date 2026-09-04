@@ -3,6 +3,7 @@ import { buildActor, setup } from "@/core/services/auth.service";
 import { createUser } from "@/core/services/users.service";
 import { createMember } from "@/core/services/members.service";
 import { createPlan } from "@/core/services/plans.service";
+import { addDaysKey } from "@/core/dates";
 import { createSubscription, renewSubscription } from "@/core/services/subscriptions.service";
 import { assignCardByBarcode } from "@/core/services/cards.service";
 import { recordCheckIn, memberOutstandingMinor } from "@/core/services/attendance.service";
@@ -155,6 +156,73 @@ describe("loyalty: redemption catalog", () => {
     expectCode(() => upsertRedemption(db, manager, { rewardType: "discount", title: "", pointsCost: 1 }), "VALIDATION");
     expectCode(() => upsertRedemption(db, manager, { rewardType: "discount", title: "x", pointsCost: 0 }), "VALIDATION");
     expectCode(() => upsertRedemption(db, manager, { rewardType: "free_days", title: "x", pointsCost: 10 }), "VALIDATION");
+  });
+});
+
+describe("loyalty: reward execution (free_days / pt_session / product)", () => {
+  it("free_days extends the member's single active subscription end date", async () => {
+    const reward = upsertRedemption(db, manager, { rewardType: "free_days", title: "أسبوع مجاني", pointsCost: 200, days: 7 });
+    const m = await member();
+    const sub = await activeSub(m.id);
+    const endBefore = db.first<{ end_date: string }>("SELECT end_date FROM member_subscriptions WHERE id = ?", [sub.id])!.end_date;
+    seedPoints(m.id, 500);
+
+    const res = redeemReward(db, manager, m.id, reward.id);
+    expect(res.subscriptionId).toBe(sub.id);
+
+    const after = db.first<{ end_date: string }>("SELECT end_date FROM member_subscriptions WHERE id = ?", [sub.id])!.end_date;
+    expect(after).toBe(addDaysKey(endBefore, 7));
+  });
+
+  it("pt_session adds the sessions to the member's active subscription PT-session quota", async () => {
+    const reward = upsertRedemption(db, manager, { rewardType: "pt_session", title: "جلسة تدريب", pointsCost: 150, sessions: 2 });
+    const m = await member();
+    const sub = await activeSub(m.id);
+    seedPoints(m.id, 300);
+
+    const res = redeemReward(db, manager, m.id, reward.id);
+    expect(res.subscriptionId).toBe(sub.id);
+
+    const after = db.first<{ package_pt_sessions: number }>("SELECT package_pt_sessions FROM member_subscriptions WHERE id = ?", [sub.id])!.package_pt_sessions;
+    expect(Number(after)).toBe(2);
+  });
+
+  it("product reward deducts one unit from store stock and records a movement", async () => {
+    const p = await product("منتج استبدال");
+    const reward = upsertRedemption(db, manager, { rewardType: "product", title: "مشروب بروتين", pointsCost: 300, productId: p.id });
+    const m = await member();
+    seedPoints(m.id, 400);
+
+    const res = redeemReward(db, manager, m.id, reward.id);
+    expect(res.productId).toBe(p.id);
+
+    const after = db.first<{ stock_qty: number }>("SELECT stock_qty FROM products WHERE id = ?", [p.id])!.stock_qty;
+    expect(Number(after)).toBe(19);
+    const mov = db.first<{ movement_type: string; delta: number }>(
+      "SELECT movement_type, delta FROM stock_movements WHERE ref_table = 'loyalty_transactions' ORDER BY created_at DESC LIMIT 1",
+    )!;
+    expect(mov.movement_type).toBe("manual_adjust");
+    expect(Number(mov.delta)).toBe(-1);
+  });
+
+  it("rejects free_days / pt_session when the member has no active subscription", async () => {
+    const days = upsertRedemption(db, manager, { rewardType: "free_days", title: "أيام", pointsCost: 100, days: 3 });
+    const sess = upsertRedemption(db, manager, { rewardType: "pt_session", title: "جلسات", pointsCost: 100, sessions: 1 });
+    const m = await member();
+    seedPoints(m.id, 500);
+
+    expectCode(() => redeemReward(db, manager, m.id, days.id), "VALIDATION");
+    expectCode(() => redeemReward(db, manager, m.id, sess.id), "VALIDATION");
+  });
+
+  it("rejects a product reward when store stock is unavailable", async () => {
+    const p = await product("نفد");
+    const reward = upsertRedemption(db, manager, { rewardType: "product", title: "منتج مفقود", pointsCost: 100, productId: p.id });
+    const m = await member();
+    seedPoints(m.id, 200);
+    db.run("UPDATE products SET stock_qty = 0 WHERE id = ?", [p.id]);
+
+    expectCode(() => redeemReward(db, manager, m.id, reward.id), "VALIDATION");
   });
 });
 

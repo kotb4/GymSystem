@@ -1,9 +1,10 @@
-import { nowStamp } from "@/core/dates";
+import { addDaysKey, nowStamp, todayKey } from "@/core/dates";
 import { errConflict, errNotFound, errValidation } from "@/core/errors";
 import { requirePermission, type ServiceActor } from "@/core/permissions";
 import type { Db, Row } from "@/db/engine";
 import { recordAudit } from "./audit.service";
 import { assertDepartmentAccess, memberDepartmentById } from "./department";
+import { readSetting, SETTING_KEYS } from "./settings.service";
 
 // ───────────────────── helpers ─────────────────────
 
@@ -487,6 +488,49 @@ export interface RedemptionResult {
   reward: RedemptionItem;
   balanceAfter: number;
   creditMinor: number;
+  /** Active subscription id when the reward extended days or added PT sessions. */
+  subscriptionId?: string | null;
+  /** Product id whose stock was consumed for a product reward. */
+  productId?: string | null;
+}
+
+/**
+ * Rewards that need a single active subscription to attach to (free_days
+ * extends its end date, pt_session adds to its PT-session quota). Returns the
+ * subscription id or null when the member has none/both (caller rejects).
+ */
+function singleActiveSubscriptionId(db: Db, memberId: string): string | null {
+  const today = todayKey();
+  const rows = db.all<{ id: string }>(
+    "SELECT id FROM member_subscriptions WHERE member_id = ? AND status = 'active' AND start_date <= ? AND end_date >= ?",
+    [memberId, today, today],
+  );
+  return rows.length === 1 ? String(rows[0].id) : null;
+}
+
+/**
+ * Consume stock (one unit) when a product reward is redeemed. Mirrors the
+ * store's negative-stock guard and records a stock movement tied to the
+ * loyalty transaction. Intentionally local (the loyalty module must not import
+ * store.service, which already imports loyalty.service — this avoids a cycle).
+ */
+function consumeRedemptionStock(db: Db, productId: string, loyaltyTxId: string): void {
+  const row = db.first<Row>("SELECT stock_qty FROM products WHERE id = ?", [productId]);
+  if (!row) throw errNotFound("errors.store.productNotFound");
+  const current = Number(row.stock_qty);
+  const allowNegative = readSetting(db, SETTING_KEYS.allowNegativeStock) === "1";
+  if (current <= 0 && !allowNegative) {
+    throw errValidation("errors.store.negativeStock", { available: current });
+  }
+  const result = current - 1;
+  if (result < 0 && !allowNegative) {
+    throw errValidation("errors.store.negativeStock", { available: current });
+  }
+  db.run("UPDATE products SET stock_qty = ?, updated_at = ? WHERE id = ?", [result, nowStamp(), productId]);
+  db.run(
+    "INSERT INTO stock_movements (id, product_id, movement_type, delta, result_qty, unit_cost_minor, ref_table, ref_id, notes, created_by, created_at)\nVALUES (?, ?, 'manual_adjust', -1, ?, NULL, 'loyalty_transactions', ?, 'loyalty_redemption', NULL, ?)",
+    [crypto.randomUUID(), productId, result, loyaltyTxId, nowStamp()],
+  );
 }
 
 export function redeemReward(db: Db, actor: ServiceActor, memberId: string, rewardId: string): RedemptionResult {
@@ -505,6 +549,35 @@ export function redeemReward(db: Db, actor: ServiceActor, memberId: string, rewa
     const next = prev - item.pointsCost;
     if (next < 0) throw errConflict("errors.loyalty.insufficientPoints");
     const txId = crypto.randomUUID();
+
+    // Execute the reward's real-world effect before committing the points
+    // deduction. Subscriptions-based rewards need exactly one active sub.
+    let subscriptionId: string | null = null;
+    let productId: string | null = null;
+    if (item.rewardType === "free_days" || item.rewardType === "pt_session") {
+      subscriptionId = singleActiveSubscriptionId(db, memberId);
+      if (!subscriptionId) throw errValidation("errors.loyalty.requiresActiveSubscription");
+      if (item.rewardType === "free_days" && (item.days ?? 0) > 0) {
+        const sub = db.first<{ end_date: string }>(
+          "SELECT end_date FROM member_subscriptions WHERE id = ?",
+          [subscriptionId],
+        )!;
+        db.run(
+          "UPDATE member_subscriptions SET end_date = ?, updated_at = ? WHERE id = ?",
+          [addDaysKey(sub.end_date, item.days!), nowStamp(), subscriptionId],
+        );
+      }
+      if (item.rewardType === "pt_session" && (item.sessions ?? 0) > 0) {
+        db.run(
+          "UPDATE member_subscriptions SET package_pt_sessions = package_pt_sessions + ?, updated_at = ? WHERE id = ?",
+          [item.sessions!, nowStamp(), subscriptionId],
+        );
+      }
+    } else if (item.rewardType === "product") {
+      productId = item.productId;
+      consumeRedemptionStock(db, productId!, txId);
+    }
+
     db.run(
       "INSERT INTO loyalty_transactions (id, member_id, delta, balance_after, kind, source, reason, ref_table, ref_id, reward_id, points_cost, created_by, created_at)\nVALUES (?, ?, ?, ?, 'redeem', 'redemption', ?, NULL, NULL, ?, ?, ?, ?)",
       [txId, memberId, -item.pointsCost, next, `redeem:${item.title}`, item.id, item.pointsCost, actor.userId, nowStamp()],
@@ -519,8 +592,10 @@ export function redeemReward(db: Db, actor: ServiceActor, memberId: string, rewa
     }
     recordAudit(db, actor, "LOYALTY_REWARD_REDEEMED", "loyalty_reward", rewardId, {
       memberId, rewardType: item.rewardType, pointsCost: item.pointsCost, balanceAfter: next, creditMinor,
+      ...(subscriptionId ? { subscriptionId } : {}),
+      ...(productId ? { productId } : {}),
     });
-    return { txId, memberId, reward: item, balanceAfter: next, creditMinor };
+    return { txId, memberId, reward: item, balanceAfter: next, creditMinor, subscriptionId, productId };
   });
 }
 
