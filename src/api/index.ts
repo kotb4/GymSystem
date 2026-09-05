@@ -368,6 +368,7 @@ export interface StoreSaleItem {
   id: string;
   productId: string;
   productName: string;
+  productSku: string | null;
   qty: number;
   returnedQty: number;
   unitPriceMinor: number;
@@ -426,6 +427,7 @@ export interface StoreReturnItemRow {
   saleItemId: string;
   productId: string;
   productName: string;
+  productSku: string | null;
   qty: number;
   unitPriceMinor: number;
   unitCostMinor: number;

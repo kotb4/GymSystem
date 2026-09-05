@@ -618,7 +618,7 @@ export async function purgeMember(db: Db, actor: ServiceActor, memberId: string)
       db.run("DELETE FROM files WHERE id = ?", [String(row.photo_file_id)]);
       filesRemoved = 1;
     }
-    recordAudit(db, actor, "MEMBER_PURGED", "member", null, {
+    recordAudit(db, actor, "MEMBER_PURGED", "member", memberId, {
       memberCode: row.member_code,
       name: row.full_name,
       cascadeCount: Number(refs),

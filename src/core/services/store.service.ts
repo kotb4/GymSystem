@@ -51,7 +51,7 @@ export function createProductCategory(db: Db, actor: ServiceActor, nameAr: strin
     name,
     stamp(),
   ]);
-  recordAudit(db, actor, "EXPENSE_CATEGORY_CREATED", "product_category", id, { name });
+  recordAudit(db, actor, "PRODUCT_CATEGORY_CREATED", "product_category", id, { name });
   return { id, nameAr: name };
 }
 
@@ -62,7 +62,10 @@ export function setProductCategoryActive(
   isActive: boolean,
 ): void {
   requirePermission(actor, "store.products");
+  if (!db.first("SELECT id FROM product_categories WHERE id = ?", [categoryId]))
+    throw errNotFound("errors.store.categoryNotFound");
   db.run("UPDATE product_categories SET is_active = ? WHERE id = ?", [isActive ? 1 : 0, categoryId]);
+  recordAudit(db, actor, "PRODUCT_CATEGORY_TOGGLED", "product_category", categoryId, { isActive });
 }
 
 // ------------------------------- products ---------------------------------
@@ -126,9 +129,12 @@ return mapProduct(row);
 
 /**
  * Hard-deletes a product (ADR-008, amended per owner request): cascades its
- * stock-movement log AND its lines inside historical sale documents — sale
- * headers/totals remain intact, only the referenced line items are removed.
- * The audit entry records how many sale lines were detached.
+ * stock-movement log. PURGE IS REFUSED once the product has any historical
+ * sale/return line (TASK-041): those lines are immutable financial documents
+ * and destroying them would corrupt historical revenue identity. The archive
+ * path — deactivating via `updateProduct({isActive:false})` — is the intended
+ * retirement flow for products with sales history. The audit entry records how
+ * many stock movements were removed.
  */
 export async function purgeProduct(
   db: Db,
@@ -139,24 +145,26 @@ export async function purgeProduct(
   const row = db.first<Row>("SELECT id, name FROM products WHERE id = ?", [productId]);
   if (!row) throw errNotFound("errors.store.productNotFound");
 
+  // A referenced product must never be hard-deleted: its lines carry the
+  // product_name/price/cost snapshots that make historical receipts accurate.
+  const salesAffected = db.count(
+    "SELECT COUNT(DISTINCT sale_id) FROM store_sale_items WHERE product_id = ?",
+    [productId],
+  );
+  const returnedItems = db.count(
+    "SELECT COUNT(*) FROM store_return_items WHERE product_id = ? OR sale_item_id IN (SELECT id FROM store_sale_items WHERE product_id = ?)",
+    [productId, productId],
+  );
+  if (salesAffected > 0 || returnedItems > 0) {
+    throw errConflict("errors.store.productSold", { count: salesAffected });
+  }
+
   await db.transaction(() => {
-    const lines = db.all<{ sale_id: string }>(
-      "SELECT DISTINCT sale_id FROM store_sale_items WHERE product_id = ?",
-      [productId],
-    );
-    const returned = db.run(
-      "DELETE FROM store_return_items WHERE product_id = ? OR sale_item_id IN (SELECT id FROM store_sale_items WHERE product_id = ?)",
-      [productId, productId],
-    );
-    const sold = db.run("DELETE FROM store_sale_items WHERE product_id = ?", [productId]);
     const moved = db.run("DELETE FROM stock_movements WHERE product_id = ?", [productId]);
     db.run("DELETE FROM products WHERE id = ?", [productId]);
     recordAudit(db, actor, "PRODUCT_PURGED", "product", productId, {
       name: str(row.name),
       movementsRemoved: Number(moved.changes),
-      saleLinesRemoved: Number(sold.changes),
-      returnItemsRemoved: Number(returned.changes),
-      salesAffected: lines.length,
     });
   });
 }
@@ -406,6 +414,7 @@ export interface StoreSaleItem {
   id: string;
   productId: string;
   productName: string;
+  productSku: string | null;
   qty: number;
   returnedQty: number;
   unitPriceMinor: number;
@@ -463,6 +472,7 @@ export function getSale(db: Db, actor: ServiceActor, saleId: string): StoreSale 
       id: str(it.id),
       productId: str(it.product_id),
       productName: str(it.product_name_snapshot),
+      productSku: it.product_sku_snapshot == null ? null : str(it.product_sku_snapshot),
       qty: num(it.qty),
       returnedQty: num(it.returned_qty),
       unitPriceMinor: num(it.unit_price_minor),
@@ -524,7 +534,7 @@ export async function createSale(db: Db, actor: ServiceActor, input: CreateSaleI
 
   const lines = items.map((i) => {
     const pRow = db.first<Row>(
-      "SELECT id, name, price_minor, cost_minor, stock_qty, is_active FROM products WHERE id = ?",
+      "SELECT id, name, sku, price_minor, cost_minor, stock_qty, is_active FROM products WHERE id = ?",
       [i.productId],
     );
     if (!pRow) throw errNotFound("errors.store.productNotFound");
@@ -534,6 +544,7 @@ export async function createSale(db: Db, actor: ServiceActor, input: CreateSaleI
     return {
       productId: str(pRow.id),
       productName: str(pRow.name),
+      productSku: pRow.sku == null ? null : str(pRow.sku),
       qty,
       unitPriceMinor: num(pRow.price_minor),
       unitCostMinor: num(pRow.cost_minor),
@@ -576,8 +587,8 @@ export async function createSale(db: Db, actor: ServiceActor, input: CreateSaleI
 
     for (const l of lines) {
       db.run(
-        "INSERT INTO store_sale_items (id, sale_id, product_id, product_name_snapshot, qty, unit_price_minor, unit_cost_minor, line_total_minor)\nVALUES (?, ?, ?, ?, ?, ?, ?, ?)",
-        [crypto.randomUUID(), saleId, l.productId, l.productName, l.qty, l.unitPriceMinor, l.unitCostMinor, l.lineTotalMinor],
+        "INSERT INTO store_sale_items (id, sale_id, product_id, product_name_snapshot, product_sku_snapshot, qty, unit_price_minor, unit_cost_minor, line_total_minor)\nVALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
+        [crypto.randomUUID(), saleId, l.productId, l.productName, l.productSku, l.qty, l.unitPriceMinor, l.unitCostMinor, l.lineTotalMinor],
       );
       const newQty = guardAndApply(db, l.productId, -l.qty);
       insertMovement(db, {
@@ -741,6 +752,7 @@ export interface StoreReturnItemRow {
   saleItemId: string;
   productId: string;
   productName: string;
+  productSku: string | null;
   qty: number;
   unitPriceMinor: number;
   unitCostMinor: number;
@@ -798,6 +810,7 @@ export function getStoreReturn(db: Db, actor: ServiceActor, returnId: string): S
       saleItemId: str(it.sale_item_id),
       productId: str(it.product_id),
       productName: str(it.product_name_snapshot),
+      productSku: it.product_sku_snapshot == null ? null : str(it.product_sku_snapshot),
       qty: num(it.qty),
       unitPriceMinor: num(it.unit_price_minor),
       unitCostMinor: num(it.unit_cost_minor),
@@ -896,6 +909,7 @@ export async function returnStoreSale(db: Db, actor: ServiceActor, input: Create
       saleItemId: str(it.id),
       productId: str(it.product_id),
       productName: str(it.product_name_snapshot),
+      productSku: it.product_sku_snapshot == null ? null : str(it.product_sku_snapshot),
       qty,
       unitPriceMinor: num(it.unit_price_minor),
       unitCostMinor: num(it.unit_cost_minor),
@@ -928,8 +942,8 @@ export async function returnStoreSale(db: Db, actor: ServiceActor, input: Create
 
     for (const l of linesPrepared) {
       db.run(
-        "INSERT INTO store_return_items (id, return_id, sale_item_id, product_id, product_name_snapshot, qty, unit_price_minor, unit_cost_minor, line_total_minor)\nVALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
-        [crypto.randomUUID(), returnId, l.saleItemId, l.productId, l.productName, l.qty, l.unitPriceMinor, l.unitCostMinor, l.lineTotalMinor],
+        "INSERT INTO store_return_items (id, return_id, sale_item_id, product_id, product_name_snapshot, product_sku_snapshot, qty, unit_price_minor, unit_cost_minor, line_total_minor)\nVALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+        [crypto.randomUUID(), returnId, l.saleItemId, l.productId, l.productName, l.productSku, l.qty, l.unitPriceMinor, l.unitCostMinor, l.lineTotalMinor],
       );
       db.run("UPDATE store_sale_items SET returned_qty = returned_qty + ? WHERE id = ?", [l.qty, l.saleItemId]);
       const newQty = guardAndApply(db, l.productId, l.qty);

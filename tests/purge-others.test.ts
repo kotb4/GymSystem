@@ -104,7 +104,7 @@ describe("hard-delete surfaces for previously non-deletable entities (ADR-008)",
     });
   });
 
-  it("purges an unsold product; a sold product purges too, detaching its sale lines but keeping the sale", async () => {
+  it("purges an unsold product; refuses to purge a product that has sales history", async () => {
     const fresh = await createProduct(db, owner, {
       name: "غير مباع",
       costMinor: 1000,
@@ -128,12 +128,19 @@ describe("hard-delete surfaces for previously non-deletable entities (ADR-008)",
       methodCode: "cash",
     });
 
-    await purgeProduct(db, owner, sold.id);
-
-    expect(db.count("SELECT COUNT(*) AS c FROM products WHERE id = ?", [sold.id])).toBe(0);
+    // The product is referenced by a sale line → destructive delete is refused
+    // (archive via updateProduct is the intended retirement path). No data or
+    // audit record is produced by the refused attempt.
+    await expect(purgeProduct(db, owner, sold.id)).rejects.toMatchObject({
+      code: "CONFLICT",
+    });
+    expect(db.count("SELECT COUNT(*) AS c FROM products WHERE id = ?", [sold.id])).toBe(1);
     expect(
-      db.count("SELECT COUNT(*) AS c FROM store_sale_items WHERE product_id = ?", [sold.id]),
-    ).toBe(0);
+      db.count("SELECT COUNT(*) AS c FROM store_sale_items WHERE sale_id = ?", [sale.id]),
+    ).toBe(1);
+    expect(
+      db.count("SELECT COUNT(*) AS c FROM stock_movements WHERE product_id = ?", [sold.id]),
+    ).toBe(2);
     // sale document itself survives with its header totals
     expect(db.count("SELECT COUNT(*) AS c FROM store_sales WHERE id = ?", [sale.id])).toBe(1);
     expect(
@@ -141,7 +148,7 @@ describe("hard-delete surfaces for previously non-deletable entities (ADR-008)",
         "SELECT COUNT(*) AS c FROM audit_logs WHERE action = 'PRODUCT_PURGED' AND entity_id = ?",
         [sold.id],
       ),
-    ).toBe(1);
+    ).toBe(0);
   });
 
   it("deletes an OPEN cash session (abort) but never a CLOSED one", async () => {

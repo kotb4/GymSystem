@@ -709,6 +709,29 @@ function buildMigrations(): Migration[] {
         // Read/write lives in server/license/session.ts (runtime layer).
       },
     },
+    {
+      // ---- v30: product SKU snapshots on store line items ----
+      // TASK-041 (historical data integrity): store_sale_items and
+      // store_return_items already snapshot the product NAME plus unit
+      // price/cost and line total, but NOT the product's SKU/code. A later SKU
+      // change (or a legacy-detached receipt) must not alter what a sale or
+      // return document says. Columns are NULL for rows predating this
+      // migration; only new sale/return lines populate them.
+      version: 30,
+      statements: [],
+      callback: (db: Db) => {
+        const saleCols = new Set(
+          db.all<{ name: string }>("PRAGMA table_info(store_sale_items)").map((c) => c.name),
+        );
+        if (!saleCols.has("product_sku_snapshot"))
+          db.run("ALTER TABLE store_sale_items ADD COLUMN product_sku_snapshot TEXT");
+        const returnCols = new Set(
+          db.all<{ name: string }>("PRAGMA table_info(store_return_items)").map((c) => c.name),
+        );
+        if (!returnCols.has("product_sku_snapshot"))
+          db.run("ALTER TABLE store_return_items ADD COLUMN product_sku_snapshot TEXT");
+      },
+    },
   ];
 }
 
