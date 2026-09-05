@@ -89,7 +89,7 @@ src/
   core/
     services/               ALL business logic (34 files, backend-only)
     permissions.ts          Roles, 92 permissions, DB-backed grant cache
-    audit-actions.ts        Audit action enum (156 actions)
+    audit-actions.ts        Audit action enum (158 actions)
     errors.ts               AppError codes + i18n messageKeys
     dates.ts money.ts       Shared primitives (date keys, minor units)
   db/
