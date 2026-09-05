@@ -23,6 +23,11 @@ export const SETTING_KEYS = {
   timeFormat: "time_format",
   backupAutoIntervalHours: "backup_auto_interval_hours",
   backupRetentionCount: "backup_retention_count",
+  backupAutoEnabled: "backup_auto_enabled",
+  backupLocation: "backup_location",
+  backupRetentionPolicy: "backup_retention_policy",
+  backupEncryptionEnabled: "backup_encryption_enabled",
+  backupPasswordSet: "backup_password_set",
   inactiveDays: "inactive_days",
   checkoutEnabled: "attendance_checkout_enabled",
   freezeExtendsExpiry: "freeze_extends_expiry",
@@ -35,6 +40,8 @@ export type SettingKey = (string & {}) | (typeof SETTING_KEYS)[keyof typeof SETT
 
 interface KeySpec {
   validate: (value: string) => string;
+  /** Allow an empty value after trim (used by `backup_location`: "" = default). */
+  allowEmpty?: boolean;
 }
 
 const PRINTABLE_RE = /^[\x20-\x7e]{0,8}$/;
@@ -117,6 +124,46 @@ const SPECS: Record<string, KeySpec> = {
   },
   [SETTING_KEYS.backupAutoIntervalHours]: { validate: (v) => String(intInRange(v, 0, 720)) },
   [SETTING_KEYS.backupRetentionCount]: { validate: (v) => String(intInRange(v, 1, 50)) },
+  [SETTING_KEYS.backupAutoEnabled]: {
+    validate: (v) => {
+      if (v !== "1" && v !== "0") throw errValidation("errors.settingBoolInvalid");
+      return v;
+    },
+  },
+  [SETTING_KEYS.backupLocation]: {
+    allowEmpty: true,
+    validate: (v) => {
+      const trimmed = v.trim();
+      if (trimmed === "") return "";
+      if (trimmed.length > 500) throw errValidation("errors.backupLocationInvalid");
+      if (/[\x00-\x1f]/.test(trimmed)) throw errValidation("errors.backupLocationInvalid");
+      if (trimmed.includes("..")) throw errValidation("errors.backupLocationInvalid");
+      // Windows absolute: drive letter (`C:\...`/`C:/...`) or UNC (`\\server\...`).
+      if (!/^[A-Za-z]:[\\/]/.test(trimmed) && !/^\\\\/.test(trimmed)) {
+        throw errValidation("errors.backupLocationInvalid");
+      }
+      return trimmed;
+    },
+  },
+  [SETTING_KEYS.backupRetentionPolicy]: {
+    validate: (v) => {
+      let parsed: unknown;
+      try {
+        parsed = JSON.parse(v);
+      } catch {
+        throw errValidation("errors.backupRetentionInvalid");
+      }
+      if (typeof parsed !== "object" || parsed === null) throw errValidation("errors.backupRetentionInvalid");
+      const obj = parsed as Record<string, unknown>;
+      const result: Record<string, number> = {};
+      for (const tier of ["daily", "weekly", "monthly"] as const) {
+        const n = Number(obj[tier]);
+        if (!Number.isInteger(n) || n < 0 || n > 365) throw errValidation("errors.backupRetentionInvalid");
+        result[tier] = n;
+      }
+      return JSON.stringify(result);
+    },
+  },
   [SETTING_KEYS.inactiveDays]: { validate: (v) => String(intInRange(v, 1, 365)) },
   [SETTING_KEYS.checkoutEnabled]: {
     validate: (v) => {
@@ -186,7 +233,7 @@ export async function updateSetting(
   const spec = SPECS[key];
   if (!spec) throw errValidation("errors.settingKeyInvalid", { key });
   const trimmed = value.trim();
-  if (trimmed === "") throw errValidation("errors.settingValueRequired");
+  if (trimmed === "" && !spec.allowEmpty) throw errValidation("errors.settingValueRequired");
   const normalized = spec.validate(trimmed);
   await db.transaction(async () => {
     writeSettingInternal(db, key, normalized);
@@ -241,17 +288,70 @@ export function isSoundEnabled(db: Db): boolean {
   return toBool(readSetting(db, SETTING_KEYS.soundEnabled), false);
 }
 
+export interface BackupRetentionPolicy {
+  daily: number;
+  weekly: number;
+  monthly: number;
+}
+
 export interface BackupConfig {
   autoIntervalHours: number;
   retentionCount: number;
+  autoEnabled: boolean;
+  location: string;
+  retentionPolicy: BackupRetentionPolicy;
+  encryptionEnabled: boolean;
+  passwordSet: boolean;
+}
+
+/** Default tiered retention: 7 daily + 8 weekly + 24 monthly backups. */
+export const DEFAULT_BACKUP_RETENTION_POLICY: BackupRetentionPolicy = {
+  daily: 7,
+  weekly: 8,
+  monthly: 24,
+};
+
+export function parseRetentionPolicy(raw: string | null): BackupRetentionPolicy {
+  if (raw == null) return { ...DEFAULT_BACKUP_RETENTION_POLICY };
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(raw);
+  } catch {
+    return { ...DEFAULT_BACKUP_RETENTION_POLICY };
+  }
+  if (typeof parsed !== "object" || parsed === null) return { ...DEFAULT_BACKUP_RETENTION_POLICY };
+  const obj = parsed as Record<string, unknown>;
+  const pick = (key: string, fallback: number, max: number): number => {
+    const n = Number(obj[key]);
+    if (!Number.isInteger(n) || n < 0 || n > max) return fallback;
+    return n;
+  };
+  return {
+    daily: pick("daily", DEFAULT_BACKUP_RETENTION_POLICY.daily, 365),
+    weekly: pick("weekly", DEFAULT_BACKUP_RETENTION_POLICY.weekly, 365),
+    monthly: pick("monthly", DEFAULT_BACKUP_RETENTION_POLICY.monthly, 365),
+  };
+}
+
+/**
+ * No-permission reader used by the auto-backup scheduler (runs without a
+ * session). `getBackupConfig` is the actor-gated RPC surface.
+ */
+export function readBackupRuntimeConfig(db: Db): BackupConfig {
+  return {
+    autoIntervalHours: toInt(readSetting(db, SETTING_KEYS.backupAutoIntervalHours), 24, 0, 720),
+    retentionCount: toInt(readSetting(db, SETTING_KEYS.backupRetentionCount), 10, 1, 50),
+    autoEnabled: toBool(readSetting(db, SETTING_KEYS.backupAutoEnabled), true),
+    location: (readSetting(db, SETTING_KEYS.backupLocation) ?? "").trim(),
+    retentionPolicy: parseRetentionPolicy(readSetting(db, SETTING_KEYS.backupRetentionPolicy)),
+    encryptionEnabled: toBool(readSetting(db, SETTING_KEYS.backupEncryptionEnabled), false),
+    passwordSet: toBool(readSetting(db, SETTING_KEYS.backupPasswordSet), false),
+  };
 }
 
 export function getBackupConfig(db: Db, actor: ServiceActor): BackupConfig {
   requirePermission(actor, "settings.view");
-  return {
-    autoIntervalHours: toInt(readSetting(db, SETTING_KEYS.backupAutoIntervalHours), 24, 0, 720),
-    retentionCount: toInt(readSetting(db, SETTING_KEYS.backupRetentionCount), 10, 1, 50),
-  };
+  return readBackupRuntimeConfig(db);
 }
 
 export function getWorkingDays(db: Db): number[] {

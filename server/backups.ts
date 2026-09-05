@@ -17,6 +17,7 @@ import { errConflict, errValidation } from "../src/core/errors";
 import { requirePermission } from "../src/core/permissions";
 import type { ServiceActor } from "../src/core/permissions";
 import { countActiveOwners } from "../src/core/services/users.service";
+import { readSetting, SETTING_KEYS } from "../src/core/services/settings.service";
 import {
   buildBackupFileName,
   pruneBackupsForActor,
@@ -24,8 +25,24 @@ import {
   type BackupKind,
 } from "../src/core/services/backup.service";
 import * as filesService from "./files.service";
+import {
+  encryptBackupPayload,
+  decryptBackupContainer,
+  parseBackupContainer,
+  looksLikeContainer,
+  loadBackupKey,
+  backupKeyExists,
+  type BackupKeyRef,
+  type DecryptKeySource,
+} from "./backup-crypto";
 
 const SNAPSHOT_NAME_RE = /^[A-Za-z0-9._-]+$/;
+
+/** Snapshot location override for tests (see configurable backup_location). */
+let snapshotDirOverride: string | null = null;
+export function _setSnapshotDirOverrideForTest(dir: string | null): void {
+  snapshotDirOverride = dir;
+}
 
 /**
  * Self-describing trailer appended after the SQLite bytes in a `.gymbak`.
@@ -223,19 +240,38 @@ function buildFilesArchive(): FilesArchiveBuild {
   return { bytes, expected: rows.length, archived, skipped };
 }
 
+function resolveSnapshotDir(): string {
+  if (snapshotDirOverride) return snapshotDirOverride;
+  try {
+    const configured = (readSetting(getDbContext().db, SETTING_KEYS.backupLocation) ?? "").trim();
+    if (configured !== "") {
+      try {
+        mkdirSync(configured, { recursive: true });
+        return configured;
+      } catch (error) {
+        logLine(`backup: configured location unusable, falling back to default (${String(error)})`);
+      }
+    }
+  } catch {
+    logLine("backup: could not read configured location, using default");
+  }
+  return getDbContext().dirs.backupsDir;
+}
+
 function snapshotPath(fileName: string): string {
   if (!SNAPSHOT_NAME_RE.test(fileName) || fileName.includes("..")) {
     throw errValidation("errors.backupInvalidFile");
   }
-  const { dirs } = getDbContext();
-  return path.join(dirs.backupsDir, fileName);
+  return path.join(resolveSnapshotDir(), fileName);
 }
 
 export interface ServerBackupResult {
   fileName: string;
   sizeBytes: number;
-  /** 1 = GYMBAK-FILES-V1 trailer layout. */
-  formatVersion: 1;
+  /** 1 = GYMBAK-FILES-V1 trailer layout; 2 = AES-256-GCM container (payload keeps the v1 layout). */
+  formatVersion: 1 | 2;
+  encrypted: boolean;
+  cipher: "aes-256-gcm" | null;
   /** True when at least one file entry was archived. */
   fileAssetsIncluded: boolean;
   /** `files` registry rows that should have been archived. */
@@ -244,8 +280,21 @@ export interface ServerBackupResult {
   fileAssetsCount: number;
   /** Registry rows skipped because their bytes were not readable. */
   fileAssetsMissing: number;
+  /** Integrity of the embedded database copy (PRAGMA quick_check). */
+  databaseIntegrity: "ok";
   /** True only when the database probed OK AND no asset was skipped. */
   fullyVerified: boolean;
+}
+
+/** True when the current config asks for encrypted backups AND a key is usable. */
+function encryptionActive(): boolean {
+  try {
+    const { dirs, db } = getDbContext();
+    if (db && readSetting(db, SETTING_KEYS.backupEncryptionEnabled) !== "1") return false;
+    return backupKeyExists(dirs.configDir);
+  } catch {
+    return false;
+  }
 }
 
 /** Server-side consistent snapshot: verify on disk, then record + prune. */
@@ -257,6 +306,23 @@ export async function createServerBackup(
   const { db, driver, dirs } = getDbContext();
   const sqliteBytes = driver.exportBytes();
   if (!sqliteBytes || sqliteBytes.length < 100) throw errValidation("errors.backupExportFailed");
+
+  // Probe the raw SQLite bytes BEFORE writing anything: for encrypted snapshots
+  // the on-disk file is ciphertext and can never be probed in place.
+  const probeTmp = path.join(
+    os.tmpdir(),
+    `gymbak-probe-${crypto.randomUUID().slice(0, 8)}.db`,
+  );
+  writeFileSync(probeTmp, sqliteBytes);
+  let databaseIntegrity: "ok" = "ok";
+  try {
+    const probe = NodeSqliteDriver.probeFile(probeTmp);
+    if (probe.integrity !== "ok") {
+      throw errValidation("errors.backupVerifyFailed");
+    }
+  } finally {
+    rmSync(probeTmp, { force: true });
+  }
 
   // Build the file-assets archive BEFORE writing so failures abort cleanly.
   const build = buildFilesArchive();
@@ -273,39 +339,68 @@ export async function createServerBackup(
   ]);
   const combined = Buffer.concat([Buffer.from(sqliteBytes), trailer]);
 
-  const fileName = buildBackupFileName();
-  const target = path.join(dirs.backupsDir, fileName);
-  writeFileSync(target, combined);
+  // Wrap the full v1 composite in an AES-256-GCM container when encryption is on.
+  let encrypted = false;
+  let targetBytes: Buffer = combined;
+  let keyRef: BackupKeyRef | null = null;
+  if (encryptionActive()) {
+    keyRef = loadBackupKey(dirs.configDir);
+    if (keyRef) {
+      targetBytes = await encryptBackupPayload(combined, keyRef.masterKey, {
+        kind,
+        createdAt: new Date().toISOString(),
+        source: keyRef.source,
+        master: keyRef.kdf,
+      });
+      encrypted = true;
+    }
+  }
 
-  // verify the written file opens and passes integrity check (probe just the
-  // SQLite prefix; the trailer is ignored by the probe driver).
-  const probe = NodeSqliteDriver.probeFile(target);
-  if (probe.integrity !== "ok") {
+  const fileName = buildBackupFileName();
+  const target = snapshotPath(fileName); // honors configured backup_location
+  writeFileSync(target, targetBytes);
+
+  // POST-CREATE verification: re-read the written snapshot and verify it —
+  // decrypting first when necessary. Any failure deletes the file.
+  let fullyVerified = false;
+  try {
+    const check = await verifySnapshotBytes(
+      new Uint8Array(readFileSync(target)),
+      keyRef
+        ? {
+            master: { kind: "master", key: keyRef.masterKey },
+          }
+        : undefined,
+    );
+    if (check.status !== "ok") throw errValidation("errors.backupVerifyFailed");
+    // A backup is only "verified" when the embedded database is intact AND no
+    // registry row was skipped (a skipped row means the restore would be
+    // incomplete, so we must never advertise it as fully verified).
+    fullyVerified = build.skipped.length === 0;
+  } catch (error) {
     try {
       unlinkSync(target);
     } catch {
       /* best effort */
     }
+    if (error instanceof Error && (error as { code?: string }).code === "FORBIDDEN") throw error;
     throw errValidation("errors.backupVerifyFailed");
   }
 
-  // A backup is only "verified" when the embedded database is intact AND no
-  // registry row was skipped (a skipped row means the restore would be
-  // incomplete, so we must never advertise it as fully verified).
-  const fullyVerified = build.skipped.length === 0;
   await recordBackupEntry(db, actor, {
     kind,
     fileName,
-    sizeBytes: combined.length,
-    checksum: `sha256:${crypto.createHash("sha256").update(combined).digest("hex")}`,
+    sizeBytes: targetBytes.length,
+    checksum: `sha256:${crypto.createHash("sha256").update(targetBytes).digest("hex")}`,
     verified: fullyVerified,
+    encrypted,
   });
 
   try {
     const removed = await pruneBackupsForActor(db, actor);
     for (const name of removed) {
       try {
-        unlinkSync(path.join(dirs.backupsDir, name));
+        unlinkSync(path.join(resolveSnapshotDir(), name));
       } catch {
         /* already gone */
       }
@@ -315,16 +410,19 @@ export async function createServerBackup(
   }
 
   logLine(
-    `snapshot created: ${fileName} (${combined.length} bytes, files=${build.archived}/${build.expected})`,
+    `snapshot created: ${fileName} (${targetBytes.length} bytes, encrypted=${encrypted}, files=${build.archived}/${build.expected})`,
   );
   return {
     fileName,
-    sizeBytes: combined.length,
-    formatVersion: BACKUP_FORMAT_VERSION,
+    sizeBytes: targetBytes.length,
+    formatVersion: encrypted ? 2 : 1,
+    encrypted,
+    cipher: encrypted ? "aes-256-gcm" : null,
     fileAssetsIncluded: build.archived > 0,
     fileAssetsExpected: build.expected,
     fileAssetsCount: build.archived,
     fileAssetsMissing: build.skipped.length,
+    databaseIntegrity,
     fullyVerified,
   };
 }
@@ -459,6 +557,9 @@ export interface RestoreFileReport {
   schemaVersion: number;
   /** 1 = GYMBAK-FILES-V1 trailer; 0 = legacy (no trailer). */
   formatVersion: number;
+  /** True when the uploaded file was an encrypted AES-256-GCM container. */
+  encrypted: boolean;
+  cipher: "aes-256-gcm" | null;
   protectedBackupFileName: string | null;
   before: Record<string, number> | null;
   after: Record<string, number>;
@@ -504,6 +605,9 @@ export interface BackupVerificationReport {
     extraFiles: string[];
   };
   fullyVerified: boolean;
+  /** True when the buffer is an AES-256-GCM container (payload re-verified). */
+  encrypted: boolean;
+  cipher: "aes-256-gcm" | null;
 }
 
 /**
@@ -561,6 +665,8 @@ export function verifyBackupSnapshot(bytes: Uint8Array): BackupVerificationRepor
       extraFiles: [],
     },
     fullyVerified: false,
+    encrypted: false,
+    cipher: null,
   });
 
   if (trailer.kind === "corrupt") {
@@ -623,7 +729,112 @@ export function verifyBackupSnapshot(bytes: Uint8Array): BackupVerificationRepor
       extraFiles,
     },
     fullyVerified: !incomplete,
+    encrypted: false,
+    cipher: null,
   };
+}
+
+export interface SnapshotVerifyOptions {
+  /** User-supplied password (for password-derived backup containers). */
+  password?: string;
+  /** Explicit master key (used by createServerBackup for post-create checks). */
+  master?: { kind: "master"; key: Uint8Array };
+}
+
+/** Corruption report for a v2 container that could not be decrypted/parsed. */
+function encryptedFailureReport(reason: string): BackupVerificationReport {
+  return {
+    status: "corrupt",
+    checksumSha256: "",
+    database: {
+      present: false,
+      integrity: `encrypted:${reason}`,
+      migrationVersion: 0,
+      userCount: 0,
+      sqliteByteOffset: 0,
+    },
+    fileArchive: {
+      present: false,
+      sizeBytes: 0,
+      expectedCount: 0,
+      archivedCount: 0,
+      missingFiles: [],
+      mismatchedFiles: [],
+      extraFiles: [],
+    },
+    fullyVerified: false,
+    encrypted: true,
+    cipher: "aes-256-gcm",
+  };
+}
+
+/** Pick the decrypting key: explicit password, explicit master, else key ring. */
+async function resolveDecryptSource(
+  kdfSource: "password" | "key",
+  options: SnapshotVerifyOptions,
+): Promise<DecryptKeySource | null> {
+  if (kdfSource === "password" && options.password && options.password !== "") {
+    return { kind: "password", password: options.password };
+  }
+  if (options.master) return { kind: "master", key: Buffer.from(options.master.key) };
+  const { dirs } = getDbContext();
+  try {
+    if (backupKeyExists(dirs.configDir)) {
+      const ref = loadBackupKey(dirs.configDir);
+      if (ref) return { kind: "master", key: ref.masterKey };
+    }
+  } catch {
+    /* fall through */
+  }
+  return null;
+}
+
+/**
+ * Encryption-aware verification: v1 (`GYMBAK-FILES-V1`) buffers verify inline;
+ * v2 AES-256-GCM containers are decrypted first and their plaintext payload is
+ * then verified through the plain pipeline. Callers that reach the RPC surface
+ * (restore/validate) get precise AppErrors from the decrypt path; this report
+ * form is used by post-create checks and tooling.
+ */
+export async function verifySnapshotBytes(
+  bytes: Uint8Array,
+  options: SnapshotVerifyOptions = {},
+): Promise<BackupVerificationReport> {
+  if (!looksLikeContainer(bytes)) return verifyBackupSnapshot(bytes);
+
+  let header;
+  try {
+    header = parseBackupContainer(bytes);
+  } catch {
+    return encryptedFailureReport("header");
+  }
+  if (!header) return encryptedFailureReport("header");
+
+  const source = await resolveDecryptSource(header.kdf.source, options);
+  if (!source) return encryptedFailureReport("key_required");
+
+  let payload: Uint8Array;
+  try {
+    payload = (await decryptBackupContainer(bytes, header, source)).payload;
+  } catch {
+    return encryptedFailureReport("decrypt_failed");
+  }
+
+  const base = verifyBackupSnapshot(payload);
+  return { ...base, encrypted: true, cipher: "aes-256-gcm" };
+}
+
+/**
+ * Read + verify a snapshot from the configured snapshot directory (or the
+ * default backups dir when no location is configured).
+ */
+export async function verifySnapshotFile(
+  fileName: string,
+  options: SnapshotVerifyOptions = {},
+): Promise<BackupVerificationReport> {
+  const target = snapshotPath(fileName);
+  if (!existsSync(target)) throw errValidation("errors.backupInvalidFile");
+  return verifySnapshotBytes(new Uint8Array(readFileSync(target)), options);
 }
 
 /**
@@ -715,7 +926,7 @@ function swapInStagedFiles(currentRoot: string, stagedRoot: string): { ok: boole
 export async function importDatabaseBytes(
   actor: ServiceActor,
   bytes: Uint8Array,
-  options: { kind: "restore" | "legacy_import" },
+  options: { kind: "restore" | "legacy_import"; password?: string },
 ): Promise<RestoreFileReport> {
   requirePermission(actor, "backup.restore");
   // Legacy import (`kind: "legacy_import"`) is a ONE-TIME first-run adoption:
@@ -727,6 +938,45 @@ export async function importDatabaseBytes(
     throw errConflict("errors.setupAlreadyDone");
   }
   if (bytes.length < 100 || bytes[0] === 0) throw errValidation("errors.backupInvalidFile");
+
+  // v2 AES-256-GCM containers decrypt FIRST, then flow through the exact same
+  // plain v1 verification/restore pipeline.
+  let encrypted = false;
+  let source: Uint8Array = bytes;
+  if (looksLikeContainer(bytes)) {
+    let header;
+    try {
+      header = parseBackupContainer(bytes); // throws with precise messageKey
+    } catch (error) {
+      if (error instanceof Error && (error as { messageKey?: string }).messageKey) throw error;
+      throw errValidation("errors.backupArchiveCorrupt", {
+        reason: error instanceof Error ? error.message : String(error),
+      });
+    }
+    if (!header) {
+      throw errValidation("errors.backupArchiveCorrupt", { reason: "header" });
+    }
+    const decryptSource = await resolveDecryptSource(header.kdf.source, {
+      password: options.password,
+    });
+    if (!decryptSource) {
+      throw errValidation(
+        header.kdf.source === "password" && (!options.password || options.password === "")
+          ? "errors.backupWrongPassword"
+          : "errors.backupKeyRequired",
+      );
+    }
+    try {
+      source = (await decryptBackupContainer(bytes, header, decryptSource)).payload;
+    } catch (error) {
+      if (error instanceof Error && (error as { messageKey?: string }).messageKey) throw error;
+      throw errValidation("errors.backupArchiveCorrupt", {
+        reason: error instanceof Error ? error.message : String(error),
+      });
+    }
+    encrypted = true;
+    bytes = source;
+  }
 
   const trailer = extractFilesArchive(bytes);
   if (trailer.kind === "corrupt") {
@@ -863,6 +1113,8 @@ export async function importDatabaseBytes(
     return {
       schemaVersion: probe.version,
       formatVersion: trailer.kind === "ok" ? BACKUP_FORMAT_VERSION : 0,
+      encrypted,
+      cipher: encrypted ? "aes-256-gcm" : null,
       protectedBackupFileName: protective,
       before: beforeCounts,
       after: afterCounts,

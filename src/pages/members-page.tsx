@@ -293,6 +293,14 @@ export function MembersPage() {
         await api.members.restore(confirmTarget.id);
         toast("success", t("members.restoredToast"));
       } else if (confirmKind === "purge") {
+        // Pre-destructive snapshot: a backup of the current state is taken
+        // before the irreversible purge. Best-effort — a snapshot failure must
+        // not block the denial-of-service check the user explicitly confirmed.
+        try {
+          await api.backup.createPrePurgeSnapshot();
+        } catch {
+          /* snapshot is best-effort; purge proceeds */
+        }
         await api.members.purge(confirmTarget.id);
         toast("success", t("members.purgedToast"));
       } else {

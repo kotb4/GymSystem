@@ -62,12 +62,12 @@ export function postJson<T>(url: string, body: unknown): Promise<T> {
   });
 }
 
-export function postRaw<T>(url: string, bytes: Uint8Array): Promise<T> {
+export function postRaw<T>(url: string, bytes: Uint8Array, headers: Record<string, string> = {}): Promise<T> {
   const buffer = new ArrayBuffer(bytes.byteLength);
   new Uint8Array(buffer).set(bytes);
   return request<T>(url, {
     method: "POST",
-    headers: { "Content-Type": "application/octet-stream" },
+    headers: { "Content-Type": "application/octet-stream", ...headers },
     body: buffer,
   });
 }

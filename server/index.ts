@@ -12,6 +12,7 @@ import {
 } from "./sessions";
 import { invokeRpc } from "./rpc";
 import { licenseStateName, refreshLicenseClock } from "./license/session";
+import { startBackupScheduler } from "./backup-scheduler";
 import { createServerBackup, readSnapshotBytes, importDatabaseBytes } from "./backups";
 import { toAppError, errValidation } from "../src/core/errors";
 import type { ServiceActor } from "../src/core/permissions";
@@ -354,7 +355,13 @@ async function handleApi(ctx: Ctx): Promise<void> {
     try {
       requirePermission(actor, "backup.restore");
       const raw = await readBody(req, MAX_BODY_BYTES);
-      const report = await importDatabaseBytes(actor, new Uint8Array(raw), { kind });
+      // Encrypted snapshots carry their password via a request header so the
+      // password never leaks into session storage or the URL.
+      const backupPassword = req.headers["x-backup-password"] ? String(req.headers["x-backup-password"]) : undefined;
+      const report = await importDatabaseBytes(actor, new Uint8Array(raw), {
+        kind,
+        ...(backupPassword ? { password: backupPassword } : {}),
+      });
       return sendJson(res, 200, { ok: true, result: report });
     } catch (error) {
       const mapped = errorBody(error);
@@ -474,7 +481,7 @@ export function startHttpServer(): void {
   }, 60 * 60 * 1000).unref();
   // ADR-019: advance the monotonic last-active clock periodically so the
   // anti-rollback guard has a reference point even with no RPC traffic.
-  setInterval(() => {
+    setInterval(() => {
     try {
       refreshLicenseClock();
       logLine(`license clock: ${licenseStateName()}`);
@@ -482,6 +489,7 @@ export function startHttpServer(): void {
       logLine(`license: clock refresh failed: ${String(error)}`);
     }
   }, 15 * 60 * 1000).unref();
+  startBackupScheduler();
   const server = http.createServer(async (req, res) => {
     const url = new URL(req.url ?? "/", `http://${req.headers.host ?? "localhost"}`);
     const ctx: Ctx = { req, res, url };

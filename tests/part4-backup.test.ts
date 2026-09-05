@@ -102,8 +102,8 @@ describe("backup checksum and file naming", () => {
   });
 
   it("builds timestamped .gymbak file names", () => {
-    const name = buildBackupFileName(new Date(2026, 7, 24, 14, 5, 9));
-    expect(name).toBe("gympro-backup-20260824-140509.gymbak");
+    const name = buildBackupFileName(new Date(2026, 7, 24, 14, 5, 9, 123));
+    expect(name).toBe("gympro-backup-20260824-140509123.gymbak");
     expect(name.endsWith(".gymbak")).toBe(true);
   });
 });
@@ -166,7 +166,7 @@ describe("validateRestoreFile", () => {
     const path = await buildRealDbFile();
     const bytes = readFileSync(path);
     const metadata = await validateRestoreFile(new Uint8Array(bytes), openFromBytesNode);
-    expect(metadata.migrationVersion).toBe(30);
+    expect(metadata.migrationVersion).toBe(32);
     expect(metadata.users).toBe(1);
     expect(metadata.members).toBe(0);
     expect(metadata.settings).toBeGreaterThan(0);

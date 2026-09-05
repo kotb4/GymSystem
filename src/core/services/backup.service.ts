@@ -3,12 +3,19 @@ import { errValidation } from "@/core/errors";
 import { requirePermission, type ServiceActor } from "@/core/permissions";
 import type { Db, Row } from "@/db/engine";
 import { recordAudit } from "./audit.service";
-import { getBackupConfig, readAllSettings, SETTING_KEYS } from "./settings.service";
+import {
+  getBackupConfig,
+  readBackupRuntimeConfig,
+  parseRetentionPolicy,
+  readAllSettings,
+  SETTING_KEYS,
+  type BackupRetentionPolicy,
+} from "./settings.service";
 
 export const BACKUP_FILE_EXTENSION = ".gymbak";
 const SQLITE_HEADER = "SQLite format 3\0";
 
-export type BackupKind = "manual" | "auto" | "pre_restore";
+export type BackupKind = "manual" | "auto" | "pre_restore" | "pre_purge";
 
 export interface BackupLogRow extends Row {
   id: number;
@@ -17,6 +24,7 @@ export interface BackupLogRow extends Row {
   size_bytes: number;
   checksum: string | null;
   verified: number;
+  encrypted: number;
   created_by: string | null;
   created_at: string;
 }
@@ -28,6 +36,7 @@ export interface PublicBackupEntry {
   sizeBytes: number;
   checksum: string | null;
   verified: boolean;
+  encrypted: boolean;
   createdAt: string;
 }
 
@@ -39,6 +48,7 @@ function toEntry(row: BackupLogRow): PublicBackupEntry {
     sizeBytes: Number(row.size_bytes),
     checksum: row.checksum,
     verified: row.verified === 1,
+    encrypted: row.encrypted === 1,
     createdAt: row.created_at,
   };
 }
@@ -77,26 +87,45 @@ export function buildBackupFileName(now = new Date()): string {
   const pad = (n: number) => String(n).padStart(2, "0");
   const stamp =
     `${now.getFullYear()}${pad(now.getMonth() + 1)}${pad(now.getDate())}` +
-    `-${pad(now.getHours())}${pad(now.getMinutes())}${pad(now.getSeconds())}`;
+    `-${pad(now.getHours())}${pad(now.getMinutes())}${pad(now.getSeconds())}${pad(now.getMilliseconds())}`;
   return `gympro-backup-${stamp}${BACKUP_FILE_EXTENSION}`;
 }
 
 export async function recordBackupEntry(
   db: Db,
   actor: ServiceActor,
-  input: { kind: BackupKind; fileName: string; sizeBytes: number; checksum: string; verified: boolean },
+  input: {
+    kind: BackupKind;
+    fileName: string;
+    sizeBytes: number;
+    checksum: string;
+    verified: boolean;
+    encrypted?: boolean;
+  },
 ): Promise<PublicBackupEntry> {
   await db.transaction(async () => {
     const systemless =
-      actor.userId === "legacy-import" ? { ...actor, userId: null } : actor;
+      actor.userId === "legacy-import" || actor.userId === "scheduler"
+        ? { ...actor, userId: null }
+        : actor;
     db.run(
-      "INSERT INTO backups_log (kind, file_name, size_bytes, checksum, verified, created_by, created_at)\nVALUES (?, ?, ?, ?, ?, ?, ?)",
-      [input.kind, input.fileName, input.sizeBytes, input.checksum, input.verified ? 1 : 0, systemless.userId, nowStamp()],
+      "INSERT INTO backups_log (kind, file_name, size_bytes, checksum, verified, encrypted, created_by, created_at)\nVALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+      [
+        input.kind,
+        input.fileName,
+        input.sizeBytes,
+        input.checksum,
+        input.verified ? 1 : 0,
+        input.encrypted ? 1 : 0,
+        systemless.userId,
+        nowStamp(),
+      ],
     );
     recordAudit(db, systemless, "BACKUP_CREATED", "backup", input.fileName, {
       kind: input.kind,
       sizeBytes: input.sizeBytes,
       verified: input.verified,
+      encrypted: input.encrypted ?? false,
     });
   });
   const row = db.first<BackupLogRow>(
@@ -125,12 +154,108 @@ export async function pruneBackupsForActor(
 ): Promise<string[]> {
   requirePermission(actor, "settings.view");
   const config = getBackupConfig(db, actor);
-  const removed = pruneBackups(db, config.retentionCount);
+  const removed = pruneBackupsByPolicy(db, config.retentionPolicy, config.retentionCount);
   for (const name of removed) {
     recordAudit(db, actor, "BACKUP_DELETED", "backup", name, { reason: "retention" });
   }
   return removed;
 }
+
+/* --------------------------------------------------------------------------- */
+/* Tiered retention (TASK-042)                                                 */
+/* --------------------------------------------------------------------------- */
+
+/**
+ * ISO week key (`YYYY-Www`) for a local-time `YYYY-MM-DD HH:mm:ss` stamp.
+ * ISO weeks sort lexicographically in chronological order.
+ */
+export function isoWeekKey(stamp: string): string {
+  const date = new Date(stamp.replace(" ", "T"));
+  const dayNr = (date.getDay() + 6) % 7; // Monday = 0
+  const target = new Date(date);
+  target.setDate(target.getDate() - dayNr + 3); // Thursday of the current week
+  const firstThursday = new Date(target.getFullYear(), 0, 4);
+  const firstDayNr = (firstThursday.getDay() + 6) % 7;
+  firstThursday.setDate(firstThursday.getDate() - firstDayNr + 3);
+  const week = 1 + Math.round((target.getTime() - firstThursday.getTime()) / (7 * 86_400_000));
+  return `${target.getFullYear()}-W${String(week).padStart(2, "0")}`;
+}
+
+/**
+ * Choose which backup ids to KEEP under a tiered policy:
+ *  - the newest `safetyCount` backups overall (never lose the most recent);
+ *  - the newest backup of each of the last `daily` calendar days;
+ *  - the newest backup of each of the last `weekly` ISO weeks;
+ *  - the newest backup of each of the last `monthly` calendar months.
+ */
+export function selectBackupsToKeep(
+  rows: ReadonlyArray<{ id: number; createdAt: string }>,
+  policy: BackupRetentionPolicy,
+  safetyCount: number,
+): Set<number> {
+  const keep = new Set<number>();
+  for (const row of rows.slice(-Math.max(1, safetyCount))) keep.add(row.id);
+
+  const addBucketed = (bucketKey: (stamp: string) => string, maxBuckets: number): void => {
+    if (maxBuckets <= 0) return;
+    const newest = new Map<string, number>();
+    for (const row of rows) {
+      const key = bucketKey(row.createdAt);
+      const prev = newest.get(key);
+      if (prev === undefined || row.id > prev) newest.set(key, row.id);
+    }
+    const recentBuckets = [...newest.keys()].sort().reverse().slice(0, maxBuckets);
+    for (const bucket of recentBuckets) keep.add(newest.get(bucket)!);
+  };
+
+  addBucketed((stamp) => stamp.slice(0, 10), policy.daily);
+  addBucketed(isoWeekKey, policy.weekly);
+  addBucketed((stamp) => stamp.slice(0, 7), policy.monthly);
+  return keep;
+}
+
+/**
+ * Delete backups_log rows NOT selected by the tiered policy and return the
+ * removed file names for filesystem cleanup.
+ */
+export function pruneBackupsByPolicy(
+  db: Db,
+  policy: BackupRetentionPolicy,
+  safetyCount: number,
+): string[] {
+  const rows = db.all<{ id: number; file_name: string; created_at: string }>(
+    "SELECT id, file_name, created_at FROM backups_log ORDER BY id ASC",
+  );
+  const mapped = rows.map((row) => ({ id: row.id, createdAt: row.created_at }));
+  const keep = selectBackupsToKeep(mapped, policy, safetyCount);
+  const removed = rows.filter((row) => !keep.has(row.id)).map((row) => row.file_name);
+  if (removed.length === 0) return [];
+  const unique = [...new Set(removed)];
+  const placeholders = unique.map(() => "?").join(", ");
+  db.run(`DELETE FROM backups_log WHERE file_name IN (${placeholders})`, unique);
+  return unique;
+}
+
+/** Runtime backup lifecycle config for the auto-scheduler (no actor). */
+export function readRuntimeBackupPolicyConfig(db: Db): {
+  autoEnabled: boolean;
+  intervalHours: number;
+  location: string;
+  retentionPolicy: BackupRetentionPolicy;
+  retentionCount: number;
+} {
+  const config = readBackupRuntimeConfig(db);
+  return {
+    autoEnabled: config.autoEnabled,
+    intervalHours: config.autoIntervalHours,
+    location: config.location,
+    retentionPolicy: config.retentionPolicy,
+    retentionCount: config.retentionCount,
+  };
+}
+
+export { parseRetentionPolicy, readBackupRuntimeConfig };
+export { SETTING_KEYS };
 
 export interface RestoreMetadata {
   migrationVersion: number;

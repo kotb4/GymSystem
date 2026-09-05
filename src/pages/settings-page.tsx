@@ -1,5 +1,5 @@
 ﻿import { useEffect, useState, type FormEvent } from "react";
-import { KeyRound, Save } from "lucide-react";
+import { KeyRound, Lock, Save } from "lucide-react";
 import { useAuth } from "@/contexts/auth-context";
 import { useT } from "@/i18n";
 import { useToast } from "@/components/ui/toast";
@@ -401,19 +401,42 @@ function SoundToggle({ value, onChange }: { value: boolean; onChange: (v: boolea
 
 function BackupSettingsCard() {
   const t = useT();
-  const {} = useAuth();
+  const { hasPermission } = useAuth();
+  const { toast } = useToast();
   const [values, setValues] = useState<Record<string, string>>({});
+  const [autoEnabled, setAutoEnabled] = useState(true);
+  const [encryption, setEncryption] = useState<{
+    encryptEnabled: boolean;
+    passwordSet: boolean;
+    keyExists: boolean;
+    source: "password" | "key" | null;
+  } | null>(null);
+  const [newPassword, setNewPassword] = useState("");
+  const [currentPassword, setCurrentPassword] = useState("");
+  const [busy, setBusy] = useState(false);
+  const { save } = useSettingsSaver();
+  const canEdit = hasPermission("settings.edit");
+
+  const refreshEncryption = () => {
+    api.backup
+      .securityStatus()
+      .then((s) => setEncryption({ encryptEnabled: s.encryptEnabled, passwordSet: s.passwordSet, keyExists: s.keyExists, source: s.source }))
+      .catch((err) => console.error(err));
+  };
 
   useEffect(() => {
     let alive = true;
-    api.settings
-      .readAll()
-      .then((all) => {
+    Promise.all([api.settings.readAll(), api.backup.securityStatus()])
+      .then(([all, status]) => {
         if (!alive) return;
         setValues({
           [SETTING_KEYS.backupAutoIntervalHours]: all[SETTING_KEYS.backupAutoIntervalHours] ?? "24",
           [SETTING_KEYS.backupRetentionCount]: all[SETTING_KEYS.backupRetentionCount] ?? "10",
+          [SETTING_KEYS.backupLocation]: all[SETTING_KEYS.backupLocation] ?? "",
+          [SETTING_KEYS.backupRetentionPolicy]: all[SETTING_KEYS.backupRetentionPolicy] ?? JSON.stringify({ daily: 7, weekly: 8, monthly: 24 }),
         });
+        setAutoEnabled((all[SETTING_KEYS.backupAutoEnabled] ?? "1") === "1");
+        setEncryption({ encryptEnabled: status.encryptEnabled, passwordSet: status.passwordSet, keyExists: status.keyExists, source: status.source });
       })
       .catch((err) => console.error(err));
     return () => {
@@ -426,10 +449,125 @@ function BackupSettingsCard() {
   const drafts: SettingDraft[] = [
     { key: SETTING_KEYS.backupAutoIntervalHours, label: "settings.autoInterval", hint: "settings.autoIntervalHint", type: "number", dir: "ltr" },
     { key: SETTING_KEYS.backupRetentionCount, label: "settings.retention", hint: "settings.retentionHint", type: "number", dir: "ltr" },
+    { key: SETTING_KEYS.backupLocation, label: "settings.backupLocationLabel", hint: "settings.backupLocationHint", dir: "ltr" },
+    { key: SETTING_KEYS.backupRetentionPolicy, label: "settings.retentionPolicyLabel", hint: "settings.retentionPolicyHint", dir: "ltr" },
   ];
 
+  const toggleAuto = async (enabled: boolean) => {
+    setAutoEnabled(enabled);
+    await save([{ key: SETTING_KEYS.backupAutoEnabled, value: enabled ? "1" : "0" }]);
+  };
+
+  const enableEncryption = async () => {
+    if (!canEdit || !newPassword) return;
+    setBusy(true);
+    try {
+      await api.backup.setPassword(newPassword, currentPassword || undefined);
+      toast("success", t("settings.encryptionSavedToast"));
+      setNewPassword("");
+      setCurrentPassword("");
+      refreshEncryption();
+    } catch (err) {
+      toast("error", describeError(err, t));
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const disableEncryption = async () => {
+    if (!canEdit) return;
+    setBusy(true);
+    try {
+      await api.backup.clearEncryption(currentPassword || undefined);
+      toast("success", t("settings.encryptionSavedToast"));
+      setCurrentPassword("");
+      refreshEncryption();
+    } catch (err) {
+      toast("error", describeError(err, t));
+    } finally {
+      setBusy(false);
+    }
+  };
+
   return (
-    <SettingsForm title={t("settings.backupTab")} drafts={drafts} values={values} setValue={setValue} />
+    <SettingsForm
+      title={t("settings.backupTab")}
+      drafts={drafts}
+      values={values}
+      setValue={setValue}
+      extra={
+        <div className="space-y-4">
+          <div className="flex items-center justify-between">
+            <span className="text-[13px] font-semibold text-subtle">{t("settings.autoEnabled")}</span>
+            <button
+              type="button"
+              aria-pressed={autoEnabled}
+              onClick={() => void toggleAuto(!autoEnabled)}
+              className="relative h-6 w-11 rounded-full transition-colors bg-white/10 aria-pressed:bg-neon/70"
+            >
+              <span className={cn(
+                "absolute top-0.5 size-5 rounded-full bg-white shadow transition-all",
+                autoEnabled ? "start-0.5" : "start-[22px]",
+              )} />
+            </button>
+          </div>
+          <p className="-mt-3 text-[11px] text-faint">{t("settings.autoEnabledHint")}</p>
+
+          <div className="rounded-xl border border-line bg-surface p-4">
+            <div className="flex items-center gap-2">
+              <Lock className="size-4 text-subtle" aria-hidden />
+              <p className="text-[13px] font-bold text-subtle">{t("settings.encryptionTitle")}</p>
+            </div>
+            <p className="mt-1 text-[11px] text-faint">{t("settings.encryptionEnabledHint")}</p>
+            {encryption?.encryptEnabled ? (
+              <p className="mt-3 text-[12px] font-semibold text-neon">{t("settings.encryptionEnabledNote")}</p>
+            ) : (
+              <p className="mt-3 text-[12px] text-faint">{t("settings.encryptionDisabledNote")}</p>
+            )}
+            {canEdit && (
+              <div className="mt-3 space-y-2">
+                {!encryption?.encryptEnabled ? (
+                  <>
+                    <Input
+                      type="password"
+                      dir="ltr"
+                      placeholder={t("settings.encryptionPasswordPlaceholder")}
+                      value={newPassword}
+                      onChange={(e) => setNewPassword(e.target.value)}
+                    />
+                    <Button size="sm" onClick={() => void enableEncryption()} loading={busy} disabled={busy || newPassword.length < 8}>
+                      <Lock className="size-4" />
+                      {t("settings.encryptionSetBtn")}
+                    </Button>
+                  </>
+                ) : (
+                  <>
+                    <Input
+                      type="password"
+                      dir="ltr"
+                      placeholder={t("settings.encryptionCurrentPasswordPlaceholder")}
+                      value={currentPassword}
+                      onChange={(e) => setCurrentPassword(e.target.value)}
+                    />
+                    <div className="flex gap-2">
+                      <Button size="sm" variant="danger" onClick={() => void disableEncryption()} loading={busy} disabled={busy}>
+                        {t("settings.encryptionClearBtn")}
+                      </Button>
+                      {encryption.passwordSet && encryption.keyExists && (
+                        <Button size="sm" variant="secondary" onClick={() => void enableEncryption()} loading={busy} disabled={busy || newPassword.length < 8}>
+                          <KeyRound className="size-4" />
+                          {t("settings.encryptionSetBtn")}
+                        </Button>
+                      )}
+                    </div>
+                  </>
+                )}
+              </div>
+            )}
+          </div>
+        </div>
+      }
+    />
   );
 }
 

@@ -365,6 +365,7 @@ const READONLY_ALLOWLIST: ReadonlySet<string> = new Set([
   "settings.isCheckoutEnabled",
   "settings.freezeExtendsExpiry",
   "settings.getBackupConfig",
+  "backup.getSecurityStatus",
   "notifications.collectNotifications",
   "dashboard.getDashboardStats",
   "dashboard.getDashboardAttendance",

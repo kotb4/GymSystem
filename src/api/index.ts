@@ -206,7 +206,16 @@ const settingsApi = {
   update: (key: string, value: string) => rpc<void>("settings", "updateSetting", [key, value]),
   scannerConfig: () => rpc<{ enabled: boolean; prefix: string; suffix: string; minLength: number; timeoutMs: number; maxKeyIntervalMs: number }>("settings", "getScannerConfig", []),
   soundEnabled: () => rpc<boolean>("settings", "isSoundEnabled", []),
-  backupConfig: () => rpc<{ autoIntervalHours: number; retentionCount: number }>("settings", "getBackupConfig", []),
+  backupConfig: () =>
+    rpc<{
+      autoIntervalHours: number;
+      retentionCount: number;
+      autoEnabled: boolean;
+      location: string;
+      retentionPolicy: { daily: number; weekly: number; monthly: number };
+      encryptionEnabled: boolean;
+      passwordSet: boolean;
+    }>("settings", "getBackupConfig", []),
   workingDays: () => rpc<number[]>("settings", "getWorkingDays", []),
   inactiveDays: () => rpc<number>("settings", "getInactiveDays", []),
   checkoutEnabled: () => rpc<boolean>("settings", "isCheckoutEnabled", []),
@@ -342,9 +351,32 @@ const backupApi = {
   createSnapshot: (kind: "manual" | "auto") =>
     postJson<{ fileName: string; sizeBytes: number }>("/api/backups/create", { kind }),
   downloadUrl: (fileName: string) => `/api/backups/download?file=${encodeURIComponent(fileName)}`,
-  restoreBytes: (bytes: Uint8Array) => postRaw<Record<string, unknown>>("/api/system/restore", bytes),
+  restoreBytes: (bytes: Uint8Array, password?: string) =>
+    postRaw<Record<string, unknown>>("/api/system/restore", bytes, {
+      ...(password && password.length > 0 ? { "X-Backup-Password": password } : {}),
+    }),
   importLegacyBytes: (bytes: Uint8Array) =>
     postRaw<Record<string, unknown>>("/api/system/import-legacy", bytes),
+  securityStatus: () =>
+    rpc<{
+      encryptEnabled: boolean;
+      passwordSet: boolean;
+      keyExists: boolean;
+      source: "password" | "key" | null;
+      autoEnabled: boolean;
+      intervalHours: number;
+      location: string;
+      retentionPolicy: { daily: number; weekly: number; monthly: number };
+      retentionCount: number;
+    }>("backup", "getSecurityStatus", []),
+  setPassword: (password: string, currentPassword?: string) =>
+    rpc<{ passwordSet: boolean; created: boolean }>("backup", "setPassword", [
+      { password, ...(currentPassword ? { currentPassword } : {}) },
+    ]),
+  clearEncryption: (password?: string) =>
+    rpc<{ passwordSet: boolean }>("backup", "clearEncryption", [{ ...(password ? { password } : {}) }]),
+  createPrePurgeSnapshot: () =>
+    rpc<{ fileName: string }>("backup", "createPrePurgeSnapshot", []),
 };
 
 // ------------------------------ store/POS --------------------------------

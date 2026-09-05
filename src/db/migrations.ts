@@ -732,6 +732,83 @@ function buildMigrations(): Migration[] {
           db.run("ALTER TABLE store_return_items ADD COLUMN product_sku_snapshot TEXT");
       },
     },
+    {
+      // ---- v31: encrypted-backup flag + backup lifecycle settings (TASK-042) ----
+      // A v2 `.gymbak` is an AES-256-GCM container wrapping the whole v1 buffer;
+      // the logs now record whether an entry is encrypted. The lifecycle settings
+      // (auto backups on/off, configurable storage location, tiered retention
+      // policy) are plain `settings` rows so they survive backups/restores. The
+      // encryption KEY is never stored here — it lives in Config/backup-key.json
+      // wrapped by Windows DPAPI (server/backup-crypto.ts).
+      version: 31,
+      statements: [],
+      callback: (db: Db) => {
+        const tableExists = (name: string) =>
+          Number(db.scalar("SELECT COUNT(*) FROM sqlite_master WHERE type = 'table' AND name = ?", [name])) === 1;
+        if (!tableExists("backups_log")) {
+          // Ultra-early fixture / minimal upgrade: create the full latest shape.
+          db.exec(
+            "CREATE TABLE backups_log (\n  id INTEGER PRIMARY KEY AUTOINCREMENT,\n  kind TEXT NOT NULL CHECK (kind IN ('manual', 'auto', 'pre_restore', 'pre_purge')),\n  file_name TEXT NOT NULL,\n  size_bytes INTEGER NOT NULL CHECK (size_bytes >= 0),\n  checksum TEXT,\n  verified INTEGER NOT NULL DEFAULT 0 CHECK (verified IN (0, 1)),\n  encrypted INTEGER NOT NULL DEFAULT 0 CHECK (encrypted IN (0, 1)),\n  created_by TEXT REFERENCES users(id),\n  created_at TEXT NOT NULL\n)",
+          );
+          db.run("CREATE INDEX IF NOT EXISTS idx_backups_created ON backups_log(created_at)", []);
+        } else {
+          const cols = new Set(
+            db.all<{ name: string }>("PRAGMA table_info(backups_log)").map((c) => c.name),
+          );
+          if (!cols.has("encrypted"))
+            db.run(
+              "ALTER TABLE backups_log ADD COLUMN encrypted INTEGER NOT NULL DEFAULT 0 CHECK (encrypted IN (0, 1))",
+            );
+        }
+        const defaults: Array<[string, string]> = [
+          ["backup_auto_enabled", "1"],
+          ["backup_location", ""],
+          ["backup_retention_policy", JSON.stringify({ daily: 7, weekly: 8, monthly: 24 })],
+          ["backup_encryption_enabled", "0"],
+          ["backup_password_set", "0"],
+        ];
+        for (const [key, value] of defaults) {
+          db.run("INSERT OR IGNORE INTO settings (key, value) VALUES (?, ?)", [key, value]);
+        }
+      },
+    },
+    {
+      // ---- v32: expand backups_log.kind to include pre_purge (TASK-042) ----
+      // The pre-destructive snapshot taken immediately before a member purge is
+      // a distinct kind, so the `kind` CHECK must accept it. SQLite cannot alter
+      // a CHECK constraint, so the table is rebuilt inside the migration. No
+      // other table references backups_log, and `created_by` FK is preserved
+      // (`REFERENCES users(id)`) by the RENAME below.
+      version: 32,
+      statements: [],
+      callback: (db: Db) => {
+        const sql =
+          String(db.scalar("SELECT sql FROM sqlite_master WHERE type = 'table' AND name = 'backups_log'") ?? "");
+        // v31 may already have created the full-shape table for fresh boots/upgrade
+        // fixtures; rebuilding again would be a no-op but risks needless churn.
+        if (sql.includes("pre_purge")) return;
+        const checkSql =
+          "CREATE TABLE backups_log_new (\n" +
+          "  id INTEGER PRIMARY KEY AUTOINCREMENT,\n" +
+          "  kind TEXT NOT NULL CHECK (kind IN ('manual', 'auto', 'pre_restore', 'pre_purge')),\n" +
+          "  file_name TEXT NOT NULL,\n" +
+          "  size_bytes INTEGER NOT NULL CHECK (size_bytes >= 0),\n" +
+          "  checksum TEXT,\n" +
+          "  verified INTEGER NOT NULL DEFAULT 0 CHECK (verified IN (0, 1)),\n" +
+          "  encrypted INTEGER NOT NULL DEFAULT 0 CHECK (encrypted IN (0, 1)),\n" +
+          "  created_by TEXT REFERENCES users(id),\n" +
+          "  created_at TEXT NOT NULL\n" +
+          ")";
+        db.exec(
+          `${checkSql};
+INSERT INTO backups_log_new (id, kind, file_name, size_bytes, checksum, verified, encrypted, created_by, created_at)
+  SELECT id, kind, file_name, size_bytes, checksum, verified, encrypted, created_by, created_at FROM backups_log;
+DROP TABLE backups_log;
+ALTER TABLE backups_log_new RENAME TO backups_log;
+CREATE INDEX IF NOT EXISTS idx_backups_created ON backups_log(created_at);`,
+        );
+      },
+    },
   ];
 }
 
