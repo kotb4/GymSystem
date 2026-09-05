@@ -1,6 +1,8 @@
 ﻿import http from "node:http";
 import path from "node:path";
 import fs from "node:fs";
+import os from "node:os";
+import crypto from "node:crypto";
 import { getDbContext, openDatabase, logLine, isMaintenanceMode, flushLogging } from "./context";
 import { resolveHttpHost } from "./config";
 import {
@@ -13,7 +15,7 @@ import {
 import { invokeRpc } from "./rpc";
 import { licenseStateName, refreshLicenseClock } from "./license/session";
 import { startBackupScheduler } from "./backup-scheduler";
-import { createServerBackup, readSnapshotBytes, importDatabaseBytes } from "./backups";
+import { createServerBackup, openSnapshotReadStream, importDatabaseBytes } from "./backups";
 import { toAppError, errValidation } from "../src/core/errors";
 import type { ServiceActor } from "../src/core/permissions";
 import { setup as svcSetup, login as svcLogin } from "../src/core/services/auth.service";
@@ -130,6 +132,59 @@ async function readJsonBody(
     throw errValidation(errorKey);
   }
   return typeof parsed === "object" && parsed !== null ? (parsed as Record<string, unknown>) : {};
+}
+
+/**
+ * Stream a potentially large request body to a temp file instead of buffering
+ * the whole payload in memory (restore/legacy-import can carry ~100 MB DBs).
+ * The caller must invoke `cleanup()` (unlinks the temp file) after processing.
+ */
+function readBodyToFile(
+  req: http.IncomingMessage,
+  limit: number,
+): Promise<{ file: string; cleanup: () => void }> {
+  return new Promise((resolve, reject) => {
+    const file = path.join(os.tmpdir(), `gym-upload-${crypto.randomUUID()}.bin`);
+    const out = fs.createWriteStream(file, { flags: "wx" });
+    let size = 0;
+    const fail = (error: unknown): void => {
+      out.destroy();
+      try {
+        fs.unlinkSync(file);
+      } catch {
+        /* already gone */
+      }
+      reject(error);
+    };
+    req.on("data", (chunk: Buffer) => {
+      size += chunk.length;
+      if (size > limit) {
+        fail(errValidation("errors.backupInvalidFile"));
+        req.destroy();
+        return;
+      }
+      if (!out.write(chunk)) {
+        req.pause();
+        out.once("drain", () => req.resume());
+      }
+    });
+    out.on("error", fail);
+    req.on("error", fail);
+    req.on("end", () => {
+      out.end(() =>
+        resolve({
+          file,
+          cleanup: (): void => {
+            try {
+              fs.unlinkSync(file);
+            } catch {
+              /* already gone */
+            }
+          },
+        }),
+      );
+    });
+  });
 }
 
 function parseCookies(req: http.IncomingMessage): Record<string, string> {
@@ -336,13 +391,14 @@ async function handleApi(ctx: Ctx): Promise<void> {
   if (route === "GET /api/backups/download") {
     try {
       const fileName = url.searchParams.get("file") ?? "";
-      const bytes = readSnapshotBytes(actor, fileName);
+      const { stream, sizeBytes } = openSnapshotReadStream(actor, fileName);
       res.writeHead(200, {
         "Content-Type": "application/octet-stream",
         "Content-Disposition": `attachment; filename="${fileName}"`,
         "Cache-Control": "no-store",
+        "Content-Length": sizeBytes,
       });
-      res.end(Buffer.from(bytes));
+      stream.pipe(res);
       return;
     } catch (error) {
       const mapped = errorBody(error);
@@ -354,15 +410,19 @@ async function handleApi(ctx: Ctx): Promise<void> {
     const kind = route.endsWith("/restore") ? "restore" : "legacy_import";
     try {
       requirePermission(actor, "backup.restore");
-      const raw = await readBody(req, MAX_BODY_BYTES);
-      // Encrypted snapshots carry their password via a request header so the
-      // password never leaks into session storage or the URL.
-      const backupPassword = req.headers["x-backup-password"] ? String(req.headers["x-backup-password"]) : undefined;
-      const report = await importDatabaseBytes(actor, new Uint8Array(raw), {
-        kind,
-        ...(backupPassword ? { password: backupPassword } : {}),
-      });
-      return sendJson(res, 200, { ok: true, result: report });
+      const { file, cleanup } = await readBodyToFile(req, MAX_BODY_BYTES);
+      try {
+        // Encrypted snapshots carry their password via a request header so the
+        // password never leaks into session storage or the URL.
+        const backupPassword = req.headers["x-backup-password"] ? String(req.headers["x-backup-password"]) : undefined;
+        const report = await importDatabaseBytes(actor, new Uint8Array(fs.readFileSync(file)), {
+          kind,
+          ...(backupPassword ? { password: backupPassword } : {}),
+        });
+        return sendJson(res, 200, { ok: true, result: report });
+      } finally {
+        cleanup();
+      }
     } catch (error) {
       const mapped = errorBody(error);
       return sendJson(res, mapped.status, mapped.body);

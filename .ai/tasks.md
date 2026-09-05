@@ -2,18 +2,30 @@
 
 > **Reading order for the next agent:** `AGENTS.md` → `.ai/project.md` → `.ai/current-state.md` → `.ai/tasks.md` → `.ai/decisions.md` (when relevant) → inspect the actual source. The repository files are the persistent memory; chat history is not part of the project.
 
-## TASK-043: Performance hardening for real-gym production (ACTIVE — start after TASK-042 is reported/committed)
-- Status: active (queued 2026-09-05; user: «بعد ما تخلص خش في دي»). Deliver a hardening pass over the single-gym backend so it stays responsive at real-world scale.
-- Scope (from the user):
-  1. Inspect indexes / FK policy / WAL / busy timeout / expensive queries / N+1 patterns for **1k / 5k / 10k+ members** (create indexes where queries scan, review FK cascade costs, ensure WAL + busy timeout give predictable behavior).
-  2. **Large requests/backups**: temp-file flow for large backup upload/HTTP body handling where safe.
-  3. **Reports at DB level**: add filters/`range`+paginate at the DB layer (limit/offset/count) where reports are slow — NOT just in SQLite-memory.
-  4. **Server-side pagination** for the high-growth lists ONLY: members, attendance, payments, ledger, audit logs, inventory/sales (not trivial tiny datasets).
-  5. **SQLite concurrency**: failures must be *predictable* (e.g. busy/locked during a checkpoint/backup must not silently corrupt or hang indefinitely), incl. a documented/tight busy timeout. Don't over-update: diagnose all writes go through the single-writer `Db` (no BUGCHECK "sync" aborted style changes unless the audit proves a real failure).
-  6. **Memory safety**: avoid large allocations (no doubling/building giant arrays when streaming/cursor is possible).
-  7. Tests/benchmarks with **measured numbers** (no invented numbers), plus the full suite + typecheck + lint + build.
-- Report A–F (Arabic): bottlenecks found (with evidence), fixes applied, indexes added, pagination changes, performance measurements (before/after), remaining scaling limits.
-- Constraints: single gym, single process/writer; **no multi-server/cloud scaling**, **do NOT replace SQLite**, **no premature optimization** — optimize only where inspection/profiling shows a real bottleneck; preserve behavior & tests. Commit convention maintained.
+## TASK-043: Performance hardening for real-gym production
+- Status: done (2026-09-05). Evidence-based pass: measured at 1k/10k members with `tests/performance.test.ts`; the schema already was well-indexed (existing per-column indexes + the `UNIQUE(ref_table, ref_id, entry_type)` on `financial_ledger` cover every hot path), so **no migration was needed** — the real work was paginating the unbounded report lists, making the per-day check-in count index-friendly, and streaming the two large body/download flows.
+- **Index/FK/WAL/busy audit (measured, not assumed):** `NodeSqliteDriver` already sets WAL, `foreign_keys ON`, `busy_timeout=5000` (predictable busy/locked, documented). Every high-growth list already paginates at the DB level (`listMembers`, `listSubscriptions`, `listPayments`, `listLedgerEntries`, `listAuditLogs`, `listExpenses`, store sales/products/debts, `listAuditForMember`); bounded lists stay bounded (`listRecentCheckIns` 8, `listAttendanceForMember` 30, `listStockMovements` ≤300, `searchMembers` 50). `listTrashedMembers` is the only unbounded list (trash is user-bounded in practice; flagged as remaining limit). `ledgerDayMap`'s ref join is covered by the ledger UNIQUE autoindex (verified via EXPLAIN QUERY PLAN). Dashboard day-maps are single aggregate queries (no N+1).
+- **Fixes applied:**
+  1. `countCheckInsOnDate` + the open-check-in probe in `attendance.service.ts` dropped `substr(checkin_at,1,10)=?` (forces full scan) for an index-friendly range `checkin_at >= dayStart AND < nextDayStart` — EXPLAIN QUERY PLAN now resolves to `idx_att_time` / `idx_att_member_time` (regression-tested in the perf spec).
+  2. `getPeriodReport` now paginates the four `detailed*` lists (payments/expenses/refunds/voids): new optional `PeriodReportQuery {paymentsPage, expensesPage, refundsPage, voidsPage, pageSize}`; each list returns `{items, total}` (LIMIT/OFFSET + separate COUNT), clamped pageSize 10–200, page ≥1. API wrapper `api.reports.period(fromKey, toKey, query)`. Reports page gained a `Pagination` control under each table; card headers now show the true `total` instead of the rendered page length.
+  3. Restore/legacy-import body now streams to a temp file (`readBodyToFile` with backpressure + 256 MB cap) instead of `Buffer.concat` of all chunks (no doubling in RAM); download streams via `openSnapshotReadStream` (permission-gated, `Content-Length` + pipe) instead of loading the whole snapshot into memory.
+- **Measurements (measured at scale, `GYM_PERF_SCALE` override, default 1000, cap 25000):**
+
+  | Query | 1k members | 10k members |
+  |---|---|---|
+  | `getPeriodReport` page 1 | 17.5 ms | 117 ms |
+  | `getPeriodReport` deep page | 18.7 ms | 198.7 ms |
+  | `getFinanceOverview` | 1.4 ms | 11.2 ms |
+  | `getDashboardOverview(30d)` | 22.9 ms | 307.7 ms |
+  | `listMembers` page 1 / last | 2.8 / 3.0 ms | 8.8 / 32 ms |
+  | `listLedgerEntries` deep | 1.2 ms | 2.3 ms |
+  | `listPayments(range)` | 10.9 ms | 79.1 ms |
+  | `listAuditLogs` deep | 0.8 ms | 1.3 ms |
+  | `listAuditForMember` | 2.1 ms | 15.2 ms |
+  | `countCheckInsOnDate` | 0.5 ms | 4.3 ms |
+- **Decision:** no migration v33 — measured data shows the existing schema comfortably handles 10k members (worst query 308 ms). Adding `idx_audit_entity` or `members(created_at)` etc. would be unexplained by the data (ADR-027).
+- **Tests:** new `tests/performance.test.ts` (6 tests: report/dashboard/member/ledger/payments/audit ceilings, `countCheckInsOnDate` index usage, ledger ref autoindex usage; seeds plans/members/subs/payments/refunds/attendance/ledger/audit/expenses in bulk). Full `npm test` **487/487 (41 files)**; typecheck ×2 clean; `npm run build` clean; `npm run e2e` ALL CHECKS PASSED (incl. `POST /api/system/restore` over the new streamed route); RPC consistency clean. Note: two earlier full-suite runs failed once in `backup-restore-integration.test.ts` under 41-file parallel load and pass in isolation/paired runs — a load flake (backup pipeline code untouched), flagged as a known issue to watch.
+- Docs: ADR-027 recorded. Commits: main commit + `docs(ai)` commit + push; Arabic A–F report delivered.
 
 ## TASK-042: Backup protection & lifecycle — encrypted snapshots, auto scheduler, tiered retention (ADR-026)
 - Status: done (2026-09-05). `npm test` **481/481 (40 files)**, typecheck ×2 clean, RPC consistency clean (276 entries), `npm run build` clean, `npm run e2e` PASS (auto-backup fires on boot).

@@ -1,13 +1,16 @@
 import crypto from "node:crypto";
 import {
+  createReadStream,
   existsSync,
   mkdirSync,
   readFileSync,
   renameSync,
+  statSync,
   writeFileSync,
   unlinkSync,
   rmSync,
 } from "node:fs";
+import type { ReadStream } from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { DatabaseSync } from "node:sqlite";
@@ -432,6 +435,17 @@ export function readSnapshotBytes(actor: ServiceActor, fileName: string): Uint8A
   const target = snapshotPath(fileName);
   if (!existsSync(target)) throw errValidation("errors.backupInvalidFile");
   return new Uint8Array(readFileSync(target));
+}
+
+/** Stream a snapshot to the client without loading the whole file into memory. */
+export function openSnapshotReadStream(
+  actor: ServiceActor,
+  fileName: string,
+): { stream: ReadStream; sizeBytes: number } {
+  requirePermission(actor, "backup.restore");
+  const target = snapshotPath(fileName);
+  if (!existsSync(target)) throw errValidation("errors.backupInvalidFile");
+  return { stream: createReadStream(target), sizeBytes: statSync(target).size };
 }
 
 function tableCounts(file: string): Record<string, number> {

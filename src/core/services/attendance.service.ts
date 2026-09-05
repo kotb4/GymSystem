@@ -353,9 +353,11 @@ export async function recordCheckOut(
 ): Promise<{ kind: "success"; checkoutAt: string } | { kind: "denied"; reason: "NOT_IN_OR_DONE" }> {
   requirePermission(actor, "checkin.create");
   const today = todayKey();
+  const dayStart = `${today} 00:00:00`;
+  const nextDayStart = `${addDaysKey(today, 1)} 00:00:00`;
   const open = db.first<{ id: string; checkin_at: string }>(
-    "SELECT id, checkin_at FROM attendance\nWHERE deleted_at IS NULL AND member_id = ? AND substr(checkin_at, 1, 10) = ? AND checkout_at IS NULL\nORDER BY checkin_at DESC LIMIT 1",
-    [memberId, today],
+    "SELECT id, checkin_at FROM attendance\nWHERE deleted_at IS NULL AND member_id = ? AND checkin_at >= ? AND checkin_at < ? AND checkout_at IS NULL\nORDER BY checkin_at DESC LIMIT 1",
+    [memberId, dayStart, nextDayStart],
   );
   if (!open) return { kind: "denied", reason: "NOT_IN_OR_DONE" };
   const checkoutAt = nowStamp();
@@ -397,8 +399,8 @@ export function listRecentCheckIns(
 
 export function countCheckInsOnDate(db: Db, dateKey: string): number {
   return db.count(
-    "SELECT COUNT(*) FROM attendance WHERE deleted_at IS NULL AND substr(checkin_at, 1, 10) = ?",
-    [dateKey],
+    "SELECT COUNT(*) FROM attendance WHERE deleted_at IS NULL AND checkin_at >= ? AND checkin_at < ?",
+    [`${dateKey} 00:00:00`, `${addDaysKey(dateKey, 1)} 00:00:00`],
   );
 }
 

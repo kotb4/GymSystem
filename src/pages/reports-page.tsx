@@ -28,6 +28,7 @@ import { Input } from "@/components/ui/input";
 import { Button } from "@/components/ui/button";
 import { EmptyState } from "@/components/ui/empty-state";
 import { DataTable, type Column } from "@/components/ui/table";
+import { Pagination } from "@/components/ui/pagination";
 import { AttendanceChart } from "@/components/charts/attendance-chart";
 
 type PeriodValue = "today" | "week" | "month" | "custom";
@@ -72,6 +73,13 @@ export function ReportsPage() {
   const [customTo, setCustomTo] = useState(todayKey());
   const [appliedCustom, setAppliedCustom] = useState<{ fromKey: string; toKey: string }>(rangeFor("month"));
   const [report, setReport] = useState<PeriodReport | null>(null);
+  const [detailPages, setDetailPages] = useState({
+    payments: 1,
+    expenses: 1,
+    refunds: 1,
+    voids: 1,
+  });
+  const DETAIL_PAGE_SIZE = 50;
 
   useEffect(() => {
     if (!actor || !hasPermission("reports.view")) return;
@@ -83,7 +91,13 @@ export function ReportsPage() {
       return;
     }
     api.reports
-      .period(range.fromKey, range.toKey)
+      .period(range.fromKey, range.toKey, {
+        paymentsPage: detailPages.payments,
+        expensesPage: detailPages.expenses,
+        refundsPage: detailPages.refunds,
+        voidsPage: detailPages.voids,
+        pageSize: DETAIL_PAGE_SIZE,
+      })
       .then((r) => {
         if (alive) setReport(r);
       })
@@ -91,7 +105,7 @@ export function ReportsPage() {
     return () => {
       alive = false;
     };
-  }, [actor, period, appliedCustom, hasPermission, view]);
+  }, [actor, period, appliedCustom, hasPermission, view, detailPages.payments, detailPages.expenses, detailPages.refunds, detailPages.voids]);
 
   const chartDataset = useMemo<ChartDataset | null>(() => {
     if (!report) return null;
@@ -196,7 +210,7 @@ export function ReportsPage() {
     },
   ];
 
-  const detailedPaymentColumns: Column<NonNullable<PeriodReport["detailedPayments"][number]>>[] = [
+  const detailedPaymentColumns: Column<PeriodReport["detailedPayments"]["items"][number]>[] = [
     { key: "date", header: t("rpt.colDate"), render: (row) => <span dir="ltr" className="tabnum text-subtle">{row.paidAt.slice(0, 16)}</span> },
     { key: "member", header: t("pay.colMember"), render: (row) => <span className="font-bold">{row.memberName} · {row.memberCode}</span> },
     { key: "plan", header: t("pay.colPlan"), render: (row) => <span className="text-subtle">{row.planName}</span> },
@@ -208,7 +222,7 @@ export function ReportsPage() {
     { key: "reason", header: t("pay.colReason"), render: (row) => row.voidReason ? <span className="text-[12px] text-subtle max-w-32 truncate block" title={row.voidReason}>{row.voidReason}</span> : row.refundReason ? <span className="text-[12px] text-subtle max-w-32 truncate block" title={row.refundReason}>{row.refundReason}</span> : <span className="text-faint">—</span> },
   ];
 
-  const detailedExpenseColumns: Column<NonNullable<PeriodReport["detailedExpenses"][number]>>[] = [
+  const detailedExpenseColumns: Column<PeriodReport["detailedExpenses"]["items"][number]>[] = [
     { key: "date", header: t("rpt.colDate"), render: (row) => <span dir="ltr" className="tabnum text-subtle">{row.date}</span> },
     { key: "category", header: t("exp.filterCategory"), render: (row) => <span className="font-bold">{row.categoryName}</span> },
     { key: "amount", header: t("exp.colAmount"), render: (row) => <span dir="ltr" className="font-extrabold tabnum text-red">{formatMinor(row.amountMinor)}</span> },
@@ -217,7 +231,7 @@ export function ReportsPage() {
     { key: "voidReason", header: t("rpt.colVoidReason"), render: (row) => row.voidReason ? <span className="text-[12px] text-subtle max-w-32 truncate block" title={row.voidReason}>{row.voidReason}</span> : <span className="text-faint">—</span> },
   ];
 
-  const detailedRefundColumns: Column<NonNullable<PeriodReport["detailedRefunds"][number]>>[] = [
+  const detailedRefundColumns: Column<PeriodReport["detailedRefunds"]["items"][number]>[] = [
     { key: "date", header: t("rpt.colDate"), render: (row) => <span dir="ltr" className="tabnum text-subtle">{row.createdAt.slice(0, 16)}</span> },
     { key: "member", header: t("pay.colMember"), render: (row) => <span className="font-bold">{row.memberName}</span> },
     { key: "amount", header: t("exp.colAmount"), render: (row) => <span dir="ltr" className="font-extrabold tabnum text-amber">{formatMinor(row.amountMinor)}</span> },
@@ -225,7 +239,7 @@ export function ReportsPage() {
     { key: "method", header: t("pay.colMethod"), render: (row) => <span className="text-subtle">{row.methodLabel}</span> },
   ];
 
-  const detailedVoidColumns: Column<NonNullable<PeriodReport["detailedVoids"][number]>>[] = [
+  const detailedVoidColumns: Column<PeriodReport["detailedVoids"]["items"][number]>[] = [
     { key: "date", header: t("rpt.colDate"), render: (row) => <span dir="ltr" className="tabnum text-subtle">{row.voidedAt.slice(0, 16)}</span> },
     { key: "member", header: t("pay.colMember"), render: (row) => <span className="font-bold">{row.memberName}</span> },
     { key: "amount", header: t("pay.colPaid"), render: (row) => <span dir="ltr" className="font-extrabold tabnum text-red">{formatMinor(row.amountMinor)}</span> },
@@ -354,34 +368,66 @@ export function ReportsPage() {
           </Card>
 
           <Card>
-            <CardHeader title={t("rpt.detailPayments")} description={`${report.detailedPayments.length} عملية`} />
-            {report.detailedPayments.length === 0 ? (
+            <CardHeader title={t("rpt.detailPayments")} description={`${report.detailedPayments.total} عملية`} />
+            {report.detailedPayments.items.length === 0 ? (
               <EmptyState icon={<Banknote />} title={t("rpt.emptyRange")} />
             ) : (
-              <DataTable columns={detailedPaymentColumns} data={report.detailedPayments} rowKey={(r) => r.id} />
+              <DataTable columns={detailedPaymentColumns} data={report.detailedPayments.items} rowKey={(r) => r.id} />
             )}
+            <div className="px-4 pb-4">
+              <Pagination
+                page={detailPages.payments}
+                pageSize={DETAIL_PAGE_SIZE}
+                total={report.detailedPayments.total}
+                onPageChange={(page) => setDetailPages((p) => ({ ...p, payments: page }))}
+              />
+            </div>
           </Card>
 
           <Card>
-            <CardHeader title={t("rpt.detailExpenses")} description={`${report.detailedExpenses.length} مصروف`} />
-            {report.detailedExpenses.length === 0 ? (
+            <CardHeader title={t("rpt.detailExpenses")} description={`${report.detailedExpenses.total} مصروف`} />
+            {report.detailedExpenses.items.length === 0 ? (
               <EmptyState icon={<TrendingDown />} title={t("rpt.emptyRange")} />
             ) : (
-              <DataTable columns={detailedExpenseColumns} data={report.detailedExpenses} rowKey={(r) => r.id} />
+              <DataTable columns={detailedExpenseColumns} data={report.detailedExpenses.items} rowKey={(r) => r.id} />
             )}
+            <div className="px-4 pb-4">
+              <Pagination
+                page={detailPages.expenses}
+                pageSize={DETAIL_PAGE_SIZE}
+                total={report.detailedExpenses.total}
+                onPageChange={(page) => setDetailPages((p) => ({ ...p, expenses: page }))}
+              />
+            </div>
           </Card>
 
-          {report.detailedRefunds.length > 0 && (
+          {report.detailedRefunds.total > 0 && (
             <Card>
-              <CardHeader title={t("rpt.detailRefunds")} description={`${report.detailedRefunds.length} استرداد`} />
-              <DataTable columns={detailedRefundColumns} data={report.detailedRefunds} rowKey={(r) => r.id} />
+              <CardHeader title={t("rpt.detailRefunds")} description={`${report.detailedRefunds.total} استرداد`} />
+              <DataTable columns={detailedRefundColumns} data={report.detailedRefunds.items} rowKey={(r) => r.id} />
+              <div className="px-4 pb-4">
+                <Pagination
+                  page={detailPages.refunds}
+                  pageSize={DETAIL_PAGE_SIZE}
+                  total={report.detailedRefunds.total}
+                  onPageChange={(page) => setDetailPages((p) => ({ ...p, refunds: page }))}
+                />
+              </div>
             </Card>
           )}
 
-          {report.detailedVoids.length > 0 && (
+          {report.detailedVoids.total > 0 && (
             <Card>
-              <CardHeader title={t("rpt.detailVoids")} description={`${report.detailedVoids.length} إلغاء`} />
-              <DataTable columns={detailedVoidColumns} data={report.detailedVoids} rowKey={(r) => r.id} />
+              <CardHeader title={t("rpt.detailVoids")} description={`${report.detailedVoids.total} إلغاء`} />
+              <DataTable columns={detailedVoidColumns} data={report.detailedVoids.items} rowKey={(r) => r.id} />
+              <div className="px-4 pb-4">
+                <Pagination
+                  page={detailPages.voids}
+                  pageSize={DETAIL_PAGE_SIZE}
+                  total={report.detailedVoids.total}
+                  onPageChange={(page) => setDetailPages((p) => ({ ...p, voids: page }))}
+                />
+              </div>
             </Card>
           )}
         </>

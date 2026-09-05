@@ -1,6 +1,29 @@
 import { requirePermission, type ServiceActor } from "@/core/permissions";
 import type { Db } from "@/db/engine";
 
+export interface ReportDetailedPage<T> {
+  items: T[];
+  total: number;
+}
+
+export interface PeriodReportQuery {
+  paymentsPage?: number;
+  expensesPage?: number;
+  refundsPage?: number;
+  voidsPage?: number;
+  pageSize?: number;
+}
+
+function clampPage(value: number | undefined): number {
+  if (!value || !Number.isFinite(value) || value < 1) return 1;
+  return Math.min(Math.floor(value), 10_000);
+}
+
+function clampPageSize(value: number | undefined): number {
+  if (!value || !Number.isFinite(value)) return 50;
+  return Math.min(Math.max(Math.floor(value), 10), 200);
+}
+
 export interface PeriodReport {
   revenueMinor: number;
   refundsMinor: number;
@@ -12,20 +35,20 @@ export interface PeriodReport {
   byPlan: Array<{ planId: string; planName: string; revenueMinor: number; count: number }>;
   expensesByCategory: Array<{ categoryId: string; nameAr: string; amountMinor: number; count: number }>;
   daily: Array<{ dateKey: string; revenueMinor: number; expensesMinor: number }>;
-  detailedPayments: Array<{
+  detailedPayments: ReportDetailedPage<{
     id: string; paidAt: string; memberName: string; memberCode: string;
     planName: string; netMinor: number; paidMinor: number; remainingMinor: number;
     methodLabel: string; status: string; voidReason: string | null; refundReason: string | null;
   }>;
-  detailedExpenses: Array<{
+  detailedExpenses: ReportDetailedPage<{
     id: string; date: string; categoryName: string; amountMinor: number;
     description: string; methodLabel: string; voidReason: string | null;
   }>;
-  detailedRefunds: Array<{
+  detailedRefunds: ReportDetailedPage<{
     id: string; createdAt: string; memberName: string; amountMinor: number;
     reason: string; methodLabel: string; paymentId: string;
   }>;
-  detailedVoids: Array<{
+  detailedVoids: ReportDetailedPage<{
     id: string; voidedAt: string; memberName: string; amountMinor: number;
     voidReason: string; methodLabel: string;
   }>;
@@ -40,9 +63,17 @@ export function getPeriodReport(
   actor: ServiceActor,
   fromKey: string,
   toKey: string,
+  query?: PeriodReportQuery,
 ): PeriodReport {
   requirePermission(actor, "reports.view");
   const { from, to } = dayBounds(fromKey, toKey);
+  const pageSize = clampPageSize(query?.pageSize);
+  const pageOf = (value: number | undefined): number => clampPage(value ?? 1);
+  const offsetOf = (page: number): number => (page - 1) * pageSize;
+  const paymentsPage = pageOf(query?.paymentsPage);
+  const expensesPage = pageOf(query?.expensesPage);
+  const refundsPage = pageOf(query?.refundsPage);
+  const voidsPage = pageOf(query?.voidsPage);
 
   const totals = db.first<{ revenue: number; pay_count: number }>(
     `SELECT COALESCE(SUM(p.paid_amount_minor), 0) AS revenue, COUNT(*) AS pay_count
@@ -161,8 +192,17 @@ export function getPeriodReport(
      LEFT JOIN membership_plans pl ON pl.id = s.plan_id
      WHERE p.status IN ('partial', 'paid', 'refunded', 'voided') AND p.paid_at BETWEEN ? AND ?
      AND (p.subscription_id IS NULL OR p.subscription_id NOT IN (SELECT id FROM member_subscriptions WHERE status = 'cancelled'))
-     ORDER BY p.paid_at DESC`,
-    [from, to],
+     ORDER BY p.paid_at DESC
+     LIMIT ? OFFSET ?`,
+    [from, to, pageSize, offsetOf(paymentsPage)],
+  );
+  const detailedPaymentsTotal = Number(
+    db.scalar(
+      `SELECT COUNT(*) FROM payments p
+       WHERE p.status IN ('partial', 'paid', 'refunded', 'voided') AND p.paid_at BETWEEN ? AND ?
+       AND (p.subscription_id IS NULL OR p.subscription_id NOT IN (SELECT id FROM member_subscriptions WHERE status = 'cancelled'))`,
+      [from, to],
+    ) ?? 0,
   );
 
   const detailedExpenses = db.all<{
@@ -175,8 +215,12 @@ export function getPeriodReport(
      JOIN expense_categories c ON c.id = e.category_id
      JOIN payment_methods pm ON pm.code = e.method_code
      WHERE e.expense_date BETWEEN ? AND ?
-     ORDER BY e.expense_date DESC`,
-    [fromKey, toKey],
+     ORDER BY e.expense_date DESC
+     LIMIT ? OFFSET ?`,
+    [fromKey, toKey, pageSize, offsetOf(expensesPage)],
+  );
+  const detailedExpensesTotal = Number(
+    db.scalar("SELECT COUNT(*) FROM expenses WHERE expense_date BETWEEN ? AND ?", [fromKey, toKey]) ?? 0,
   );
 
   const detailedRefunds = db.all<{
@@ -190,8 +234,12 @@ export function getPeriodReport(
      JOIN members m ON m.id = p.member_id
      JOIN payment_methods pm ON pm.code = p.method_code
      WHERE pr.created_at BETWEEN ? AND ?
-     ORDER BY pr.created_at DESC`,
-    [from, to],
+     ORDER BY pr.created_at DESC
+     LIMIT ? OFFSET ?`,
+    [from, to, pageSize, offsetOf(refundsPage)],
+  );
+  const detailedRefundsTotal = Number(
+    db.scalar("SELECT COUNT(*) FROM payment_refunds WHERE created_at BETWEEN ? AND ?", [from, to]) ?? 0,
   );
 
   const detailedVoids = db.all<{
@@ -204,8 +252,12 @@ export function getPeriodReport(
      JOIN members m ON m.id = p.member_id
      JOIN payment_methods pm ON pm.code = p.method_code
      WHERE p.status = 'voided' AND p.voided_at BETWEEN ? AND ?
-     ORDER BY p.voided_at DESC`,
-    [from, to],
+     ORDER BY p.voided_at DESC
+     LIMIT ? OFFSET ?`,
+    [from, to, pageSize, offsetOf(voidsPage)],
+  );
+  const detailedVoidsTotal = Number(
+    db.scalar("SELECT COUNT(*) FROM payments WHERE status = 'voided' AND voided_at BETWEEN ? AND ?", [from, to]) ?? 0,
   );
 
   return {
@@ -234,45 +286,57 @@ export function getPeriodReport(
       count: Number(r.cnt),
     })),
     daily,
-    detailedPayments: detailedPayments.map((r) => ({
-      id: r.id,
-      paidAt: r.paid_at,
-      memberName: r.full_name,
-      memberCode: r.member_code,
-      planName: r.plan_name ?? "دفعة عامة",
-      netMinor: Number(r.net_amount_minor),
-      paidMinor: Number(r.paid_amount_minor),
-      remainingMinor: Number(r.remaining_amount_minor),
-      methodLabel: r.method_label,
-      status: r.status,
-      voidReason: r.void_reason,
-      refundReason: r.refund_reason,
-    })),
-    detailedExpenses: detailedExpenses.map((r) => ({
-      id: r.id,
-      date: r.expense_date,
-      categoryName: r.name_ar,
-      amountMinor: Number(r.amount_minor),
-      description: r.description,
-      methodLabel: r.method_label,
-      voidReason: r.void_reason,
-    })),
-    detailedRefunds: detailedRefunds.map((r) => ({
-      id: r.id,
-      createdAt: r.created_at,
-      memberName: r.full_name,
-      amountMinor: Number(r.amount_minor),
-      reason: r.reason,
-      methodLabel: r.method_label,
-      paymentId: r.payment_id,
-    })),
-    detailedVoids: detailedVoids.map((r) => ({
-      id: r.id,
-      voidedAt: r.voided_at,
-      memberName: r.full_name,
-      amountMinor: Number(r.paid_amount_minor),
-      voidReason: r.void_reason,
-      methodLabel: r.method_label,
-    })),
+    detailedPayments: {
+      items: detailedPayments.map((r) => ({
+        id: r.id,
+        paidAt: r.paid_at,
+        memberName: r.full_name,
+        memberCode: r.member_code,
+        planName: r.plan_name ?? "دفعة عامة",
+        netMinor: Number(r.net_amount_minor),
+        paidMinor: Number(r.paid_amount_minor),
+        remainingMinor: Number(r.remaining_amount_minor),
+        methodLabel: r.method_label,
+        status: r.status,
+        voidReason: r.void_reason,
+        refundReason: r.refund_reason,
+      })),
+      total: detailedPaymentsTotal,
+    },
+    detailedExpenses: {
+      items: detailedExpenses.map((r) => ({
+        id: r.id,
+        date: r.expense_date,
+        categoryName: r.name_ar,
+        amountMinor: Number(r.amount_minor),
+        description: r.description,
+        methodLabel: r.method_label,
+        voidReason: r.void_reason,
+      })),
+      total: detailedExpensesTotal,
+    },
+    detailedRefunds: {
+      items: detailedRefunds.map((r) => ({
+        id: r.id,
+        createdAt: r.created_at,
+        memberName: r.full_name,
+        amountMinor: Number(r.amount_minor),
+        reason: r.reason,
+        methodLabel: r.method_label,
+        paymentId: r.payment_id,
+      })),
+      total: detailedRefundsTotal,
+    },
+    detailedVoids: {
+      items: detailedVoids.map((r) => ({
+        id: r.id,
+        voidedAt: r.voided_at,
+        memberName: r.full_name,
+        amountMinor: Number(r.paid_amount_minor),
+        voidReason: r.void_reason,
+        methodLabel: r.method_label,
+      })),
+      total: detailedVoidsTotal,
+    },
   };
 }

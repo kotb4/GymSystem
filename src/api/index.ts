@@ -68,7 +68,7 @@ import type {
   DashboardSeriesResult,
 } from "@/core/services/dashboard.service";
 import type { FinanceOverview } from "@/core/services/finance.service";
-import type { PeriodReport } from "@/core/services/financial-report.service";
+import type { PeriodReport, PeriodReportQuery } from "@/core/services/financial-report.service";
 import type { StaffActivityReport } from "@/core/services/staff-activity.service";
 import type { AttendanceAnalytics } from "@/core/services/attendance-analytics.service";
 import type { RetentionInsights } from "@/core/services/activity-insights.service";
@@ -310,8 +310,8 @@ const financeApi = {
 };
 
 const reportsApi = {
-  period: (fromKey: string, toKey: string) =>
-    rpc<PeriodReport>("reports", "getPeriodReport", [fromKey, toKey]),
+  period: (fromKey: string, toKey: string, query?: PeriodReportQuery) =>
+    rpc<PeriodReport>("reports", "getPeriodReport", [fromKey, toKey, query]),
   staffActivity: (range: { fromKey: string; toKey: string }) =>
     rpc<StaffActivityReport>("reports", "getStaffActivity", [range]),
   attendanceAnalytics: (range: { fromKey: string; toKey: string }) =>
