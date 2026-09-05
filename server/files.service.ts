@@ -139,6 +139,27 @@ function resolveSafe(relative: string): string {
   return resolved;
 }
 
+/**
+ * Returns true iff `input` is a safe *relative* path for writing under a
+ * files root: non-empty, no leading slash, no `..`/`.` segments, no
+ * backslash tricks, no drive prefixes and no control characters. This is a
+ * purely structural check (no filesystem access), shared between the backup
+ * writer (archive keys) and the restore extractor (staging directory) so a
+ * hostile `relative_path` can never escape the root.
+ */
+export function isSafeRelativePath(input: string): boolean {
+  const normalized = String(input ?? "").replace(/\\/g, "/").trim();
+  if (normalized === "") return false;
+  if (normalized.startsWith("/")) return false;
+  const parts = normalized.split("/");
+  for (const segment of parts) {
+    if (segment === "" || segment === "." || segment === "..") return false;
+    if (/^[a-zA-Z]:/.test(segment)) return false;
+    if (/[\x00-\x1f]/.test(segment)) return false;
+  }
+  return true;
+}
+
 export interface SaveFileInput {
   kind: FileKind;
   originalName: string;
