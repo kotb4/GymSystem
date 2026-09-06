@@ -19,7 +19,10 @@ describe("store migration v21 upgrade path", () => {
     const db = new Db(new NodeSqliteDriver());
     db.setForeignKeys(false); // build v20 skeleton without FK friction
     db.exec("CREATE TABLE users (id TEXT PRIMARY KEY, full_name TEXT)");
-    db.exec("CREATE TABLE members (id TEXT PRIMARY KEY, full_name TEXT)");
+    db.exec("CREATE TABLE members (id TEXT PRIMARY KEY, full_name TEXT, member_code TEXT, deleted_at TEXT)");
+    db.exec(
+      "CREATE TABLE cards (\n  id TEXT PRIMARY KEY,\n  barcode_value TEXT,\n  status TEXT,\n  kind TEXT,\n  member_id TEXT REFERENCES members(id),\n  notes TEXT,\n  assigned_at TEXT,\n  assigned_by TEXT,\n  unassigned_at TEXT,\n  created_at TEXT,\n  updated_at TEXT\n)",
+    );
     db.exec("CREATE TABLE product_categories (id TEXT PRIMARY KEY, name_ar TEXT)");
     db.exec(
       "CREATE TABLE products (\n  id TEXT PRIMARY KEY,\n  name TEXT NOT NULL,\n  category_id TEXT REFERENCES product_categories(id),\n  sku TEXT UNIQUE,\n  barcode TEXT UNIQUE,\n  cost_minor INTEGER NOT NULL DEFAULT 0 CHECK (cost_minor >= 0),\n  price_minor INTEGER NOT NULL CHECK (price_minor >= 0),\n  stock_qty REAL NOT NULL DEFAULT 0,\n  min_stock_qty REAL NOT NULL DEFAULT 0 CHECK (min_stock_qty >= 0),\n  supplier_name TEXT,\n  is_active INTEGER NOT NULL DEFAULT 1 CHECK (is_active IN (0, 1)),\n  created_by TEXT REFERENCES users(id),\n  created_at TEXT NOT NULL,\n  updated_at TEXT NOT NULL\n)",

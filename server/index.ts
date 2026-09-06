@@ -27,6 +27,8 @@ import {
   getFileMeta,
 } from "./files.service";
 import { requirePermission } from "../src/core/permissions";
+import { renderQrPngBase64 } from "../src/core/qr";
+import { getCardByBarcode } from "../src/core/services/cards.service";
 
 const PORT = Number(process.env.GYMSYSTEM_PORT ?? 8890);
 /** Secure default: loopback-only (ADR-023). GYMSYSTEM_HOST still allows LAN exposure. */
@@ -475,6 +477,36 @@ async function handleApi(ctx: Ctx): Promise<void> {
       const meta = getFileMeta(getDbContext().db, id);
       requirePermission(actor, permissionForKind(meta.kind));
       return sendJson(res, 200, { ok: true, result: meta });
+    } catch (error) {
+      const mapped = errorBody(error);
+      return sendJson(res, mapped.status, mapped.body);
+    }
+  }
+
+  // ---- member card QR renders ---------------------------------------------
+  // The QR encodes the card barcode (e.g. MEM-000042). Staff can download it,
+  // and the delivery pipeline embeds the same image in WhatsApp messages.
+  const qrMatch = url.pathname.match(/^\/api\/cards\/qr\/([^/]+)$/);
+  if (req.method === "GET" && qrMatch) {
+    try {
+      requirePermission(actor, "cards.view");
+      const barcode = decodeURIComponent(qrMatch[1]).trim().toUpperCase();
+      const card = getCardByBarcode(getDbContext().db, barcode);
+      if (!card) {
+        return sendJson(res, 404, {
+          ok: false,
+          error: { name: "AppError", code: "NOT_FOUND", messageKey: "errors.cardNotFound", params: {} },
+        });
+      }
+      const base64 = await renderQrPngBase64(barcode);
+      const png = Buffer.from(base64, "base64");
+      res.writeHead(200, {
+        "Content-Type": "image/png",
+        "Content-Length": png.length,
+        "Cache-Control": "private, max-age=86400",
+      });
+      res.end(png);
+      return;
     } catch (error) {
       const mapped = errorBody(error);
       return sendJson(res, mapped.status, mapped.body);

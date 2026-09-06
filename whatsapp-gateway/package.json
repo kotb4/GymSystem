@@ -1,0 +1,18 @@
+{
+  "name": "whatsapp-gateway",
+  "version": "1.0.0",
+  "private": true,
+  "description": "Yassen Mohamed Kotb | 01288536381 — local WhatsApp Web gateway for QR card delivery (binds 127.0.0.1 only).",
+  "main": "index.js",
+  "scripts": {
+    "start": "node index.js",
+    "dev": "node --watch index.js",
+    "install-deps": "npm install && node standalone-bin.mjs"
+  },
+  "engines": {
+    "node": ">=18"
+  },
+  "dependencies": {
+    "playwright": "^1.48.0"
+  }
+}

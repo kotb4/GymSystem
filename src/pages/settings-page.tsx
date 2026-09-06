@@ -46,6 +46,7 @@ export function SettingsPage() {
         <div className="grid gap-4 xl:grid-cols-2">
           <GeneralSettingsCard />
           <ScannerSettingsCard />
+          <WhatsAppSettingsCard />
           <NotificationSettingsCard />
           <ChangePasswordCard />
           <BackupSettingsCard />
@@ -309,6 +310,89 @@ function ScannerSettingsCard() {
 
   return (
     <SettingsForm title={t("settings.scannerTab")} drafts={drafts} values={values} setValue={setValue} />
+  );
+}
+
+function WhatsAppToggle({ value, onChange }: { value: boolean; onChange: (v: boolean) => void }) {
+  const t = useT();
+  const { hasPermission } = useAuth();
+  const { toast } = useToast();
+  const { save } = useSettingsSaver();
+  const canEdit = hasPermission("settings.edit");
+  return (
+    <button
+      type="button"
+      role="switch"
+      aria-checked={value}
+      disabled={!canEdit}
+      onClick={() => {
+        const next = value ? "0" : "1";
+        onChange(!value);
+        void save([{ key: SETTING_KEYS.whatsappEnabled, value: next }], () => {
+          toast("success", next === "1" ? t("settings.whatsappOn") : t("settings.whatsappOff"));
+        });
+      }}
+      className={cn(
+        "flex w-full items-center justify-between rounded-xl border border-line bg-surface px-3.5 py-3 text-[13px] font-semibold transition-colors",
+        canEdit && "hover:border-line-strong"
+      )}
+    >
+      <span>{t("settings.whatsappEnabled")}</span>
+      <span
+        aria-hidden
+        className={cn(
+          "relative h-6 w-11 rounded-full transition-colors",
+          value ? "bg-neon/70" : "bg-white/10"
+        )}
+      >
+        <span
+          className={cn(
+            "absolute top-0.5 size-5 rounded-full bg-white shadow transition-all",
+            value ? "start-0.5" : "start-[22px]"
+          )}
+        />
+      </span>
+    </button>
+  );
+}
+
+function WhatsAppSettingsCard() {
+  const t = useT();
+  const {} = useAuth();
+  const [values, setValues] = useState<Record<string, string>>({});
+  const [enabled, setEnabled] = useState(false);
+
+  useEffect(() => {
+    let alive = true;
+    api.settings
+      .readAll()
+      .then((all) => {
+        if (!alive) return;
+        setValues({
+          [SETTING_KEYS.whatsappApiUrl]: all[SETTING_KEYS.whatsappApiUrl] ?? "",
+        });
+        setEnabled(all[SETTING_KEYS.whatsappEnabled] === "1");
+      })
+      .catch((err) => console.error(err));
+    return () => {
+      alive = false;
+    };
+  }, []);
+
+  const setValue = (key: string, value: string) => setValues((prev) => ({ ...prev, [key]: value }));
+
+  const drafts: SettingDraft[] = [
+    { key: SETTING_KEYS.whatsappApiUrl, label: "settings.whatsappApiUrl", hint: "settings.whatsappApiUrlHint", dir: "ltr" },
+  ];
+
+  return (
+    <SettingsForm
+      title={t("settings.whatsappTitle")}
+      drafts={drafts}
+      values={values}
+      setValue={setValue}
+      extra={<WhatsAppToggle value={enabled} onChange={setEnabled} />}
+    />
   );
 }
 

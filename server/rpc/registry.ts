@@ -29,7 +29,6 @@ import { classes } from "./classes.rpc";
 import { employees } from "./employees.rpc";
 import { employeesHr } from "./employees-hr.rpc";
 import { inbody } from "./inbody.rpc";
-import { crm } from "./crm.rpc";
 import { permissions } from "./permissions.rpc";
 import { reception } from "./reception.rpc";
 import { lead } from "./lead.rpc";
@@ -72,7 +71,6 @@ export const REGISTRY: Record<string, Record<string, Exposed>> = {
   employees,
   employeesHr,
   inbody,
-  crm,
   permissions,
   reception,
   lead,

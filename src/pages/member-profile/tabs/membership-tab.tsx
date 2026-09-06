@@ -18,6 +18,7 @@ import { EmptyState } from "@/components/ui/empty-state";
 import { ConfirmDialog } from "@/components/ui/confirm-dialog";
 import { Modal } from "@/components/ui/modal";
 import { Select } from "@/components/ui/select";
+import { CardQrDeliveryModal } from "@/components/cards/card-qr-delivery-modal";
 import {
   CalendarPlus,
   CalendarX2,
@@ -25,6 +26,7 @@ import {
   Info,
   PauseCircle,
   PlayCircle,
+  Send,
   Snowflake,
   Trash2,
 } from "lucide-react";
@@ -49,7 +51,9 @@ export function MembershipTab({ ctx }: TabProps) {
 
 function CardsCard({ ctx }: TabProps) {
   const t = useT();
+  const { hasPermission } = useAuth();
   const [cards, setCards] = useState<CardWithMember[]>([]);
+  const [qrFor, setQrFor] = useState<CardWithMember | null>(null);
   const reload = useCallback(() => {
     let alive = true;
     api.cards
@@ -67,12 +71,14 @@ function CardsCard({ ctx }: TabProps) {
   }, [reload, ctx.reloadTick]);
   interface Row {
     id: string;
+    cardId: string;
     barcodeValue: string;
     status: CardWithMember["status"];
     assignedAt: string | null;
   }
   const rows: Row[] = cards.map((c) => ({
     id: c.id,
+    cardId: c.id,
     barcodeValue: c.barcodeValue,
     status: c.status,
     assignedAt: c.assignedAt,
@@ -109,6 +115,27 @@ function CardsCard({ ctx }: TabProps) {
           <span className="text-faint">—</span>
         ),
     },
+    ...(hasPermission("cards.send")
+      ? [
+          {
+            key: "actions" as const,
+            header: "" as const,
+            render: (row: Row) => (
+              <Button
+                size="sm"
+                variant="ghost"
+                onClick={() => {
+                  const card = cards.find((c) => c.id === row.id);
+                  if (card) setQrFor(card);
+                }}
+              >
+                <Send className="size-3.5" />
+                {t("cards.sendQrShort")}
+              </Button>
+            ),
+          },
+        ]
+      : []),
   ];
   return (
     <Card>
@@ -117,6 +144,16 @@ function CardsCard({ ctx }: TabProps) {
         <EmptyState icon={<CreditCard />} title={t("members.noCards")} />
       ) : (
         <DataTable columns={columns} data={rows} rowKey={(r) => r.id} />
+      )}
+      {qrFor && (
+        <CardQrDeliveryModal
+          open
+          memberName={ctx.member.fullName}
+          memberPhone={ctx.member.phone}
+          barcodeValue={qrFor.barcodeValue}
+          cardId={qrFor.id}
+          onClose={() => setQrFor(null)}
+        />
       )}
     </Card>
   );

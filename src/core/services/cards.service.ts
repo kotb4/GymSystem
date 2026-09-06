@@ -6,6 +6,7 @@ import { recordAudit } from "./audit.service";
 import { getMemberRowById } from "./members.service";
 
 export type CardStatus = "available" | "assigned" | "lost" | "blocked";
+export type CardKind = "physical" | "virtual";
 
 const BARCODE_RE = /^[A-Za-z0-9-]{4,32}$/;
 
@@ -13,6 +14,7 @@ export interface CardRow extends Row {
   id: string;
   barcode_value: string;
   status: CardStatus;
+  kind: CardKind;
   member_id: string | null;
   notes: string | null;
   assigned_at: string | null;
@@ -26,6 +28,7 @@ export interface PublicCard {
   id: string;
   barcodeValue: string;
   status: CardStatus;
+  kind: CardKind;
   memberId: string | null;
   notes: string | null;
   assignedAt: string | null;
@@ -35,6 +38,7 @@ export interface PublicCard {
 export interface CardWithMember extends PublicCard {
   memberCode: string | null;
   memberName: string | null;
+  memberPhone: string | null;
 }
 
 function normalizeBarcode(raw: string): string {
@@ -52,6 +56,7 @@ function toCard(row: CardRow): PublicCard {
     id: row.id,
     barcodeValue: row.barcode_value,
     status: row.status,
+    kind: row.kind ?? "physical",
     memberId: row.member_id,
     notes: row.notes,
     assignedAt: row.assigned_at,
@@ -67,6 +72,36 @@ export function getCardByBarcode(db: Db, rawBarcode: string): CardRow | null {
 
 export function getCardById(db: Db, cardId: string): CardRow | null {
   return db.first<CardRow>("SELECT * FROM cards WHERE id = ?", [cardId]);
+}
+
+/**
+ * Creates (or returns) the member's virtual card whose barcode equals their
+ * member code. Idempotent: two members never share a virtual card because
+ * member_code is UNIQUE. Runs inside the caller's transaction.
+ */
+export function ensureVirtualCard(
+  db: Db,
+  opts: { memberId: string; memberCode: string; actorId?: string | null; stamp?: string },
+): CardRow {
+  const barcode = assertBarcodeFormat(opts.memberCode);
+  const stamp = opts.stamp ?? nowStamp();
+  const existing = db.first<CardRow>("SELECT * FROM cards WHERE barcode_value = ? LIMIT 1", [barcode]);
+  if (existing) {
+    if (existing.kind !== "virtual" || existing.status !== "assigned" || existing.member_id !== opts.memberId) {
+      db.run(
+        "UPDATE cards SET kind = 'virtual', status = 'assigned', member_id = ?, assigned_at = ?, assigned_by = COALESCE(assigned_by, ?), unassigned_at = NULL, updated_at = ? WHERE id = ?",
+        [opts.memberId, stamp, opts.actorId ?? null, stamp, existing.id],
+      );
+      return getCardById(db, existing.id)!;
+    }
+    return existing;
+  }
+  const id = crypto.randomUUID();
+  db.run(
+    "INSERT INTO cards (id, barcode_value, status, kind, member_id, notes, assigned_at, assigned_by, created_at, updated_at)\nVALUES (?, ?, 'assigned', 'virtual', ?, ?, ?, ?, ?, ?)",
+    [id, barcode, opts.memberId, "Virtual card (member code)", stamp, opts.actorId ?? null, stamp, stamp],
+  );
+  return getCardById(db, id)!;
 }
 
 export function nextBarcodePreview(db: Db): string {
@@ -220,6 +255,7 @@ export async function setCardBlocked(
 
 export interface CardListQuery {
   status?: CardStatus | "all";
+  kind?: CardKind | "all";
   search?: string;
   page?: number;
   pageSize?: number;
@@ -228,6 +264,7 @@ export interface CardListQuery {
 interface CardJoinRow extends CardRow {
   member_code: string | null;
   full_name: string | null;
+  phone: string | null;
 }
 
 export function listCards(
@@ -245,6 +282,10 @@ export function listCards(
     conditions.push("c.status = ?");
     params.push(query.status);
   }
+  if (query.kind && query.kind !== "all") {
+    conditions.push("c.kind = ?");
+    params.push(query.kind);
+  }
   const search = query.search?.trim();
   if (search) {
     conditions.push("(c.barcode_value LIKE ? OR m.full_name LIKE ? OR m.member_code LIKE ?)");
@@ -255,7 +296,7 @@ export function listCards(
   const where = conditions.length > 0 ? `WHERE ${conditions.join(" AND ")}` : "";
   const total = db.count(`SELECT COUNT(*) FROM cards c LEFT JOIN members m ON m.id = c.member_id ${where}`, params);
   const rows = db.all<CardJoinRow>(
-    `SELECT c.*, m.member_code AS member_code, m.full_name AS full_name\nFROM cards c LEFT JOIN members m ON m.id = c.member_id\n${where} ORDER BY c.created_at DESC LIMIT ? OFFSET ?`,
+    `SELECT c.*, m.member_code AS member_code, m.full_name AS full_name, m.phone AS phone\nFROM cards c LEFT JOIN members m ON m.id = c.member_id\n${where} ORDER BY c.created_at DESC LIMIT ? OFFSET ?`,
     [...params, pageSize, (page - 1) * pageSize],
   );
 
@@ -264,6 +305,7 @@ export function listCards(
       ...toCard(row),
       memberCode: row.member_code,
       memberName: row.full_name,
+      memberPhone: row.phone,
     })),
     total,
   };
@@ -273,10 +315,10 @@ export function listMemberCards(db: Db, actor: ServiceActor, memberId: string): 
   requirePermission(actor, "cards.view");
   return db
     .all<CardJoinRow>(
-      "SELECT c.*, m.member_code AS member_code, m.full_name AS full_name\nFROM cards c LEFT JOIN members m ON m.id = c.member_id\nWHERE c.member_id = ? ORDER BY c.assigned_at DESC",
+      "SELECT c.*, m.member_code AS member_code, m.full_name AS full_name, m.phone AS phone\nFROM cards c LEFT JOIN members m ON m.id = c.member_id\nWHERE c.member_id = ? ORDER BY c.assigned_at DESC",
       [memberId],
     )
-    .map((row) => ({ ...toCard(row), memberCode: row.member_code, memberName: row.full_name }));
+    .map((row) => ({ ...toCard(row), memberCode: row.member_code, memberName: row.full_name, memberPhone: row.phone }));
 }
 
 export interface BulkRegisterResult {

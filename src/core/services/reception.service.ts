@@ -8,7 +8,7 @@ import {
   type CheckInDenialReason,
   type CheckInResult,
 } from "./attendance.service";
-import { assignCardByBarcode, getCardByBarcode, type CardRow, type CardStatus } from "./cards.service";
+import { ensureVirtualCard, getCardByBarcode, type CardRow, type CardStatus } from "./cards.service";
 import {
   getMemberRowById,
   searchMembersForPicker,
@@ -336,11 +336,16 @@ export async function checkIn(
     }
   }
 
-  // No card — auto-register + assign one keyed by member code so the desk can
-  // check the member in immediately; the member code satisfies the barcode
-  // format and stays unique per member.
+  // No card — auto-create the member's virtual card keyed by member code so
+  // the desk can check the member in immediately; the member code satisfies the
+  // barcode format and stays unique per member (a code-numbered card can never
+  // be shared by two members).
   const autoBarcode = member.member_code;
-  await assignCardByBarcode(db, actor, { barcodeValue: autoBarcode, memberId: member.id });
+  ensureVirtualCard(db, {
+    memberId: member.id,
+    memberCode: autoBarcode,
+    actorId: actor.userId,
+  });
   return recordCheckIn(db, actor, {
     barcode: autoBarcode,
     deviceIdentifier: input.deviceIdentifier,

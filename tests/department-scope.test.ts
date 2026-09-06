@@ -15,7 +15,8 @@ import { listAssessments } from "@/core/services/inbody.service";
 import { bookMember } from "@/core/services/classes.service";
 import { createTrainingPlan, endTrainingPlan } from "@/core/services/training-plans.service";
 import { createTrainer } from "@/core/services/trainers.service";
-import { queueMessage } from "@/core/services/crm.service";
+import { queueCardDelivery } from "@/core/services/card-delivery.service";
+import { listMemberCards } from "@/core/services/cards.service";
 import type { Db } from "@/db/engine";
 import type { ServiceActor } from "@/core/permissions";
 import { createTestDb } from "./helpers/test-db";
@@ -118,7 +119,7 @@ describe("department scoping beyond members service (audit F-04 / ADR-004)", () 
     ).resolves.toBeTruthy();
   });
 
-  it("guards classes bookings, training plans and CRM per section", async () => {
+  it("guards classes bookings, training plans and card delivery per section", async () => {
     const women = await member("عضوة حصص", "women");
     const men = await member("عضو حصص", "men");
     const trainer = await createTrainer(db, owner, {
@@ -148,9 +149,14 @@ describe("department scoping beyond members service (audit F-04 / ADR-004)", () 
       expect.objectContaining({ code: "FORBIDDEN" }),
     );
 
+    const womenCards = listMemberCards(db, owner, women.id);
+    if (womenCards.length === 0) throw new Error("expected a virtual card");
     await expect(
-      queueMessage(db, menReception, { memberId: women.id, customBody: "رسالة تجربة" }),
+      queueCardDelivery(db, menReception, { cardId: womenCards[0].id }),
     ).rejects.toMatchObject({ code: "FORBIDDEN" });
+    await expect(
+      queueCardDelivery(db, owner, { cardId: womenCards[0].id }),
+    ).resolves.toBeTruthy();
   });
 
   it("honors an explicit members.view_all_departments grant as a bypass", async () => {

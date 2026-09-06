@@ -8,7 +8,6 @@ import {
   ChevronLeft,
   CreditCard,
   Hourglass,
-  MessagesSquare,
   PackageCheck,
   ReceiptText,
   ScanLine,
@@ -589,16 +588,6 @@ function AlertStrip({ overview }: { overview: DashboardOverview | null }) {
       label: t("dashboard.alertLowStock"),
       value: formatNumber(store.lowStock),
       link: "/store",
-      show: true,
-    });
-  }
-  if (overview.pendingCrmMessages > 0 && hasPermission("crm.send")) {
-    items.push({
-      icon: MessagesSquare,
-      accent: "cyan",
-      label: t("dashboard.alertCrmPending"),
-      value: formatNumber(overview.pendingCrmMessages),
-      link: "/crm",
       show: true,
     });
   }

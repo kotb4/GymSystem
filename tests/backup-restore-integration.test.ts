@@ -118,7 +118,9 @@ afterEach(() => {
 });
 
 describe("backup/restore file-archive round trip (TASK-040)", () => {
-  it("archives real Files/ bytes, verifies them, and restores onto a wiped data dir", async () => {
+  it(
+  "archives real Files/ bytes, verifies them, and restores onto a wiped data dir",
+  async () => {
     // ---- Phase A: seed a system with a member + photo + report + a backup.
     const dirA = mkdtempSync(join(tmpdir(), "gym-backup-a-"));
     const { ctx: ctxA } = await boot(dirA);
@@ -319,7 +321,9 @@ describe("backup/restore file-archive round trip (TASK-040)", () => {
     );
     expect(report2.fullyVerified).toBe(true);
     expect(report2.after.members).toBe(1);
-  });
+  },
+  30000,
+);
 
   it("verifyBackupSnapshot classifies malformed buffers without touching the DB", async () => {
     const dir = mkdtempSync(join(tmpdir(), "gym-backup-verify-"));

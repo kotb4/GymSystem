@@ -6,10 +6,11 @@ import { formatDateShort, formatTime } from "@/services/format";
 import { formatMinor } from "@/core/money";
 import { Card, CardHeader } from "@/components/ui/card";
 import { EmptyState } from "@/components/ui/empty-state";
-import { ScanLine, MessageCircle, Scale, Dumbbell, Activity as ActivityIcon } from "lucide-react";
+import { ScanLine, QrCode, Scale, Dumbbell, Activity as ActivityIcon } from "lucide-react";
 import { subStatusMeta } from "@/utils/status-meta";
 import { Badge } from "@/components/ui/badge";
 import type { TabProps } from "../types";
+import type { PublicCardDelivery } from "@/core/services/card-delivery.service";
 import { permissionDeniedNode } from "../helpers";
 
 interface OverviewItem {
@@ -58,7 +59,7 @@ export function OverviewTab({ ctx }: TabProps) {
         <RecentInbodyCard memberId={ctx.member.id} reloadTick={ctx.reloadTick} />
       </div>
       <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
-        <RecentCommsCard memberId={ctx.member.id} reloadTick={ctx.reloadTick} />
+        <RecentDeliveriesCard memberId={ctx.member.id} reloadTick={ctx.reloadTick} />
         <RecentTrainingCard memberId={ctx.member.id} reloadTick={ctx.reloadTick} />
         <RecentPaymentCard memberId={ctx.member.id} reloadTick={ctx.reloadTick} />
       </div>
@@ -153,38 +154,36 @@ function RecentInbodyCard({ memberId, reloadTick }: { memberId: string; reloadTi
   );
 }
 
-function RecentCommsCard({ memberId, reloadTick }: { memberId: string; reloadTick: number }) {
+function RecentDeliveriesCard({ memberId, reloadTick }: { memberId: string; reloadTick: number }) {
   const t = useT();
   const { hasPermission } = useAuth();
-  const [items, setItems] = useState<Array<{ id: string; createdAt: string; templateCode: string; status: string }>>([]);
+  const [items, setItems] = useState<PublicCardDelivery[]>([]);
   useEffect(() => {
-    if (!hasPermission("crm.send")) return;
+    if (!hasPermission("cards.send")) return;
     let alive = true;
-    api.crm
-      .listMessages({ memberId, limit: 3 } as never)
+    api.cards
+      .listDeliveries({ memberId, limit: 3 })
       .then((rows) => {
-        if (!alive) return;
-        const typed = rows as Array<{ id: string; createdAt: string; templateCode: string; status: string }>;
-        setItems(typed);
+        if (alive) setItems(rows);
       })
       .catch(() => undefined);
     return () => {
       alive = false;
     };
   }, [hasPermission, memberId, reloadTick]);
-  if (!hasPermission("crm.send")) return null;
+  if (!hasPermission("cards.send")) return null;
   return (
     <Card>
-      <CardHeader title={t("members.tabComms")} />
+      <CardHeader title={t("cards.deliveryTitle")} />
       <div className="px-5 pb-4 text-sm">
         {items.length === 0 ? (
-          <EmptyState icon={<MessageCircle />} title={t("members.commsEmpty")} />
+          <EmptyState icon={<QrCode />} title={t("cards.deliveryEmpty")} />
         ) : (
           <ul className="space-y-1.5">
             {items.map((i) => (
               <li key={i.id} className="flex justify-between">
-                <span className="font-semibold">{i.templateCode}</span>
-                <span dir="ltr" className="tabnum text-faint">{formatDateShort(new Date(i.createdAt))}</span>
+                <span dir="ltr" className="tabnum text-subtle">{i.barcodeValue}</span>
+                <span className="font-semibold">{t(`cards.deliveryStatus.${i.status}` as never)}</span>
               </li>
             ))}
           </ul>

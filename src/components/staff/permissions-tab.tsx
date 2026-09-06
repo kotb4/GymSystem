@@ -17,7 +17,7 @@ type PermMap = Record<RoleId, Permission[]>;
 
 const PERM_GROUPS = [
   { label: "الأعضاء", perms: ["members.view","members.create","members.edit","members.delete","members.restore","members.purge","members.change_status","members.view_all_departments"] as Permission[] },
-  { label: "الكروت", perms: ["cards.view","cards.register","cards.assign","cards.unassign","cards.report_lost","cards.block"] as Permission[] },
+  { label: "الكروت", perms: ["cards.view","cards.register","cards.assign","cards.unassign","cards.report_lost","cards.block","cards.send"] as Permission[] },
   { label: "الباقات", perms: ["plans.view","plans.create","plans.edit"] as Permission[] },
   { label: "الاشتراكات", perms: ["subscriptions.view","subscriptions.create","subscriptions.edit","subscriptions.cancel","subscriptions.freeze","subscriptions.purge"] as Permission[] },
   { label: "الحضور والانصراف", perms: ["checkin.create","checkin.view_history","checkin.checkout","checkin.delete"] as Permission[] },
@@ -30,7 +30,6 @@ const PERM_GROUPS = [
   { label: "الحصص", perms: ["classes.view","classes.manage","classes.checkin"] as Permission[] },
   { label: "المدربون", perms: ["trainers.view","trainers.manage","training.manage"] as Permission[] },
   { label: "الموظفون والرواتب", perms: ["employees.view","employees.manage","employees.purge","salaries.view","salaries.manage"] as Permission[] },
-  { label: "الرسائل", perms: ["crm.send","crm.templates"] as Permission[] },
   { label: "النسخ الاحتياطي والصيانة", perms: ["backup.create","backup.restore","diagnostics.view"] as Permission[] },
   { label: "النظام", perms: ["users.view","users.manage","audit.view","settings.view","settings.edit"] as Permission[] },
 ];

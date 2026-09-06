@@ -15,3 +15,5 @@ license.lic
 license-cli/license.lic
 license-cli/issued/
 *.pem
+whatsapp-gateway/node_modules
+whatsapp-gateway/package-lock.json

@@ -99,7 +99,7 @@ foreach ($pair in @(@($mMen.id,"GYM-A-1001"),@($mWomen.id,"GYM-A-1002"),@($mGen.
   $cards += $pair[1]
 }
 $cardList = Rpc "cards" "listCards" @(@{}) $sess
-Check "4 cards registered+assigned" ($cardList.total -eq 4 -and @($cardList.items | Where-Object { $_.status -eq "assigned" }).Count -eq 4)
+Check "8 cards total (4 printed assigned + 4 member virtual)" ($cardList.total -eq 8 -and @($cardList.items | Where-Object { $_.status -eq "assigned" }).Count -eq 8)
 # duplicate barcode must be rejected
 $dup = RpcRaw "cards" "registerCard" @(@{ barcodeValue="GYM-A-1001"; notes=$null }) $sess
 Check "duplicate barcode rejected" (-not $dup.ok)
@@ -301,16 +301,18 @@ $renewedList = Rpc "subscriptions" "listMemberSubscriptions" @($mMen.id) $sess
 $renewedSub = $renewedList | Where-Object { $_.id -eq $renewRes.next.id }
 Check "renewed sub has future end date" ($null -ne $renewedSub -and $renewedSub.endDate -gt $today)
 
-# ---------- 15) CRM generate + send (mock) ----------
-$crmGen = Rpc "crm" "generateDueMessages" @() $sess
-Check "CRM generateDue ran" ($null -ne $crmGen)
-$pendingBefore = Rpc "crm" "listMessages" @(@{ status="pending"; limit=50 }) $sess
-Check "CRM messages queued (>=0)" ($null -ne $pendingBefore)
-
-$crmSend = Rpc "crm" "sendPendingMessages" @(50) $sess
-Check "CRM sendPending ran" ($null -ne $crmSend)
-$allMsgs = Rpc "crm" "listMessages" @(@{ status="all"; limit=50 }) $sess
-Check "CRM message history available" ($null -ne $allMsgs -and @($allMsgs).Count -ge 0)
+# ---------- 15) Card delivery: virtual card + mock whatsapp send ----------
+$vcards = Rpc "cards" "listMemberCards" @($mMen.id) $sess
+$vcFirst = if ($vcards) { @($vcards)[0] } else { $null }
+Check "member has a virtual card" ($null -ne $vcFirst -and $vcFirst.kind -eq "virtual" -and $vcFirst.barcodeValue -eq $mMen.memberCode)
+$queued = Rpc "cards" "queueCardDelivery" @(@{ cardId = $vcFirst.id }) $sess
+Check "delivery queued" ($null -ne $queued -and $queued.status -eq "pending")
+$pendingN = Rpc "cards" "countPendingCardDeliveries" @() $sess
+Check "pending deliveries counted" ($null -ne $pendingN -and $pendingN -ge 1)
+$flush = Rpc "cards" "sendPendingCardDeliveries" @(50) $sess
+Check "mock send flushed pending" ($null -ne $flush -and $flush.sent -ge 1)
+$hist = Rpc "cards" "listCardDeliveries" @(@{ limit = 50 }) $sess
+Check "delivery history available" ($null -ne $hist -and @($hist).Count -ge 1)
 
 # ---------- 16) backup -> mutate -> restart persistence -> restore ----------
 

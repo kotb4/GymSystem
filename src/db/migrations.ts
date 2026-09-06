@@ -809,6 +809,79 @@ CREATE INDEX IF NOT EXISTS idx_backups_created ON backups_log(created_at);`,
         );
       },
     },
+    {
+      // ---- v33: virtual cards + card deliveries (TASK-044) ----
+      // Additive only. Every member gets ONE auto-created "virtual" card whose
+      // barcode is their member code (`MEM-xxxxxx`), so the same member code
+      // flow doubles as a QR-sendable card. Existing cards whose barcode already
+      // equals a member code (the legacy member-code path) are re-marked
+      // `kind='virtual'`. `card_deliveries` logs each per-card send attempt with
+      // a UNIQUE dedupe key so a card can never be WhatsApp-sent twice.
+      // A new `cards.send` permission gates everything (owner + manager grants).
+      version: 33,
+      statements: [],
+      callback: (db: Db) => {
+        const hasCol = (table: string, col: string) =>
+          Number(db.scalar("SELECT COUNT(*) FROM pragma_table_info(?) WHERE name = ?", [table, col])) === 1;
+        if (!hasCol("cards", "kind"))
+          db.run(
+            "ALTER TABLE cards ADD COLUMN kind TEXT NOT NULL DEFAULT 'physical' CHECK (kind IN ('physical', 'virtual'))",
+          );
+        const hasTable = (name: string) =>
+          Number(db.scalar("SELECT COUNT(*) FROM sqlite_master WHERE type = 'table' AND name = ?", [name])) === 1;
+        if (!hasTable("card_deliveries")) {
+          db.exec(
+            "CREATE TABLE card_deliveries (\n" +
+              "  id TEXT PRIMARY KEY,\n" +
+              "  member_id TEXT NOT NULL REFERENCES members(id),\n" +
+              "  card_id TEXT NOT NULL REFERENCES cards(id),\n" +
+              "  barcode_value TEXT NOT NULL,\n" +
+              "  member_name TEXT,\n" +
+              "  phone TEXT,\n" +
+              "  status TEXT NOT NULL DEFAULT 'pending' CHECK (status IN ('pending', 'sent', 'failed', 'skipped_no_phone', 'not_configured')),\n" +
+              "  error TEXT,\n" +
+              "  image_hash TEXT,\n" +
+              "  dedupe_key TEXT NOT NULL UNIQUE,\n" +
+              "  sent_at TEXT,\n" +
+              "  created_by TEXT REFERENCES users(id),\n" +
+              "  created_at TEXT NOT NULL\n" +
+              ")",
+          );
+          db.run("CREATE INDEX IF NOT EXISTS idx_card_deliveries_status ON card_deliveries(status)");
+          db.run("CREATE INDEX IF NOT EXISTS idx_card_deliveries_member ON card_deliveries(member_id)");
+        }
+        // Backfill: one virtual card per existing member whose member_code is
+        // not already used as a card barcode; re-mark matching cards as virtual.
+        const members = db.all<{ id: string; member_code: string }>(
+          "SELECT id, member_code FROM members WHERE deleted_at IS NULL",
+        );
+        const memberCodes = new Set(members.map((m) => m.member_code));
+        for (const { id, member_code } of members) {
+          const existing = db.first<{ id: string; kind: string }>(
+            "SELECT id, kind FROM cards WHERE barcode_value = ? LIMIT 1",
+            [member_code],
+          );
+          if (existing) {
+            if (existing.kind !== "virtual")
+              db.run("UPDATE cards SET kind = 'virtual', updated_at = ? WHERE id = ?", [nowStamp(), existing.id]);
+            continue;
+          }
+          db.run(
+            "INSERT INTO cards (id, barcode_value, status, member_id, kind, notes, assigned_at, created_at, updated_at) VALUES (?, ?, 'assigned', ?, 'virtual', ?, ?, ?, ?)",
+            [crypto.randomUUID(), member_code, id, "Virtual card (member code)", nowStamp(), nowStamp(), nowStamp()],
+          );
+        }
+        void memberCodes;
+        // cards.send permission + grants (owner is implicit in ROLE_GRANTS).
+        db.run("INSERT OR IGNORE INTO permissions (code) VALUES ('cards.send')");
+        db.run("INSERT OR IGNORE INTO role_permissions (role_id, permission_code) VALUES ('manager', 'cards.send')");
+        db.run("INSERT OR IGNORE INTO role_permissions (role_id, permission_code) VALUES ('reception', 'cards.send')");
+        // TASK-044 cleanup: bulk-messaging is removed; drop its now-dead grants
+        // (the crm_* TABLES stay for historical data, non-destructive).
+        db.run("DELETE FROM role_permissions WHERE permission_code IN ('crm.send', 'crm.templates')");
+        db.run("DELETE FROM permissions WHERE code IN ('crm.send', 'crm.templates')");
+      },
+    },
   ];
 }
 

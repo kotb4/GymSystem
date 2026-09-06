@@ -6,6 +6,7 @@ import {
   Layers,
   Link2,
   PlusCircle,
+  Send,
   ShieldBan,
   ShieldCheck,
   Undo2,
@@ -32,8 +33,10 @@ import { Modal } from "@/components/ui/modal";
 import { Input } from "@/components/ui/input";
 import { BarcodeField } from "@/components/ui/barcode-field";
 import { AssignCardModal } from "@/components/cards/assign-card-modal";
+import { CardQrDeliveryModal } from "@/components/cards/card-qr-delivery-modal";
 
 const STATUS_OPTIONS: Array<CardStatus | "all"> = ["all", "assigned", "available", "lost", "blocked"];
+const KIND_OPTIONS = ["all", "virtual", "physical"] as const;
 
 type ConfirmKind = "unassign" | "lost" | null;
 
@@ -47,6 +50,7 @@ export function CardsPage() {
   const [search, setSearch] = useState("");
   const [debounced, setDebounced] = useState("");
   const [status, setStatus] = useState<string>("all");
+  const [kind, setKind] = useState<string>("all");
   const [page, setPage] = useState(1);
   const [data, setData] = useState<{ items: CardWithMember[]; total: number }>({ items: [], total: 0 });
   const [registerOpen, setRegisterOpen] = useState(false);
@@ -62,6 +66,9 @@ export function CardsPage() {
   const [target, setTarget] = useState<CardWithMember | null>(null);
   const [busy, setBusy] = useState(false);
   const [reloadTick, setReloadTick] = useState(0);
+  const [pendingCount, setPendingCount] = useState(0);
+  const [sendingPending, setSendingPending] = useState(false);
+  const [qrCard, setQrCard] = useState<CardWithMember | null>(null);
   const reload = () => setReloadTick((v) => v + 1);
 
   useEffect(() => {
@@ -86,6 +93,7 @@ export function CardsPage() {
         .list({
           search: debounced || undefined,
           status: status as CardStatus | "all",
+          kind: kind as CardWithMember["kind"] | "all",
           page,
           pageSize: appConfig.pageSize,
         })
@@ -94,7 +102,21 @@ export function CardsPage() {
     } catch (err) {
       console.error(err);
     }
-  }, [actor, debounced, status, page, reloadTick]);
+  }, [actor, debounced, status, kind, page, reloadTick]);
+
+  useEffect(() => {
+    if (!actor || !hasPermission("cards.send")) return;
+    let alive = true;
+    void api.cards
+      .countPendingDeliveries()
+      .then((n) => {
+        if (alive) setPendingCount(n);
+      })
+      .catch(() => undefined);
+    return () => {
+      alive = false;
+    };
+  }, [actor, hasPermission, reloadTick]);
 
   const openRegister = () => {
     setError(null);
@@ -154,10 +176,28 @@ export function CardsPage() {
     }
   };
 
+  const sendPending = async () => {
+    if (!actor) return;
+    setSendingPending(true);
+    try {
+      const result = await api.cards.sendPendingDeliveries(50);
+      toast(
+        result.sent > 0 ? "success" : result.failed > 0 ? "warning" : "info",
+        t("cards.sendPendingDone", { sent: result.sent, failed: result.failed, noPhone: result.skippedNoPhone, notConfigured: result.notConfigured }),
+      );
+      reload();
+    } catch (err) {
+      toast("error", describeError(err, t));
+    } finally {
+      setSendingPending(false);
+    }
+  };
+
   interface Row {
     id: string;
     barcodeValue: string;
     status: CardStatus;
+    kind: CardWithMember["kind"];
     memberId: string | null;
     memberName: string | null;
     assignedAtKey: string | null;
@@ -167,6 +207,7 @@ export function CardsPage() {
     id: c.id,
     barcodeValue: c.barcodeValue,
     status: c.status,
+    kind: c.kind,
     memberId: c.memberId,
     memberName: c.memberName,
     assignedAtKey: c.assignedAt?.slice(0, 10) ?? null,
@@ -177,9 +218,14 @@ export function CardsPage() {
       key: "barcode",
       header: t("cards.barcode"),
       render: (row) => (
-        <span dir="ltr" className="font-mono font-bold tracking-wider">
-          {row.barcodeValue}
-        </span>
+        <div className="flex items-center gap-2">
+          <span dir="ltr" className="font-mono font-bold tracking-wider">
+            {row.barcodeValue}
+          </span>
+          <Badge variant={row.kind === "virtual" ? "info" : "neutral"}>
+            {row.kind === "virtual" ? t("cards.kindVirtual") : t("cards.kindPhysical")}
+          </Badge>
+        </div>
       ),
     },
     {
@@ -251,6 +297,11 @@ export function CardsPage() {
                 {original.status === "blocked" ? <ShieldCheck className="size-4" /> : <ShieldBan className="size-4" />}
               </IconAction>
             )}
+            {hasPermission("cards.send") && original.status === "assigned" && original.memberId && (
+              <IconAction label={t("cards.sendQr")} onClick={() => setQrCard(original)}>
+                <Send className="size-4" />
+              </IconAction>
+            )}
           </div>
         );
       },
@@ -264,6 +315,12 @@ export function CardsPage() {
           title={t("nav.cards")}
           action={
             <div className="flex items-center gap-2">
+              {hasPermission("cards.send") && pendingCount > 0 && (
+                <Button variant="secondary" onClick={() => void sendPending()} loading={sendingPending} disabled={sendingPending}>
+                  <Send className="size-4" />
+                  {t("cards.sendPending", { count: formatNumber(pendingCount) })}
+                </Button>
+              )}
               {hasPermission("cards.register") && (
                 <>
                   <Button variant="secondary" onClick={() => { setBulkResult(null); setBulkText(""); setBulkOpen(true); }}>
@@ -299,6 +356,19 @@ export function CardsPage() {
               options={STATUS_OPTIONS.map((s) => ({
                 value: s,
                 label: s === "all" ? t("common.all") : t(`cards.status${s.charAt(0).toUpperCase()}${s.slice(1)}`),
+              }))}
+            />
+          </div>
+          <div className="sm:w-40">
+            <Select
+              value={kind}
+              onChange={(e) => {
+                setKind(e.target.value);
+                setPage(1);
+              }}
+              options={KIND_OPTIONS.map((k) => ({
+                value: k,
+                label: k === "all" ? t("cards.kindFilterAll") : k === "virtual" ? t("cards.kindFilterVirtual") : t("cards.kindFilterPhysical"),
               }))}
             />
           </div>
@@ -356,6 +426,17 @@ export function CardsPage() {
       </Modal>
 
       <AssignCardModal open={assignOpen} onClose={() => setAssignOpen(false)} onDone={reload} />
+
+      {qrCard && (
+        <CardQrDeliveryModal
+          open
+          memberName={qrCard.memberName ?? ""}
+          memberPhone={qrCard.memberPhone ?? null}
+          barcodeValue={qrCard.barcodeValue}
+          cardId={qrCard.id}
+          onClose={() => setQrCard(null)}
+        />
+      )}
 
       <Modal
         open={bulkOpen}

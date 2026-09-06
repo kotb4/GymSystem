@@ -23,7 +23,6 @@ import { PaymentsTab } from "./tabs/payments-tab";
 import { AttendanceTab } from "./tabs/attendance-tab";
 import { PtClassesTab } from "./tabs/pt-classes-tab";
 import { InbodyTab } from "./tabs/inbody-tab";
-import { CommsTab } from "./tabs/comms-tab";
 import { NotesTab } from "./tabs/notes-tab";
 import { ActivityTab } from "./tabs/activity-tab";
 import { ReferralsTab } from "./tabs/referrals-tab";
@@ -48,7 +47,6 @@ const ALL_TABS: TabDef[] = [
   { key: "attendance", labelKey: "members.tabAttendance", perm: "checkin.view_history" },
   { key: "pt-classes", labelKey: "members.tabPtClasses", anyPerm: ["members.view", "classes.view"] },
   { key: "inbody", labelKey: "members.tabInbody", perm: "assessments.view" },
-  { key: "comms", labelKey: "members.tabComms", perm: "crm.send" },
   { key: "notes", labelKey: "members.tabNotes", perm: "members.edit" },
   { key: "activity", labelKey: "members.tabActivity", perm: "audit.view" },
   { key: "referrals", labelKey: "referral.tabReferrals", perm: "referrals.view" },
@@ -194,7 +192,6 @@ export function MemberProfilePage() {
       {tab === "attendance" && <AttendanceTab ctx={ctx} />}
       {tab === "pt-classes" && <PtClassesTab ctx={ctx} />}
       {tab === "inbody" && <InbodyTab ctx={ctx} />}
-      {tab === "comms" && <CommsTab ctx={ctx} />}
       {tab === "notes" && <NotesTab ctx={ctx} />}
       {tab === "activity" && <ActivityTab ctx={ctx} />}
       {tab === "referrals" && <ReferralsTab ctx={ctx} />}

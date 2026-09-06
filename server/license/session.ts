@@ -449,8 +449,6 @@ const READONLY_ALLOWLIST: ReadonlySet<string> = new Set([
   "inbody.getProgress",
   "inbody.listFitnessTestDefs",
   "inbody.listFitnessResults",
-  "crm.listTemplates",
-  "crm.listMessages",
   "audit.listAuditLogs",
   "users.listUsers",
   "backup.listBackupEntries",

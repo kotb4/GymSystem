@@ -192,11 +192,18 @@ describe("reception check-in", () => {
     expect(result.kind).toBe("success");
   });
 
-  it("auto-creates and assigns a card for a member without one", async () => {
+  it("auto-creates a virtual card (member code) for every new member", async () => {
     const { member } = await activeMemberWithSub("بلا كارت");
-    const before = db.count("SELECT COUNT(*) FROM cards WHERE member_id = ?", [member.id]);
-    expect(before).toBe(0);
+    const cardsBefore = db.all<{ id: string; barcode_value: string; kind: string; status: string }>(
+      "SELECT id, barcode_value, kind, status FROM cards WHERE member_id = ?",
+      [member.id],
+    );
+    expect(cardsBefore).toHaveLength(1);
+    expect(cardsBefore[0].barcode_value).toBe(member.memberCode);
+    expect(cardsBefore[0].kind).toBe("virtual");
+    expect(cardsBefore[0].status).toBe("assigned");
 
+    // Check-in by member id does not duplicate the virtual card.
     const result = await reception.checkIn(db, reception_actor, { memberId: member.id });
     expect(result.kind).toBe("success");
 

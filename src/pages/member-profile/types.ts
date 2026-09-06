@@ -8,7 +8,6 @@ export type TabKey =
   | "attendance"
   | "pt-classes"
   | "inbody"
-  | "comms"
   | "notes"
   | "activity"
   | "referrals"

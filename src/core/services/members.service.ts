@@ -7,6 +7,7 @@ import {
   assertDepartmentAccess,
   departmentScopeCondition,
 } from "./department";
+import { ensureVirtualCard } from "./cards.service";
 
 const MEMBER_STATUSES = ["active", "inactive", "suspended", "archived"] as const;
 export type MemberStatus = (typeof MEMBER_STATUSES)[number];
@@ -292,6 +293,11 @@ export async function createMember(
     recordAudit(db, actor, "MEMBER_CREATED", "member", id, {
       memberCode,
       name: values.fullName,
+    });
+    ensureVirtualCard(db, {
+      memberId: id,
+      memberCode,
+      actorId: actor.userId,
     });
   });
 

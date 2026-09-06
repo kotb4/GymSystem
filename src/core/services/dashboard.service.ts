@@ -430,7 +430,6 @@ export interface DashboardOverview {
   members: DashboardMembersSection | null;
   store: DashboardStoreSection | null;
   operations: DashboardOperationsSection | null;
-  pendingCrmMessages: number;
   expiredTrials: number;
 }
 
@@ -525,10 +524,6 @@ export function getDashboardOverview(
     };
   }
 
-  const pendingCrmMessages = roleHasPermission(actor.roleId, "crm.send")
-    ? db.count("SELECT COUNT(*) FROM crm_messages WHERE status = 'pending'")
-    : 0;
-
   const expiredTrials = roleHasPermission(actor.roleId, "trials.view")
     ? db.count(
         `SELECT COUNT(*) FROM trials WHERE status = 'active' AND end_date < '${todayKey()}'`,
@@ -544,7 +539,6 @@ export function getDashboardOverview(
     members,
     store,
     operations,
-    pendingCrmMessages,
     expiredTrials,
   };
 }

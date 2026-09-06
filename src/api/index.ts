@@ -28,6 +28,10 @@ import type {
 } from "@/core/services/packages.service";
 import type { BulkRegisterResult, CardStatus, CardWithMember } from "@/core/services/cards.service";
 import type {
+  CardDeliveryStatus,
+  PublicCardDelivery,
+} from "@/core/services/card-delivery.service";
+import type {
   ReferralRow,
   ReferralStats,
   ReferralRewardRow,
@@ -174,10 +178,18 @@ const cardsApi = {
   reportLost: (cardId: string) => rpc<unknown>("cards", "reportCardLost", [cardId]),
   setBlocked: (cardId: string, blocked: boolean) =>
     rpc<unknown>("cards", "setCardBlocked", [cardId, blocked]),
-  list: (query: { page?: number; pageSize?: number; status?: CardStatus | "all"; search?: string } = {}) =>
+  list: (query: { page?: number; pageSize?: number; status?: CardStatus | "all"; kind?: "physical" | "virtual" | "all"; search?: string } = {}) =>
     rpc<{ items: CardWithMember[]; total: number }>("cards", "listCards", [query]),
-  listForMember: (memberId: string) => rpc<unknown[]>("cards", "listMemberCards", [memberId]),
+  listForMember: (memberId: string) => rpc<CardWithMember[]>("cards", "listMemberCards", [memberId]),
   bulkRegister: (barcodes: string[]) => rpc<BulkRegisterResult>("cards", "registerCardsBulk", [barcodes]),
+  qrUrl: (barcode: string) => `/api/cards/qr/${encodeURIComponent(barcode)}`,
+  queueDelivery: (cardId: string) =>
+    rpc<PublicCardDelivery>("cards", "queueCardDelivery", [{ cardId }]),
+  sendPendingDeliveries: (limit?: number) => rpc<{ sent: number; failed: number; skippedNoPhone: number; notConfigured: number }>("cards", "sendPendingCardDeliveries", [limit ?? 20]),
+  listDeliveries: (query?: { memberId?: string; status?: CardDeliveryStatus | "all"; limit?: number }) =>
+    rpc<PublicCardDelivery[]>("cards", "listCardDeliveries", [query ?? {}]),
+  countPendingDeliveries: () =>
+    rpc<number>("cards", "countPendingCardDeliveries", []),
 };
 
 const attendanceApi = {
@@ -906,48 +918,6 @@ const inbodyApi = {
     rpc<FitnessResultRow[]>("inbody", "listFitnessResults", [query]),
 };
 
-// -------------------------------- CRM ------------------------------------
-
-export type CrmStatus =
-  | "pending"
-  | "sent"
-  | "manual_opened"
-  | "failed"
-  | "skipped_no_provider"
-  | "skipped_no_phone";
-export interface CrmTemplate {
-  code: string;
-  bodyAr: string;
-  isActive: boolean;
-}
-export interface CrmMessageRow {
-  id: string;
-  memberId: string;
-  memberName: string;
-  templateCode: string | null;
-  channel: string;
-  body: string;
-  phone: string | null;
-  status: CrmStatus;
-  error: string | null;
-  createdAt: string;
-  sentAt: string | null;
-}
-
-const crmApi = {
-  listTemplates: (includeInactive = true) => rpc<CrmTemplate[]>("crm", "listTemplates", [includeInactive]),
-  upsertTemplate: (input: { code: string; bodyAr: string; isActive?: boolean }) =>
-    rpc<CrmTemplate>("crm", "upsertTemplate", [input]),
-  queueMessage: (input: { memberId: string; templateCode?: string; customBody?: string; vars?: Record<string, string | number>; dedupeKey?: string }) =>
-    rpc<{ id: string; status: CrmStatus; duplicate: boolean }>("crm", "queueMessage", [input]),
-  sendPending: (limit?: number) =>
-    rpc<{ sent: number; failed: number; skipped: number }>("crm", "sendPendingMessages", [limit ?? 50]),
-  markManuallySent: (messageId: string) => rpc<void>("crm", "markManuallySent", [messageId]),
-  listMessages: (query?: { status?: CrmStatus | "all"; memberId?: string; limit?: number }) =>
-    rpc<CrmMessageRow[]>("crm", "listMessages", [query ?? {}]),
-  generateDue: () => rpc<{ queued: number; duplicates: number; skippedNoPhone: number }>("crm", "generateDueMessages", []),
-};
-
 // ------------------------------ leads --------------------------------------
 
 export type LeadStatus = "new" | "contacted" | "interested" | "trial" | "joined" | "lost";
@@ -1161,7 +1131,6 @@ export const api = {
   employees: employeesApi,
   employeesHr: employeesHrApi,
   inbody: inbodyApi,
-  crm: crmApi,
   lead: leadApi,
   trials: trialApi,
   files: { upload: uploadFile, url: fileUrl },

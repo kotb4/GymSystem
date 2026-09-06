@@ -175,7 +175,7 @@ export function AppRoutes() {
         <Route
           path="crm"
           element={
-            <RequirePermission permissions={["crm.send", "leads.view", "trials.view"]}>
+            <RequirePermission permissions={["leads.view", "trials.view"]}>
               <CrmPage />
             </RequirePermission>
           }

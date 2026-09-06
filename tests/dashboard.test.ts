@@ -5,7 +5,6 @@ import { createPlan } from "@/core/services/plans.service";
 import { createSubscription, renewSubscription } from "@/core/services/subscriptions.service";
 import { recordPayment } from "@/core/services/payments.service";
 import { createProduct } from "@/core/services/store.service";
-import { queueMessage } from "@/core/services/crm.service";
 import { createUser } from "@/core/services/users.service";
 import { createTestDb } from "./helpers/test-db";
 import { todayKey } from "@/core/dates";
@@ -134,16 +133,15 @@ describe("dashboard aggregation — series + permissions", () => {
     expect(recOv.store).not.toBeNull();
   });
 
-  it("gates finance/operations/store/crm behind the actor's permissions", async () => {
+  it("gates finance/operations/store behind the actor's permissions", async () => {
     await seedSubWithPayment(1000, 1000); // revenue row so data exists
     await createProduct(db, owner, { name: "مشروب", costMinor: 500, priceMinor: 1000, stockQty: 0, minStockQty: 5 });
 
     const trainerOv = getDashboardOverview(db, trainer, "today");
-    // trainer only has members.view: no finance, operations, store, or crm
+    // trainer only has members.view: no finance, operations, or store
     expect(trainerOv.finance).toBeNull();
     expect(trainerOv.operations).toBeNull();
     expect(trainerOv.store).toBeNull();
-    expect(trainerOv.pendingCrmMessages).toBe(0);
     // but members + growth are visible and include seed data
     expect(trainerOv.members).not.toBeNull();
     expect(trainerOv.growth).not.toBeNull();
@@ -153,14 +151,6 @@ describe("dashboard aggregation — series + permissions", () => {
     expect(recOv.finance).not.toBeNull();
     expect(recOv.operations).not.toBeNull();
     expect(recOv.store).not.toBeNull();
-  });
-
-  it("counts pending CRM messages for roles with crm.send only", async () => {
-    const member = await newMember("رسائل"); // has phone → status pending
-    await queueMessage(db, owner, { memberId: member.id, customBody: "مرحباً بكم" });
-    expect(getDashboardOverview(db, owner, "today").pendingCrmMessages).toBe(1);
-    expect(getDashboardOverview(db, reception, "today").pendingCrmMessages).toBe(1);
-    expect(getDashboardOverview(db, trainer, "today").pendingCrmMessages).toBe(0);
   });
 
   it("does not leak revenue to a role that cannot view finance", async () => {
