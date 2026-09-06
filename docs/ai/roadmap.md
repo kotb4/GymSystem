@@ -5,7 +5,7 @@
 - Core member management (CRUD, status, trash/restore/purge, photos)
 - Membership plans (time/sessions/open kinds)
 - Subscriptions (create, renew, cancel, freeze/unfreeze, purge)
-- Barcode cards (register, assign, unassign, lost, blocked, bulk register)
+- Barcode cards (register, assign, unassign, lost, blocked, bulk register) + automatic virtual cards (barcode = member code) for every member
 - Check-in/check-out with duplicate window
 - Payments (record, partial, discount, refund, void) + financial ledger
 - Expenses (+filesystem attachments, categories, void)
@@ -16,7 +16,7 @@
 - Trainers & training plans (auto-sweep expired)
 - Employees & salaries (monthly/daily/per_class/custom; pay→expense+ledger)
 - InBody body assessments + custom fitness tests
-- CRM templates/messages (WhatsApp click-to-chat flow)
+- WhatsApp QR card delivery — local `whatsapp-gateway/` (127.0.0.1:8891, Playwright) with batched pending-send UI + i18n; mock transport for tests/audit (`GYM_CRM_MOCK=1`); **pending real-account verification** (needs the gym to install deps + pair once). NOTE: CRM bulk messaging was removed in TASK-044 (leads/trials kept; tables retained).
 - Notifications digest
 - 4-role permission system (owner/manager/reception/trainer, 72 permissions, DB-backed editable grants)
 - Department isolation (men/women/general scoping)
@@ -51,5 +51,5 @@
 - Member card printing — NOT IMPLEMENTED, no code exists
 - Cloud sync — NOT IMPLEMENTED (offline-first by design)
 - Multi-gym support — NOT IMPLEMENTED
-- WhatsApp API integration (beyond click-to-chat) — NOT IMPLEMENTED
+- WhatsApp automation beyond the QR-card delivery gateway (bulk marketing) — NOT IMPLEMENTED (ToS/ban risk)
 - Advanced analytics / AI insights — NOT IMPLEMENTED

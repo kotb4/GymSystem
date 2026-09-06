@@ -35,18 +35,18 @@ One process owns the database. The browser stores no business data.
 
 ## Service layer (`src/core/services/` — backend-only)
 
-27 domain services: auth, users, members, plans, subscriptions, cards, attendance, attendance-analytics, payments, expenses, cash-session, finance, financial-report, dashboard, notifications, trainers, training-plans, classes, employees, store, inbody, crm, settings, backup, audit, staff-activity, permissions.
+27 domain services: auth, users, members, plans, subscriptions, cards, card-delivery, attendance, attendance-analytics, payments, expenses, cash-session, finance, financial-report, dashboard, notifications, trainers, training-plans, classes, employees, store, inbody, settings, backup, audit, staff-activity, permissions. (CRM bulk messaging removed in TASK-044; `crm_templates`/`crm_messages` tables retained unused.)
 
 Shared kernel (`src/core/`): `permissions.ts` (73 perms, 4 roles, DB-grant cache), `errors.ts` (AppError + i18n keys), `dates.ts` (YYYY-MM-DD keys), `money.ts` (minor units), `audit-actions.ts`.
 
 ## Database (`src/db/`)
 
 - `engine.ts`: `Db` class — run/all/first/scalar/count/insert/exec, re-entrant `transaction()` (BEGIN IMMEDIATE), `onDirty` listeners fired after COMMIT.
-- `migrations.ts`: append-only v1..v6 applied at every boot inside transactions; tracked in `schema_migrations`.
+- `migrations.ts`: append-only v1..v33 applied at every boot inside transactions; tracked in `schema_migrations`.
 - `seed.ts`: optional demo data when `GYM_SEED_DEMO=1` (backend env var; the only trigger) and `settings.demo_seeded` unset. Note: the frontend `VITE_SEED_DEMO` in `.env.development` does not reach the Node backend, so it does not seed.
 - Tests use an in-memory/file driver via `tests/helpers/test-db.ts` (`createTestDb()`).
 
-### Schema map (40+ tables, migrations v1..v6)
+### Schema map (40+ tables, migrations v1..v33)
 
 ```
 v1 core     roles, permissions, role_permissions, users, settings,
@@ -61,7 +61,7 @@ v4 growth   plan kinds time|sessions|open (+sessions_total/used, freeze cols),
             product_categories(seed), products, stock_movements, store_sales,
             store_sale_items, store_debts, store_debt_payments, classes, class_sessions,
             class_bookings, employees, salaries, expense_attachments(BLOB≤2MB; dropped v15, backfilled v26 to Files/),
-            dual box on cash_sessions+ledger, crm_templates(seed), crm_messages
+            dual box on cash_sessions+ledger, crm_templates(seed)/crm_messages (retained unused since TASK-044)
 v5 sessions auth_sessions
 v6 files    files(kind registry), members.photo_file_id, employees.salary_type/base,
             allow_negative_stock setting

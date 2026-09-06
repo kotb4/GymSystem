@@ -31,13 +31,13 @@ See AGENTS.md §2. Quick reference: `npm run dev`, `npm run dev:server`, `dev.ba
 
 ## Current Major Features (all verified in code + tests)
 
-Members & trash/purge/photos · Plans & subscriptions (time/sessions/open kinds, freeze history, renew, cancel) · Barcode cards & check-in/out · Payments/refunds/voids + financial ledger · Expenses (+filesystem attachments ≤2 MB) & categories · Dual cash boxes (gym/store) with discrepancy tracking · Financial reports & dashboard · Store/POS (products, stock movements, sales, credit debts, repayments, profit) · Classes (sessions, bookings, capacity, session-consuming plans) · Trainers & training plans · Employees & salaries (4 salary types; pay→expense+ledger) · InBody assessments + custom fitness tests · CRM templates/messages (WhatsApp manual-open flow) · Notifications digest · Backups/restore/legacy IndexedDB import · Settings · Users · Audit log · Permissions editor.
+Members & trash/purge/photos · Plans & subscriptions (time/sessions/open kinds, freeze history, renew, cancel) · Virtual cards (auto per member, barcode = member code) + printed barcode cards & check-in/out · WhatsApp QR card delivery (local gateway, batched send) · Payments/refunds/voids + financial ledger · Expenses (+filesystem attachments ≤2 MB) & categories · Dual cash boxes (gym/store) with discrepancy tracking · Financial reports & dashboard · Store/POS (products, stock movements, sales, credit debts, repayments, profit) · Classes (sessions, bookings, capacity, session-consuming plans) · Trainers & training plans · Employees & salaries (4 salary types; pay→expense+ledger) · InBody assessments + custom fitness tests · Leads/trials tracking · Notifications digest · Backups/restore/legacy IndexedDB import · Settings · Users · Audit log · Permissions editor.
 
 ## Known Limitations
 
 - Arabic-only UI (single locale by design).
 - Single-machine app; the backend binds `127.0.0.1` (loopback-only by default) but there is no built-in multi-user collaborative workflow beyond the shared local SQLite — one writer process at a time (ADR-011: source is on private GitHub for collab, live DB stays local; ADR-010's LAN default was reversed by ADR-023).
-- WhatsApp sending is manual-open flow; no automated provider transport.
+- WhatsApp QR-card delivery works via the optional local gateway (`whatsapp-gateway/`, `127.0.0.1:8891`, Playwright, paired once). Bulk CRM messaging was removed in TASK-044 (leads/trials kept). Sending is off until the gym installs + pairs the gateway (`npm run setup-whatsapp-gateway`).
 - File assets (member photos, InBody reports, expense attachments) live on disk under `Files\` and are registered in the `files` table; they are included in `.gymbak` backups (ADR-018).
 - No EXE/installer packaging yet (bat launcher only).
 

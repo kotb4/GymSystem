@@ -87,14 +87,14 @@ server/                     Local backend (owns the database)
 src/
   api/                      Frontend client: fetch/RPC wrappers + shared types
   core/
-    services/               ALL business logic (34 files, backend-only)
-    permissions.ts          Roles, 92 permissions, DB-backed grant cache
-    audit-actions.ts        Audit action enum (158 actions)
+    services/               ALL business logic (36 files, backend-only)
+    permissions.ts          Roles, 91 permissions, DB-backed grant cache
+    audit-actions.ts        Audit action enum (161 actions)
     errors.ts               AppError codes + i18n messageKeys
     dates.ts money.ts       Shared primitives (date keys, minor units)
   db/
     engine.ts               Db wrapper: run/all/first/scalar/count/transaction/onDirty
-    migrations.ts           Versioned migrations v1..v20 (applied at every boot)
+    migrations.ts           Versioned migrations v1..v33 (applied at every boot)
     seed.ts                 Optional demo seeding
   pages/                    29 route pages
   components/               ui/ layout/ members/ finance/ subscriptions/ cards/ users/ charts/
@@ -130,13 +130,13 @@ Browser (React)
 
 ### Major modules
 
-Members (+trash/restore/purge, photos), Plans & Subscriptions (time/sessions/open kinds, freeze history, renew, cancel), Cards & barcode check-in/out, Payments/refunds/voids + financial ledger, Expenses (+filesystem attachments ≤2 MB) & categories, dual cash boxes (gym/store) with counted-vs-expected discrepancy, financial reports & dashboard, Store/POS (products, stock movements, sales, credit debts, repayments, profit), Classes (sessions, bookings, capacity, session-consuming plans), Trainers & training plans (auto-sweep of expired plans), Employees & salaries (monthly/daily/per_class/custom; pay→expense+ledger), InBody body assessments + custom fitness tests, CRM templates/messages (WhatsApp manual-open flow), Notifications digest, Backups/restore/legacy IndexedDB import, Settings, Users management, Audit log, Permissions editor.
+Members (+trash/restore/purge, photos), Plans & Subscriptions (time/sessions/open kinds, freeze history, renew, cancel), Cards & barcode check-in/out (every member auto-gets a virtual card; QR delivery to WhatsApp via optional local gateway, batched send), Payments/refunds/voids + financial ledger, Expenses (+filesystem attachments ≤2 MB) & categories, dual cash boxes (gym/store) with counted-vs-expected discrepancy, financial reports & dashboard, Store/POS (products, stock movements, sales, credit debts, repayments, profit), Classes (sessions, bookings, capacity, session-consuming plans), Trainers & training plans (auto-sweep of expired plans), Employees & salaries (monthly/daily/per_class/custom; pay→expense+ledger), InBody body assessments + custom fitness tests, Leads & trials tracking, Notifications digest, Backups/restore/legacy IndexedDB import, Settings, Users management, Audit log, Permissions editor.
 
 ## 4. Database Rules
 
 - **Technology:** SQLite via `node:sqlite`, synchronous, WAL mode. One writer process (the backend). NEVER open the live DB from tooling while the server runs.
 - **Access layer:** all SQL goes through `src/db/engine.ts` (`Db`). Raw `db.run/all/first/scalar/count/insert/exec` — no ORM. Server uses `NodeSqliteDriver`; tests use their own driver via `createTestDb()`.
-- **Migrations:** append-only array in `src/db/migrations.ts` (currently v1..v9). Each runs once, tracked in `schema_migrations`, applied inside a transaction at boot. To change schema you MUST add a new version entry. Never edit old migrations; never write destructive statements without explicit human approval.
+- **Migrations:** append-only array in `src/db/migrations.ts` (currently v1..v33). Each runs once, tracked in `schema_migrations`, applied inside a transaction at boot. To change schema you MUST add a new version entry. Never edit old migrations; never write destructive statements without explicit human approval.
 - **Integrity:** heavy use of CHECK constraints (money non-negative, status enums, `net = base - discount` style arithmetic), UNIQUE indexes (partial unique phone/barcode), FKs with referential enforcement ON. Money columns are `*_minor` INTEGER (piastres; 100 = 1 EGP). Dates are `YYYY-MM-DD` keys; timestamps ISO strings.
 - **Transactions:** any multi-statement invariant MUST run inside `db.transaction(() => {...})` (payments, cancels, purge, salary payment, store sale, backup adopt…). Follow that rule for new features.
 - **financial_ledger:** append-only cash truth with `UNIQUE(ref_table, ref_id, entry_type)`. Exactly one ledger entry per logical event; reversals must check existence first (double-reversal guard exists in payments/subscriptions services — keep it).

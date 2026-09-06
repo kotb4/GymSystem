@@ -65,10 +65,12 @@ Every rule below was read from the actual implementation. Anything unverified is
 - Body assessments compute BMI server-side; progress deltas between two assessments; delete requires manage permission.
 - Custom fitness test definitions are idempotent upserts keyed by name.
 
-## CRM
+## Virtual cards & WhatsApp QR delivery (CRM bulk messaging removed TASK-044)
 
-- Seeded Arabic templates with `{{var}}` substitution; unknown placeholders left intact.
-- Messages deduplicated by `dedupe_key`; statuses include manual_opened / skipped_no_phone / skipped_no_provider; sending is manual-open WhatsApp flow (no automated transport).
+- Every member auto-gets a virtual card (`cards.kind='virtual'`, barcode = member code) via `ensureVirtualCard` (createMember + reception path, migration v33 backfill); it scans/attends/consumes like a printed card; `registerCard` stays physical-only.
+- `queueCardDelivery` (perm `cards.send`, department-scoped, idempotent per `card:<cardId>:v1`); `sendPendingCardDeliveries(batch)` renders the QR PNG (barcode) and POSTs `{phone,message,media}` to the configured WhatsApp gateway with 2–5 s randomized pacing (skipped in `GYM_CRM_MOCK=1`).
+- Delivery statuses: `pending | sent | failed | skipped_no_phone | not_configured`. Transport mock/wa/none by `GYM_CRM_MOCK`/`whatsapp_enabled`+`whatsapp_api_url`. Offline-first: gateway failure just marks `failed`, never crashes.
+- Gateway: `whatsapp-gateway/` on `127.0.0.1:8891`, Playwright persistent profile, paired once via `/pair`; start script `scripts/windows/start-whatsapp-gateway.bat`; numbers = EG mobiles only (E.164 `20…`).
 
 ## Users, Roles & Permissions
 

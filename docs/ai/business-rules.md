@@ -123,14 +123,14 @@
 - Custom fitness tests: admin-defined test definitions (name, unit), with per-member results.
 - Historical measurements must not be overwritten.
 
-## CRM / WhatsApp
+## WhatsApp QR card delivery (was CRM bulk messaging — removed)
 
-- Templates: 6 seeded (welcome, expiry_reminder, gym_debt, store_debt, birthday, inactive).
-- Messages: queued with `pending` status. WhatsApp integration is external (click-to-chat).
-- `sendPendingMessages`: opens WhatsApp Web URL for each pending message. Does NOT confirm delivery.
-- `markManuallySent`: marks message as sent after user confirms.
-- `generateDueMessages`: auto-generates expiry/inactivity reminder messages.
-- Deduplication: `dedupe_key` UNIQUE prevents duplicate messages for the same member+template+period.
+- CRM bulk messaging (templates/messages/send) was REMOVED in TASK-044. `crm_templates`/`crm_messages` tables are retained (non-destructive), unused. Leads/trials remain on the /crm page.
+- Every member auto-gets a **virtual card** (`cards.kind='virtual'`, barcode = member code) at creation + via migration v33 backfill; it scans/attends/consumes like a printed card.
+- **Card delivery** (`cards.send` permission): `queueCardDelivery` is idempotent per `card:<cardId>:v1`; `sendPendingCardDeliveries(batch)` renders the QR PNG (barcode → QR) and posts `{phone,message,media:{base64,mime,caption}}` to the configured WhatsApp gateway with 2–5 s randomized pacing (skipped under `GYM_CRM_MOCK=1`).
+- Statuses: `pending | sent | failed | skipped_no_phone | not_configured`. Re-queueing a pending/sent delivery returns the existing row; a failed one creates a fresh attempt. No phone → `skipped_no_phone`; whatsapp disabled/URL empty → `not_configured`.
+- Transport = local `whatsapp-gateway/` on `127.0.0.1:8891` (Playwright, never auto-started; `/pair` once, then `/send`). Offline-first: gateway down never crashes the backend. Botting WhatsApp violates its ToS — documented ban risk.
+- Numbers: EG mobiles only (010/011/012/015 → E.164 `20…`); normalization in `whatsapp-gateway/numbers.js` (`tests/whatsapp-numbers.test.ts`).
 
 ## Permissions & Roles
 
@@ -138,7 +138,7 @@
 - 73 permissions across 12 domains.
 - Owner: hardcoded bypass — always passes all permission checks.
 - Manager: nearly full access; missing: subscriptions.purge, employees.purge, store.purge, cash.purge, users.manage. Gains settings.edit via DB grant.
-- Reception: member/card/subscription/check-in/payment/cash/store-sell/classes/trainers/CRM.
+- Reception: member/card/subscription/check-in/payment/cash/store-sell/classes/trainers/card-delivery (cards.send).
 - Trainer: members.view, classes.view, assessments.view.
 - DB-backed grants: `role_permissions` table overrides defaults; loaded at boot, refreshed on every write.
 - Permissions page allows manager to customize role grants (except owner is immutable).

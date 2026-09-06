@@ -5,7 +5,7 @@
 - **Engine:** SQLite via Node.js built-in `node:sqlite` (`DatabaseSync`, synchronous)
 - **Location:** `%LOCALAPPDATA%/GymSystem/Database/gym.db`
 - **Pragmas:** `journal_mode=WAL`, `foreign_keys=ON`, `busy_timeout=5000`
-- **Migrations:** Append-only array in `src/db/migrations.ts`, tracked in `schema_migrations` table, applied at boot inside a transaction. Currently **v1 through v32**.
+- **Migrations:** Append-only array in `src/db/migrations.ts`, tracked in `schema_migrations` table, applied at boot inside a transaction. Currently **v1 through v33**.
 - **Total tables:** 43 (including `schema_migrations` created at runtime)
 
 ## Conventions
@@ -166,13 +166,21 @@
 **`fitness_test_results`** — Fitness test results
 - id (PK), def_id (FK→fitness_test_defs), member_id, value, test_date, trainer_id, notes, created_by, created_at
 
-### CRM
+### CRM (retained, unused since TASK-044)
 
-**`crm_templates`** — WhatsApp/message templates (6 seeded)
+The CRM bulk-messaging feature was removed in TASK-044 (leads/trials keep their own tables); these two tables are kept non-destructively for historical data and reference-integrity (purge cascades reference `crm_messages`), but no service/RPC/UI uses them.
+
+**`crm_templates`** — WhatsApp/message templates (6 seeded, legacy)
 - code (PK), body_ar, is_active, updated_at
 
-**`crm_messages`** — Sent/queued messages
+**`crm_messages`** — Sent/queued messages (legacy)
 - id (PK), member_id, template_code, channel (whatsapp), body, phone, status (pending/sent/manual_opened/failed/skipped_no_provider/skipped_no_phone), provider_ref, error, dedupe_key (UNIQUE), sent_at, created_by, created_at
+
+### Card delivery (v33)
+
+**`card_deliveries`** — WhatsApp QR-card delivery queue/history
+- id (PK), member_id (FK→members), card_id (FK→cards), barcode_value, member_name, phone, status (pending/sent/failed/skipped_no_phone/not_configured), error, image_hash, dedupe_key (UNIQUE `card:<cardId>:v1`), sent_at, created_by, created_at; indexes on status, member_id, sent_at
+- `cards.kind` (v33): physical|virtual; virtual = barcode equals the member's member_code
 
 ### System
 
