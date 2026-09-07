@@ -141,34 +141,39 @@ async function waitForPairing(page, timeoutMs = 180000) {
   return { paired: false };
 }
 
+// The 2026 WhatsApp Web UI has NO contenteditable elements at all: the search
+// box is a real <input>, and the composer is a plain <div data-tab="10"> with
+// an aria-placeholder. Older layouts used contenteditable divs. Every selector
+// chain below is verified against the live DOM (2026-09-07).
+const COMPOSER_SELECTORS = [
+  'div[data-tab="10"][aria-placeholder]',
+  'div[role="textbox"][data-tab="10"]',
+  'div[contenteditable="true"][data-tab="10"]',
+  'div[contenteditable="true"][aria-label*="Type a message" i]',
+  'div[contenteditable="true"][aria-placeholder*="Message" i]',
+];
+
 async function openChat(page, phone) {
-  // WhatsApp Web renamed/reshaped its search field more than once; try a
-  // resilient selector chain so a DOM tweak never silently breaks sending
-  // (and never makes us wait 15 s before failing).
+  // Modern WhatsApp Web uses a real <input> for search; keep the older
+  // contenteditable shapes as fallbacks for a future revert.
   const search = page.locator(
     [
+      'input[type="text"][data-tab="3"]',
+      'input[aria-label*="Search" i]',
+      'input[placeholder*="Search" i]',
       'div[contenteditable="true"][data-tab="3"]',
-      'div[contenteditable="true"][aria-label*="search" i]',
       'div[contenteditable="true"][aria-placeholder*="Search" i]',
-      'div[contenteditable="true"][data-tab="2"][spellcheck="true"]',
-      'div[contenteditable="true"][aria-label*="بحث" i]',
     ].join(','),
   );
   await search.first().waitFor({ timeout: 8000 });
   await search.first().click();
   await search.first().fill('');
-  await page.keyboard.press('ControlOrMeta+a');
+  await page.waitForTimeout(200);
   await page.keyboard.type(phone, { delay: 30 });
-  await page.waitForTimeout(600);
+  await page.waitForTimeout(700);
   await page.keyboard.press('Enter');
   await page.waitForTimeout(1000);
-  const input = page.locator(
-    [
-      'div[contenteditable="true"][data-tab="10"]',
-      'div[contenteditable="true"][aria-label*="Type a message" i]',
-      'div[contenteditable="true"][aria-placeholder*="Message" i]',
-    ].join(','),
-  );
+  const input = page.locator(COMPOSER_SELECTORS.join(','));
   await input.first().waitFor({ timeout: 8000 });
   return input.first();
 }
@@ -177,16 +182,10 @@ async function attachImage(page, caption, pngBytes) {
   const tmp = join(_cfg.sessionDir, `send-${Date.now()}.png`);
   fs.writeFileSync(tmp, pngBytes);
   try {
-    const input = page.locator(
-      [
-        'div[contenteditable="true"][data-tab="10"]',
-        'div[contenteditable="true"][aria-label*="Type a message" i]',
-        'div[contenteditable="true"][aria-placeholder*="Message" i]',
-      ].join(','),
-    );
+    const input = page.locator(COMPOSER_SELECTORS.join(','));
     await input.first().waitFor({ timeout: 8000 });
     await input.first().click();
-    await input.first().fill('');
+    await input.first().press('ControlOrMeta+a');
     if (caption) await input.first().type(caption, { delay: 5 });
     // Direct file input is far more stable than the attachment menu dance.
     const fileInput = page.locator('input[type="file"][accept*="image"], input[type="file"]');

@@ -17,7 +17,16 @@ async function send(phone, message, media) {
     if (!ok || !page) return { ok: false, error: 'browser unavailable' };
 
     if (!(await wa.isPaired(page))) {
-      return { ok: false, error: 'not paired: run /pair and scan the QR first' };
+      // The browser may still be settling after a cold launch — the session
+      // (#side) often appears a few seconds after the first probe. Give it a
+      // few chances before declaring it unpaired.
+      let paired = false;
+      for (let i = 0; i < 8; i++) {
+        await new Promise((r) => setTimeout(r, 2500));
+        paired = await wa.isPaired(page);
+        if (paired) break;
+      }
+      if (!paired) return { ok: false, error: 'not paired: run /pair and scan the QR first' };
     }
 
     await wa.openChat(page, normalized);
@@ -26,7 +35,8 @@ async function send(phone, message, media) {
       const err = await wa.attachImage(page, media.caption || message || '', Buffer.from(media.base64, 'base64'));
       if (err) return { ok: false, error: err };
     } else if (message) {
-      await input.fill('');
+      await input.click();
+      await input.press('ControlOrMeta+a');
       await input.type(message, { delay: 5 });
       await page.waitForTimeout(300);
     } else {
