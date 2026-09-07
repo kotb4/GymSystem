@@ -1,5 +1,5 @@
 ﻿import { useEffect, useState, type FormEvent } from "react";
-import { KeyRound, Lock, Save } from "lucide-react";
+import { KeyRound, Lock, Save, Smartphone } from "lucide-react";
 import { useAuth } from "@/contexts/auth-context";
 import { useT } from "@/i18n";
 import { useToast } from "@/components/ui/toast";
@@ -13,7 +13,11 @@ import { PasswordInput } from "@/components/ui/password-input";
 import { Tabs } from "@/components/ui/tabs";
 import { HealthTab } from "@/components/settings/health-tab";
 import { ScannerTab } from "@/components/settings/scanner-tab";
+import { WhatsAppPairModal } from "@/components/settings/whatsapp-pair-modal";
 import { cn } from "@/utils/cn";
+
+/** Default local gateway URL written when enabling WhatsApp delivery. */
+const DEFAULT_GATEWAY_URL = "http://127.0.0.1:8891";
 
 const DAY_KEYS = [
   "settings.day0",
@@ -313,7 +317,15 @@ function ScannerSettingsCard() {
   );
 }
 
-function WhatsAppToggle({ value, onChange }: { value: boolean; onChange: (v: boolean) => void }) {
+function WhatsAppToggle({
+  value,
+  onChange,
+  pluginEntries,
+}: {
+  value: boolean;
+  onChange: (v: boolean) => void;
+  pluginEntries?: Array<{ key: string; value: string }>;
+}) {
   const t = useT();
   const { hasPermission } = useAuth();
   const { toast } = useToast();
@@ -328,7 +340,9 @@ function WhatsAppToggle({ value, onChange }: { value: boolean; onChange: (v: boo
       onClick={() => {
         const next = value ? "0" : "1";
         onChange(!value);
-        void save([{ key: SETTING_KEYS.whatsappEnabled, value: next }], () => {
+        const entries: Array<{ key: string; value: string }> = [{ key: SETTING_KEYS.whatsappEnabled, value: next }];
+        if (next === "1" && pluginEntries) entries.push(...pluginEntries);
+        void save(entries, () => {
           toast("success", next === "1" ? t("settings.whatsappOn") : t("settings.whatsappOff"));
         });
       }}
@@ -346,6 +360,7 @@ function WhatsAppToggle({ value, onChange }: { value: boolean; onChange: (v: boo
         )}
       >
         <span
+          aria-hidden
           className={cn(
             "absolute top-0.5 size-5 rounded-full bg-white shadow transition-all",
             value ? "start-0.5" : "start-[22px]"
@@ -358,9 +373,10 @@ function WhatsAppToggle({ value, onChange }: { value: boolean; onChange: (v: boo
 
 function WhatsAppSettingsCard() {
   const t = useT();
-  const {} = useAuth();
+  const { hasPermission } = useAuth();
   const [values, setValues] = useState<Record<string, string>>({});
   const [enabled, setEnabled] = useState(false);
+  const [pairOpen, setPairOpen] = useState(false);
 
   useEffect(() => {
     let alive = true;
@@ -381,18 +397,59 @@ function WhatsAppSettingsCard() {
 
   const setValue = (key: string, value: string) => setValues((prev) => ({ ...prev, [key]: value }));
 
+  const handleToggle = (next: boolean) => {
+    if (next && (values[SETTING_KEYS.whatsappApiUrl] ?? "").trim() === "") {
+      setValue(SETTING_KEYS.whatsappApiUrl, DEFAULT_GATEWAY_URL);
+    }
+    setEnabled(next);
+  };
+
+  const gatewayUrl = (values[SETTING_KEYS.whatsappApiUrl] ?? "").trim();
+
   const drafts: SettingDraft[] = [
     { key: SETTING_KEYS.whatsappApiUrl, label: "settings.whatsappApiUrl", hint: "settings.whatsappApiUrlHint", dir: "ltr" },
   ];
 
   return (
-    <SettingsForm
-      title={t("settings.whatsappTitle")}
-      drafts={drafts}
-      values={values}
-      setValue={setValue}
-      extra={<WhatsAppToggle value={enabled} onChange={setEnabled} />}
-    />
+    <>
+      <SettingsForm
+        title={t("settings.whatsappTitle")}
+        drafts={drafts}
+        values={values}
+        setValue={setValue}
+        extra={
+          <>
+            <WhatsAppToggle
+              value={enabled}
+              onChange={handleToggle}
+              pluginEntries={
+                (values[SETTING_KEYS.whatsappApiUrl] ?? "").trim() === "" && !enabled
+                  ? [{ key: SETTING_KEYS.whatsappApiUrl, value: DEFAULT_GATEWAY_URL }]
+                  : undefined
+              }
+            />
+            {hasPermission("settings.view") && (
+              <Button
+                type="button"
+                variant="secondary"
+                size="sm"
+                className="w-full"
+                disabled={gatewayUrl === ""}
+                onClick={() => setPairOpen(true)}
+              >
+                <Smartphone className="size-4" />
+                {t("settings.whatsappPairButton")}
+              </Button>
+            )}
+          </>
+        }
+      />
+      <WhatsAppPairModal
+        open={pairOpen}
+        onClose={() => setPairOpen(false)}
+        gatewayUrl={gatewayUrl || DEFAULT_GATEWAY_URL}
+      />
+    </>
   );
 }
 

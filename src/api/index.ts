@@ -1105,6 +1105,54 @@ function fileUrl(fileId: string): string {
   return `/api/files/${fileId}`;
 }
 
+// ---------------------------- WhatsApp gateway -----------------------------
+// Direct calls to the local gateway (this app runs on the same machine at
+// 127.0.0.1:GATEWAY_PORT). Only used for status/pairing UI — card sending
+// always goes through the backend (card-delivery.service) for permissions.
+
+export interface GatewayHealth {
+  ok: boolean;
+  service: string;
+  paired: boolean;
+  sessionDir?: string;
+}
+
+export interface GatewayPairResult {
+  ok: boolean;
+  paired: boolean;
+  qrPngBase64?: string | null;
+}
+
+async function gatewayFetch(baseUrl: string, path: string, init?: RequestInit, timeoutMs = 5000): Promise<Response> {
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), timeoutMs);
+  try {
+    const res = await fetch(`${baseUrl.replace(/\/+$/, "")}${path}`, {
+      ...init,
+      signal: controller.signal,
+      headers: { ...(init?.headers ?? {}) },
+    });
+    return res;
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
+async function gatewayHealth(baseUrl: string): Promise<GatewayHealth> {
+  const res = await gatewayFetch(baseUrl, "/health");
+  if (!res.ok) throw new Error(`HTTP ${res.status}`);
+  return (await res.json()) as GatewayHealth;
+}
+
+async function gatewayPair(baseUrl: string): Promise<GatewayPairResult> {
+  const res = await gatewayFetch(baseUrl, "/pair", { method: "POST", headers: { "Content-Type": "application/json" }, body: "{}" });
+  const body: GatewayPairResult & { error?: string } = await res.json();
+  if (res.status !== 200) throw new Error(body.error ?? `HTTP ${res.status}`);
+  return body;
+}
+
+// ------------------------------ api object -------------------------------
+
 export const api = {
   members: membersApi,
   subscriptions: subscriptionsApi,
@@ -1134,6 +1182,7 @@ export const api = {
   lead: leadApi,
   trials: trialApi,
   files: { upload: uploadFile, url: fileUrl },
+  gateway: { health: gatewayHealth, pair: gatewayPair },
   auth: {
     /** Session probe used by the auth context; mirrors GET /api/auth/me. */
     me: () => request<MeResponse>("/api/auth/me"),

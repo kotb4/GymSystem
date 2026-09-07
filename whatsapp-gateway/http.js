@@ -9,8 +9,27 @@ const MAX_BODY = 8 * 1024 * 1024;
 
 function json(res, code, payload) {
   const body = JSON.stringify(payload);
-  res.writeHead(code, { 'Content-Type': 'application/json; charset=utf-8' });
+  res.writeHead(code, {
+    'Content-Type': 'application/json; charset=utf-8',
+    'Access-Control-Allow-Origin': '*',
+  });
   res.end(body);
+}
+
+/**
+ * In-app pairing: the SPA (http://127.0.0.1:8890) calls this loopback gateway
+ * directly. Only the local app can reach it (bound to 127.0.0.1), so
+ * Access-Control-Allow-Origin: * is safe here.
+ */
+function isPreflight(req, res) {
+  if (req.method !== 'OPTIONS') return false;
+  res.writeHead(204, {
+    'Access-Control-Allow-Origin': '*',
+    'Access-Control-Allow-Methods': 'GET,POST,OPTIONS',
+    'Access-Control-Allow-Headers': 'Content-Type',
+  });
+  res.end();
+  return true;
 }
 
 function readBody(req) {
@@ -34,6 +53,7 @@ function readBody(req) {
 async function handle(req, res) {
   const url = req.url || '/';
   const path = url.split('?')[0];
+  if (isPreflight(req, res)) return;
   const started = Date.now();
   let status = 200;
 

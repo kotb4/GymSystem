@@ -3,7 +3,14 @@ import path from "node:path";
 import fs from "node:fs";
 import os from "node:os";
 import crypto from "node:crypto";
+import { spawn } from "node:child_process";
 import { getDbContext, openDatabase, logLine, isMaintenanceMode, flushLogging } from "./context";
+import { embeddedDist } from "./embedded-dist";
+import {
+  SETTING_KEYS,
+  readSetting,
+  writeSettingInternalIfMissing,
+} from "../src/core/services/settings.service";
 import { resolveHttpHost } from "./config";
 import {
   SESSION_COOKIE,
@@ -42,6 +49,67 @@ const SECURE_COOKIES = process.env.GYMSYSTEM_SECURE_COOKIES === "1";
 
 /** Frontend build output; overridable, defaults to <cwd>/dist. */
 const DIST_DIR = path.resolve(process.env.GYMSYSTEM_DIST ?? path.join(process.cwd(), "dist"));
+
+/**
+ * True when running as the packaged SEA executable (GymSystem.exe) instead of
+ * plain node. Drives auto-open of the app window, the double-launch guard and
+ * the WhatsApp gateway autostart. Overridable with GYMSYSTEM_AUTO_OPEN=1 for
+ * smoke-testing those paths from plain node.
+ */
+function isPackagedExe(): boolean {
+  try {
+    const base = path.basename(process.execPath).toLowerCase();
+    return (
+      process.env.GYMSYSTEM_AUTO_OPEN === "1" ||
+      (base.endsWith(".exe") && (base.startsWith("gymsystem") || base.startsWith("gympro")))
+    );
+  } catch {
+    return false;
+  }
+}
+
+/** Open the app in a standalone Edge window (App Mode); falls back to the default browser. */
+function openAppWindow(url: string = `http://${HOST}:${PORT}/`): void {
+  logLine(`opening app window: ${url}`);
+  let child = spawn("msedge", [`--app=${url}`], { detached: true, stdio: "ignore", windowsHide: true });
+  child.on("error", () => {
+    try {
+      child = spawn("cmd", ["/c", "start", "", url], { detached: true, stdio: "ignore", windowsHide: true });
+      child.unref();
+    } catch (error) {
+      logLine(`browser fallback failed: ${String(error)}`);
+    }
+  });
+  child.unref();
+}
+
+/**
+ * Packaged mode only: if WhatsApp delivery is enabled in the settings, write
+ * the default local gateway URL when missing and start the gateway silently
+ * (`runtime\node.exe gateway\index.js` shipped next to the exe). The gateway
+ * is a separate process so a crash never takes the gym DB down with it.
+ */
+function autospawnWhatsappGateway(): void {
+  if (!isPackagedExe()) return;
+  try {
+    const db = getDbContext().db;
+    if (readSetting(db, SETTING_KEYS.whatsappEnabled) !== "1") return;
+    writeSettingInternalIfMissing(db, SETTING_KEYS.whatsappApiUrl, "http://127.0.0.1:8891");
+    const appDir = path.dirname(process.execPath);
+    const nodeBin = path.join(appDir, "runtime", "node.exe");
+    const gatewayMain = path.join(appDir, "gateway", "index.js");
+    if (!fs.existsSync(nodeBin) || !fs.existsSync(gatewayMain)) {
+      logLine("whatsapp gateway not found next to the exe; skipping autostart");
+      return;
+    }
+    const child = spawn(nodeBin, [gatewayMain], { detached: true, stdio: "ignore", windowsHide: true });
+    child.on("error", (error) => logLine(`whatsapp gateway autostart failed: ${error.message}`));
+    child.unref();
+    logLine("whatsapp gateway autostarted");
+  } catch (error) {
+    logLine(`whatsapp gateway autostart skipped: ${String(error)}`);
+  }
+}
 
 const MIME: Record<string, string> = {
   ".html": "text/html; charset=utf-8",
@@ -522,45 +590,79 @@ async function handleApi(ctx: Ctx): Promise<void> {
 /**
  * Static assets: hashed files are immutable (safe to cache forever);
  * index.html is never cached so new versions load without any manual
- * cache clearing (spec section 11).
+ * cache clearing (spec section 11). In packaged mode there is no disk
+ * `dist/` — assets come from the embedded base64 map.
  */
 function serveStatic(ctx: Ctx): void {
   const { res, url } = ctx;
   let pathname = decodeURIComponent(url.pathname);
   if (pathname === "/") pathname = "/index.html";
 
+  const rel = pathname.replace(/^\/+/, "").split("/").join("/");
+
   const candidate = path.normalize(path.join(DIST_DIR, pathname));
   const isInsideDist = candidate.startsWith(DIST_DIR + path.sep) || candidate === DIST_DIR;
-  const fileExists = fs.existsSync(candidate) && fs.statSync(candidate).isFile();
-  const filePath = !isInsideDist || !fileExists ? path.join(DIST_DIR, "index.html") : candidate;
+  let fileExists = false;
+  if (isInsideDist) {
+    fileExists = fs.existsSync(candidate) && fs.statSync(candidate).isFile();
+  }
 
-  if (!fs.existsSync(filePath)) {
-    res.writeHead(404);
-    res.end("not found");
+  const fromEmbedded = (relPath: string): Buffer | null => {
+    const base64 = embeddedDist[relPath];
+    if (!base64) return null;
+    try {
+      return Buffer.from(base64, "base64");
+    } catch {
+      return null;
+    }
+  };
+
+  if (fileExists) {
+    const isHashedAsset = pathname.startsWith("/assets/");
+    const headers: Record<string, string> = {
+      "Content-Type": MIME[path.extname(candidate).toLowerCase()] ?? "application/octet-stream",
+      "Cache-Control": isHashedAsset
+        ? "public, max-age=31536000, immutable"
+        : "no-cache, must-revalidate",
+      "X-Content-Type-Options": "nosniff",
+      "X-Frame-Options": "DENY",
+      "Referrer-Policy": "no-referrer",
+    };
+    res.writeHead(200, headers);
+    const stream = fs.createReadStream(candidate);
+    stream.on("error", () => {
+      if (!res.headersSent) res.writeHead(404);
+      res.end();
+    });
+    stream.pipe(res);
     return;
   }
 
-  const isHashedAsset = pathname.startsWith("/assets/");
-  const headers: Record<string, string> = {
-    "Content-Type": MIME[path.extname(filePath).toLowerCase()] ?? "application/octet-stream",
-    "Cache-Control": isHashedAsset
-      ? "public, max-age=31536000, immutable"
-      : "no-cache, must-revalidate",
-    "X-Content-Type-Options": "nosniff",
-    "X-Frame-Options": "DENY",
-    "Referrer-Policy": "no-referrer",
-  };
-  res.writeHead(200, headers);
-  const stream = fs.createReadStream(filePath);
-  stream.on("error", () => {
-    if (!res.headersSent) res.writeHead(404);
-    res.end();
-  });
-  stream.pipe(res);
+  const embedded = fromEmbedded(rel) ?? fromEmbedded("index.html");
+  if (embedded) {
+    const finalRel: string = fromEmbedded(rel) ? rel : "index.html";
+    const isHashedAsset = pathname.startsWith("/assets/");
+    const headers: Record<string, string> = {
+      "Content-Type": MIME[path.extname(`/${finalRel}`).toLowerCase()] ?? "application/octet-stream",
+      "Cache-Control": isHashedAsset
+        ? "public, max-age=31536000, immutable"
+        : "no-cache, must-revalidate",
+      "X-Content-Type-Options": "nosniff",
+      "X-Frame-Options": "DENY",
+      "Referrer-Policy": "no-referrer",
+    };
+    res.writeHead(200, headers);
+    res.end(embedded);
+    return;
+  }
+
+  res.writeHead(404);
+  res.end("not found");
 }
 
 export function startHttpServer(): void {
   openDatabase();
+  autospawnWhatsappGateway();
   try { pruneExpiredSessions(getDbContext().db); } catch { /* first boot: table just created */ }
   // Prune expired sessions hourly so the session table never grows unbounded
   // (login also prunes opportunistically with each successful login).
@@ -610,8 +712,22 @@ export function startHttpServer(): void {
   });
   server.listen(PORT, HOST, () => {
     logLine(`GymSystem backend listening on http://${HOST}:${PORT}`);
-    logLine(`serving frontend from ${DIST_DIR}`);
+    const frontendSource =
+      fs.existsSync(path.join(DIST_DIR, "index.html")) ? `disk: ${DIST_DIR}` : "embedded bundle";
+    logLine(`serving frontend from ${frontendSource}`);
     logLine(`authoritative database: ${getDbContext().dirs.dbFile}`);
+    if (isPackagedExe() && process.env.GYMSYSTEM_NO_OPEN !== "1") openAppWindow();
+  });
+  server.on("error", (error) => {
+    const err = error as NodeJS.ErrnoException;
+    if (err.code === "EADDRINUSE" && isPackagedExe()) {
+      logLine(`port ${PORT} busy — another instance already runs; opening the window and exiting.`);
+      if (process.env.GYMSYSTEM_NO_OPEN !== "1") openAppWindow();
+      flushLogging(() => process.exit(0));
+      return;
+    }
+    logLine(`http server error: ${String(error)}`);
+    flushLogging(() => process.exit(1));
   });
 }
 

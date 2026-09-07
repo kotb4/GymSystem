@@ -17,3 +17,4 @@ license-cli/issued/
 *.pem
 whatsapp-gateway/node_modules
 whatsapp-gateway/package-lock.json
+dist-exe
