@@ -1,5 +1,5 @@
 ﻿import { useEffect, useState, type FormEvent } from "react";
-import { KeyRound, Lock, Save, Smartphone } from "lucide-react";
+import { KeyRound, Loader2, Lock, Play, Save, Smartphone } from "lucide-react";
 import { useAuth } from "@/contexts/auth-context";
 import { useT } from "@/i18n";
 import { useToast } from "@/components/ui/toast";
@@ -321,10 +321,12 @@ function WhatsAppToggle({
   value,
   onChange,
   pluginEntries,
+  onEnabled,
 }: {
   value: boolean;
   onChange: (v: boolean) => void;
   pluginEntries?: Array<{ key: string; value: string }>;
+  onEnabled?: () => void;
 }) {
   const t = useT();
   const { hasPermission } = useAuth();
@@ -344,6 +346,7 @@ function WhatsAppToggle({
         if (next === "1" && pluginEntries) entries.push(...pluginEntries);
         void save(entries, () => {
           toast("success", next === "1" ? t("settings.whatsappOn") : t("settings.whatsappOff"));
+          if (next === "1") onEnabled?.();
         });
       }}
       className={cn(
@@ -374,9 +377,11 @@ function WhatsAppToggle({
 function WhatsAppSettingsCard() {
   const t = useT();
   const { hasPermission } = useAuth();
+  const { toast } = useToast();
   const [values, setValues] = useState<Record<string, string>>({});
   const [enabled, setEnabled] = useState(false);
   const [pairOpen, setPairOpen] = useState(false);
+  const [starting, setStarting] = useState(false);
 
   useEffect(() => {
     let alive = true;
@@ -396,6 +401,23 @@ function WhatsAppSettingsCard() {
   }, []);
 
   const setValue = (key: string, value: string) => setValues((prev) => ({ ...prev, [key]: value }));
+
+  const ensureRunning = async () => {
+    if (starting) return;
+    setStarting(true);
+    try {
+      const res = await api.system.ensureWhatsAppGateway();
+      if (res.ok && res.result?.running) {
+        toast("success", t("settings.whatsappRunning"));
+      } else {
+        toast("error", t("settings.whatsappStartFailed"));
+      }
+    } catch {
+      toast("error", t("settings.whatsappStartFailed"));
+    } finally {
+      setStarting(false);
+    }
+  };
 
   const handleToggle = (next: boolean) => {
     if (next && (values[SETTING_KEYS.whatsappApiUrl] ?? "").trim() === "") {
@@ -422,6 +444,7 @@ function WhatsAppSettingsCard() {
             <WhatsAppToggle
               value={enabled}
               onChange={handleToggle}
+              onEnabled={() => void ensureRunning()}
               pluginEntries={
                 (values[SETTING_KEYS.whatsappApiUrl] ?? "").trim() === "" && !enabled
                   ? [{ key: SETTING_KEYS.whatsappApiUrl, value: DEFAULT_GATEWAY_URL }]
@@ -429,17 +452,33 @@ function WhatsAppSettingsCard() {
               }
             />
             {hasPermission("settings.view") && (
-              <Button
-                type="button"
-                variant="secondary"
-                size="sm"
-                className="w-full"
-                disabled={gatewayUrl === ""}
-                onClick={() => setPairOpen(true)}
-              >
-                <Smartphone className="size-4" />
-                {t("settings.whatsappPairButton")}
-              </Button>
+              <div className="flex gap-2">
+                <Button
+                  type="button"
+                  variant="secondary"
+                  size="sm"
+                  disabled={starting}
+                  onClick={() => void ensureRunning()}
+                >
+                  {starting ? (
+                    <Loader2 className="size-4 animate-spin" />
+                  ) : (
+                    <Play className="size-4" />
+                  )}
+                  {starting ? t("settings.whatsappStarting") : t("settings.whatsappStartButton")}
+                </Button>
+                <Button
+                  type="button"
+                  variant="secondary"
+                  size="sm"
+                  className="flex-1"
+                  disabled={gatewayUrl === ""}
+                  onClick={() => setPairOpen(true)}
+                >
+                  <Smartphone className="size-4" />
+                  {t("settings.whatsappPairButton")}
+                </Button>
+              </div>
             )}
           </>
         }
@@ -448,6 +487,8 @@ function WhatsAppSettingsCard() {
         open={pairOpen}
         onClose={() => setPairOpen(false)}
         gatewayUrl={gatewayUrl || DEFAULT_GATEWAY_URL}
+        starting={starting}
+        onStart={() => void ensureRunning()}
       />
     </>
   );

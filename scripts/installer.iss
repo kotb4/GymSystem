@@ -3,8 +3,8 @@
 ; and NEVER touches %LOCALAPPDATA%\GymSystem (data, license, WhatsApp session).
 ;
 ; Build: install Inno Setup 6 (winget: JRSoftware.InnoSetup) then run:
-;   npm run build:exe        (produces dist-exe/)
-;   iscc scripts/installer.iss  (produces dist-exe/GymSystem-Setup-<ver>.exe)
+;   npm run build:exe            (produces dist-exe/)
+;   npm run build:installer      (produces dist-exe/GymSystem-Setup-<ver>.exe)
 
 #define MyAppName "GymSystem"
 #define MyAppVersion "0.1.0"

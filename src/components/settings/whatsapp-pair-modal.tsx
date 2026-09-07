@@ -4,20 +4,25 @@ import { api } from "@/api";
 import { Modal } from "@/components/ui/modal";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
-import { Loader2, Smartphone } from "lucide-react";
+import { Loader2, Play, Smartphone } from "lucide-react";
 
 /**
  * One-time WhatsApp Web pairing inside the app. Polls the local gateway,
  * shows the live QR until the phone scans it; session then persists on disk.
+ * If the gateway is down, offers to start it on demand.
  */
 export function WhatsAppPairModal({
   open,
   onClose,
   gatewayUrl,
+  onStart,
+  starting,
 }: {
   open: boolean;
   onClose: () => void;
   gatewayUrl: string;
+  onStart?: () => void;
+  starting?: boolean;
 }) {
   const t = useT();
   const [state, setState] = useState<"down" | "ready" | "paired" | "error">("down");
@@ -96,6 +101,12 @@ export function WhatsAppPairModal({
           <div className="flex flex-col items-center gap-3 py-2 text-center">
             <Smartphone className="size-8 text-faint" />
             <p className="text-[13px] leading-relaxed text-subtle">{t("settings.whatsappGatewayDown")}</p>
+            {onStart && (
+              <Button type="button" variant="secondary" size="sm" onClick={onStart} disabled={starting}>
+                {starting ? <Loader2 className="size-4 animate-spin" /> : <Play className="size-4" />}
+                {starting ? t("settings.whatsappStarting") : t("settings.whatsappStartButton")}
+              </Button>
+            )}
           </div>
         )}
 

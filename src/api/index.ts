@@ -1183,6 +1183,14 @@ export const api = {
   trials: trialApi,
   files: { upload: uploadFile, url: fileUrl },
   gateway: { health: gatewayHealth, pair: gatewayPair },
+  system: {
+    /** Start the local WhatsApp gateway on demand (idempotent; settings.edit). */
+    ensureWhatsAppGateway: () =>
+      postJson<{ ok: boolean; result?: { running: boolean; alreadyRunning: boolean; mock?: boolean } }>(
+        "/api/system/ensure-whatsapp-gateway",
+        {},
+      ),
+  },
   auth: {
     /** Session probe used by the auth context; mirrors GET /api/auth/me. */
     me: () => request<MeResponse>("/api/auth/me"),

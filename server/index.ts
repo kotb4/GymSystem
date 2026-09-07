@@ -12,6 +12,7 @@ import {
   writeSettingInternalIfMissing,
 } from "../src/core/services/settings.service";
 import { resolveHttpHost } from "./config";
+import { ensureGateway } from "./gateway-spawn";
 import {
   SESSION_COOKIE,
   createSessionToken,
@@ -85,30 +86,31 @@ function openAppWindow(url: string = `http://${HOST}:${PORT}/`): void {
 
 /**
  * Packaged mode only: if WhatsApp delivery is enabled in the settings, write
- * the default local gateway URL when missing and start the gateway silently
+ * the default local gateway URL when missing and ensure the gateway is running
  * (`runtime\node.exe gateway\index.js` shipped next to the exe). The gateway
  * is a separate process so a crash never takes the gym DB down with it.
+ * Idempotent — an already-reachable gateway is left alone.
  */
 function autospawnWhatsappGateway(): void {
   if (!isPackagedExe()) return;
-  try {
-    const db = getDbContext().db;
-    if (readSetting(db, SETTING_KEYS.whatsappEnabled) !== "1") return;
-    writeSettingInternalIfMissing(db, SETTING_KEYS.whatsappApiUrl, "http://127.0.0.1:8891");
-    const appDir = path.dirname(process.execPath);
-    const nodeBin = path.join(appDir, "runtime", "node.exe");
-    const gatewayMain = path.join(appDir, "gateway", "index.js");
-    if (!fs.existsSync(nodeBin) || !fs.existsSync(gatewayMain)) {
-      logLine("whatsapp gateway not found next to the exe; skipping autostart");
-      return;
+  void (async () => {
+    try {
+      const db = getDbContext().db;
+      if (readSetting(db, SETTING_KEYS.whatsappEnabled) !== "1") return;
+      writeSettingInternalIfMissing(db, SETTING_KEYS.whatsappApiUrl, "http://127.0.0.1:8891");
+      const url = readSetting(db, SETTING_KEYS.whatsappApiUrl) || "http://127.0.0.1:8891";
+      const result = await ensureGateway(url, { packaged: true, log: logLine });
+      logLine(
+        result.alreadyRunning
+          ? "whatsapp gateway already running"
+          : result.running
+            ? "whatsapp gateway autostarted"
+            : `whatsapp gateway autostart failed: ${result.error ?? "unknown"}`,
+      );
+    } catch (error) {
+      logLine(`whatsapp gateway autostart skipped: ${String(error)}`);
     }
-    const child = spawn(nodeBin, [gatewayMain], { detached: true, stdio: "ignore", windowsHide: true });
-    child.on("error", (error) => logLine(`whatsapp gateway autostart failed: ${error.message}`));
-    child.unref();
-    logLine("whatsapp gateway autostarted");
-  } catch (error) {
-    logLine(`whatsapp gateway autostart skipped: ${String(error)}`);
-  }
+  })();
 }
 
 const MIME: Record<string, string> = {
@@ -440,6 +442,28 @@ async function handleApi(ctx: Ctx): Promise<void> {
         Array.isArray(body.args) ? (body.args as unknown[]) : [],
       );
       return sendJson(res, outcome.status, outcome.body);
+    } catch (error) {
+      const mapped = errorBody(error);
+      return sendJson(res, mapped.status, mapped.body);
+    }
+  }
+
+  // On-demand WhatsApp gateway start: enabling WhatsApp mid-session must not
+  // force an app restart. Idempotent (probe → spawn only if not reachable).
+  if (route === "POST /api/system/ensure-whatsapp-gateway") {
+    try {
+      requirePermission(actor, "settings.edit");
+      const db = getDbContext().db;
+      writeSettingInternalIfMissing(db, SETTING_KEYS.whatsappApiUrl, "http://127.0.0.1:8891");
+      const url = readSetting(db, SETTING_KEYS.whatsappApiUrl) || "http://127.0.0.1:8891";
+      if (process.env.GYM_CRM_MOCK === "1") {
+        return sendJson(res, 200, {
+          ok: true,
+          result: { running: true, alreadyRunning: true, mock: true },
+        });
+      }
+      const result = await ensureGateway(url, { packaged: isPackagedExe(), log: logLine });
+      return sendJson(res, 200, { ok: result.running, result });
     } catch (error) {
       const mapped = errorBody(error);
       return sendJson(res, mapped.status, mapped.body);

@@ -16,7 +16,7 @@
     "sync:docs": "node scripts/sync-docs.mjs",
     "setup-whatsapp-gateway": "powershell -NoProfile -ExecutionPolicy Bypass -File scripts/setup-whatsapp-gateway.ps1",
     "build:exe": "node scripts/build-exe.mjs",
-    "build:installer": "iscc scripts/installer.iss",
+    "build:installer": "node scripts/build-installer.mjs",
     "license:keygen": "node license-cli/license-tool.mjs keygen",
     "license:issue": "node license-cli/license-tool.mjs issue",
     "license:hwid": "node license-cli/license-tool.mjs hwid",
