@@ -153,29 +153,81 @@ const COMPOSER_SELECTORS = [
   'div[contenteditable="true"][aria-placeholder*="Message" i]',
 ];
 
+const NEW_CHAT_SELECTORS = [
+  'button[aria-label*="New chat" i]',
+  'button[aria-label*="محادثة جديدة" i]',
+  'div[role="button"][aria-label*="New chat" i]',
+  'button[title*="New chat" i]',
+];
+
 async function openChat(page, phone) {
-  // Modern WhatsApp Web uses a real <input> for search; keep the older
-  // contenteditable shapes as fallbacks for a future revert.
-  const search = page.locator(
-    [
-      'input[type="text"][data-tab="3"]',
-      'input[aria-label*="Search" i]',
-      'input[placeholder*="Search" i]',
-      'div[contenteditable="true"][data-tab="3"]',
-      'div[contenteditable="true"][aria-placeholder*="Search" i]',
-    ].join(','),
-  );
-  await search.first().waitFor({ timeout: 8000 });
-  await search.first().click();
-  await search.first().fill('');
-  await page.waitForTimeout(200);
-  await page.keyboard.type(phone, { delay: 30 });
-  await page.waitForTimeout(700);
-  await page.keyboard.press('Enter');
-  await page.waitForTimeout(1000);
-  const input = page.locator(COMPOSER_SELECTORS.join(','));
-  await input.first().waitFor({ timeout: 8000 });
-  return input.first();
+  // 2026 WhatsApp Web: the deep link web.whatsapp.com/send?phone=<E.164> works
+  // for SAVED numbers but can land on a "WhatsApp Business" interstitial (with a
+  // "Continue" button) for UNSAVED numbers, and the legacy search box cannot find
+  // unsaved contacts at all. Strategy: try the deep link, handle the interstitial
+  // if it appears, and fall back to the explicit "New Chat" flow which works for
+  // both saved and unsaved numbers.
+  const e164 = String(phone);
+
+  await page.goto(`https://web.whatsapp.com/send?phone=${e164}`, {
+    waitUntil: 'domcontentloaded',
+    timeout: 30000,
+  });
+
+  const composer = page.locator(COMPOSER_SELECTORS.join(','));
+  const continueBtn = page.locator('button:has-text("Continue"), div[role="button"]:has-text("Continue")');
+
+  // Phase 1: wait for the composer. If a "Continue" interstitial appears, click it.
+  let ok = false;
+  for (let i = 0; i < 12 && !ok; i++) {
+    try {
+      ok = await composer.first().isVisible();
+    } catch {
+      ok = false;
+    }
+    if (!ok) {
+      // Dismiss the "WhatsApp Business" interstitial if present.
+      try {
+        if (await continueBtn.first().isVisible()) {
+          await continueBtn.first().click();
+          await page.waitForTimeout(800);
+        }
+      } catch {
+        /* no interstitial */
+      }
+      await page.waitForTimeout(700);
+    }
+  }
+
+  // Phase 2: fallback to the "New Chat" flow (works for unsaved numbers).
+  if (!ok) {
+    const newChat = page.locator(NEW_CHAT_SELECTORS.join(','));
+    try {
+      await newChat.first().waitFor({ timeout: 5000 });
+      await newChat.first().click();
+      await page.waitForTimeout(800);
+      // The new-chat panel has a search input; type the number and press Enter.
+      const panelSearch = page.locator(
+        [
+          'input[type="text"][data-tab="3"]',
+          'div[contenteditable="true"][data-tab="3"]',
+          'input[aria-label*="Search" i]',
+          'div[contenteditable="true"][aria-label*="Search" i]',
+        ].join(','),
+      );
+      await panelSearch.first().waitFor({ timeout: 5000 });
+      await panelSearch.first().click();
+      await panelSearch.first().fill(e164);
+      await page.waitForTimeout(1000);
+      await page.keyboard.press('Enter');
+      await page.waitForTimeout(1500);
+    } catch {
+      /* fallback also failed — let the caller handle it */
+    }
+  }
+
+  await composer.first().waitFor({ timeout: 10000 });
+  return composer.first();
 }
 
 async function attachImage(page, caption, pngBytes) {

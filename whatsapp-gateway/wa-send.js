@@ -29,15 +29,15 @@ async function send(phone, message, media) {
       if (!paired) return { ok: false, error: 'not paired: run /pair and scan the QR first' };
     }
 
-    await wa.openChat(page, normalized);
+    const composer = await wa.openChat(page, normalized);
 
     if (media && media.base64) {
       const err = await wa.attachImage(page, media.caption || message || '', Buffer.from(media.base64, 'base64'));
       if (err) return { ok: false, error: err };
     } else if (message) {
-      await input.click();
-      await input.press('ControlOrMeta+a');
-      await input.type(message, { delay: 5 });
+      await composer.click();
+      await composer.press('ControlOrMeta+a');
+      await composer.type(message, { delay: 5 });
       await page.waitForTimeout(300);
     } else {
       return { ok: false, error: 'nothing to send' };
