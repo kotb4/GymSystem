@@ -2,6 +2,16 @@
 
 > **Reading order for the next agent:** `AGENTS.md` → `.ai/project.md` → `.ai/current-state.md` → `.ai/tasks.md` → `.ai/decisions.md` (when relevant) → inspect the actual source. The repository files are the persistent memory; chat history is not part of the project.
 
+## TASK-048: «حدث خطأ غير متوقع» on re-sending a card QR — queueCardDelivery broke the UNIQUE dedupe_key (TASK-044 regression)
+- Status: done (2026-09-07). User-reported: «حدث خطأ غير متوقع»; server.log showed `rpc internal error: UNIQUE constraint failed: card_deliveries.dedupe_key at Object.queueCardDelivery`.
+- **Root cause:** `queueCardDelivery` READ the existing dedupe row OUTSIDE the transaction and INSERTed a fresh row whenever the old row was not pending/sent — but `card_deliveries.dedupe_key` is UNIQUE (migration v33 line 844), so re-queueing a terminal row (failed/skipped_no_phone/not_configured) — exactly what happens after old sends failed while the gateway was broken — threw `UNIQUE constraint failed` → 500 → generic «حدث خطأ غير متوقع». The documented rule («a failed one creates a fresh attempt») was impossible with the schema from day one; triggered live once the QR/gateway got fixed. Secondary: `wa-session.healthStatus()` used `isPaired` (3000 ms waitForSelector behind a loaded page) → `/health` could take ~3 s > 1.5 s probe timeout → repeated ensure/spawn attempts (EADDRINUSE noise in the gateway log).
+- **Fixes:**
+  - `src/core/services/card-delivery.service.ts` — `queueCardDelivery` reworked: dedupe read + branch now run INSIDE one `db.transaction` (closes the double-tap race); a terminal row (failed/skipped_no_phone/not_configured) is **flipped back to `pending`** on the SAME row (id reused; member_name/phone snapshots refreshed; error/image_hash/sent_at cleared; ordering by created_at DESC keeps the latest row) instead of a duplicate INSERT — always honours the UNIQUE index. Insert branch now also logs `nowStamp()` inline (removed the pre-computed var). Audit event unchanged (`CARD_DELIVERY_QUEUED`) with an extra `requeued: <oldStatus>` param on re-queue.
+  - `whatsapp-gateway/wa-session.js` — `healthStatus()` no longer `waitForSelector`s: instant `page.evaluate(() => !!document.querySelector('#side'))` (still boots `isPaired` elsewhere); `/health` stays a fast liveness probe.
+- **Tests added (`tests/card-delivery.test.ts`):** re-queues a failed delivery to pending (no UNIQUE crash; still 1 row; sends again with mock on); re-queues skipped_no_phone once the member gets a phone (snapshot refreshed → re-sends). Fixed a wrong `updateMember` call shape in the process.
+- **Verification:** `npx vitest run tests/card-delivery.test.ts` 10/10; full `npm test` **501/501 (44 files)** (was 499 — +2 new tests); typecheck ×2 clean; rpc-consistency 273/no-missing; `npm run build` clean; `npm run build:exe` + `npm run build:installer` rebuilt (closed the running GymSystem.exe first — EPERM on Windows locked file). No DB migration.
+- **Commits:** this session (hash recorded in the docs(ai) commit that follows).
+
 ## TASK-047: WhatsApp QR never appears — broken playwright runtime + WhatsApp Web DOM change (TASK-046 follow-up)
 - Status: done (2026-09-07). User-reported: «بيظهرلي البوابة تعمل الآن بس مش بيظهر qr».
 - **Root causes (2, both proven — gateway log + live DOM dump):**

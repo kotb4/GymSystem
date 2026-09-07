@@ -139,8 +139,11 @@ async function pacingDelay(isMock: boolean): Promise<void> {
 }
 
 /**
- * Queues a QR delivery for a card. Idempotent per card: a pending/sent delivery
- * is returned as-is; a previously failed delivery creates a fresh attempt.
+ * Queues a QR delivery for a card. Idempotent per card: the existing row is
+ * (re)used — pending/sent are returned as-is; failed/skipped_no_phone/
+ * not_configured are flipped back to pending with fresh member snapshots.
+ * card_deliveries.dedupe_key is UNIQUE, so a second INSERT for the same card
+ * is impossible; we always reuse the existing row instead.
  */
 export async function queueCardDelivery(
   db: Db,
@@ -157,17 +160,31 @@ export async function queueCardDelivery(
   assertDepartmentAccess(actor, member.department);
 
   const dedupeKey = `card:${card.id}:v1`;
-  const existing = db.first<CardDeliveryRow>(
-    `${DELIVERY_SELECT} WHERE dedupe_key = ? ORDER BY created_at DESC LIMIT 1`,
-    [dedupeKey],
-  );
-  if (existing && (existing.status === "pending" || existing.status === "sent")) {
-    return toDelivery(existing);
-  }
+  return db.transaction(async () => {
+    const existing = db.first<CardDeliveryRow>(
+      `${DELIVERY_SELECT} WHERE dedupe_key = ? ORDER BY created_at DESC LIMIT 1`,
+      [dedupeKey],
+    );
+    if (existing && (existing.status === "pending" || existing.status === "sent")) {
+      return toDelivery(existing);
+    }
+    if (existing) {
+      // Re-queue an old terminal row (failed/skipped_no_phone/not_configured):
+      // reuse the id, refresh member snapshots, clear the error.
+      db.run(
+        "UPDATE card_deliveries SET status = 'pending', member_name = ?, phone = ?, error = NULL, image_hash = NULL, sent_at = NULL, created_at = ? WHERE id = ?",
+        [member.full_name, member.phone ?? null, nowStamp(), existing.id],
+      );
+      recordAudit(db, actor, "CARD_DELIVERY_QUEUED", "card", card.id, {
+        barcode: card.barcode_value,
+        memberCode: member.member_code,
+        phone: member.phone ?? null,
+        requeued: existing.status,
+      });
+      return toDelivery(db.first<CardDeliveryRow>(`${DELIVERY_SELECT} WHERE id = ?`, [existing.id])!);
+    }
 
-  const id = crypto.randomUUID();
-  const stamp = nowStamp();
-  await db.transaction(async () => {
+    const id = crypto.randomUUID();
     db.run(
       "INSERT INTO card_deliveries (id, member_id, card_id, barcode_value, member_name, phone, status, error, image_hash, dedupe_key, sent_at, created_by, created_at)\nVALUES (?, ?, ?, ?, ?, ?, 'pending', NULL, NULL, ?, NULL, ?, ?)",
       [
@@ -179,7 +196,7 @@ export async function queueCardDelivery(
         member.phone ?? null,
         dedupeKey,
         actor.userId,
-        stamp,
+        nowStamp(),
       ],
     );
     recordAudit(db, actor, "CARD_DELIVERY_QUEUED", "card", card.id, {
@@ -187,8 +204,8 @@ export async function queueCardDelivery(
       memberCode: member.member_code,
       phone: member.phone ?? null,
     });
+    return toDelivery(db.first<CardDeliveryRow>(`${DELIVERY_SELECT} WHERE id = ?`, [id])!);
   });
-  return toDelivery(db.first<CardDeliveryRow>(`${DELIVERY_SELECT} WHERE id = ?`, [id])!);
 }
 
 /**

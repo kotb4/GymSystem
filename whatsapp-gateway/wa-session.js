@@ -83,7 +83,14 @@ async function isPaired(page) {
  */
 async function healthStatus() {
   if (_page && !_page.isClosed()) {
-    return { browserReady: true, paired: await isPaired(_page) };
+    // Instant check — never waitForSelector here: /health is polled as a
+    // liveness probe and must never lag behind a slow pairing state.
+    try {
+      const loggedIn = await _page.evaluate(() => !!document.querySelector('#side')).catch(() => false);
+      return { browserReady: true, paired: loggedIn };
+    } catch {
+      return { browserReady: true, paired: false };
+    }
   }
   return { browserReady: false, paired: false };
 }

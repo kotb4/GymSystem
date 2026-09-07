@@ -1,7 +1,7 @@
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { buildActor, setup } from "@/core/services/auth.service";
 import { createUser } from "@/core/services/users.service";
-import { createMember } from "@/core/services/members.service";
+import { createMember, updateMember } from "@/core/services/members.service";
 import { registerCard, listMemberCards, type CardWithMember } from "@/core/services/cards.service";
 import {
   queueCardDelivery,
@@ -140,6 +140,49 @@ describe("card-delivery service (TASK-044)", () => {
     expect(result.notConfigured).toBe(1);
     const history = listCardDeliveries(db, manager, { memberId: member.id });
     expect(history[0].status).toBe("not_configured");
+  });
+
+  it("re-queues a failed delivery to pending (reuses the row, no UNIQUE crash)", async () => {
+    process.env.GYM_CRM_MOCK = "";
+    const member = await memberWithPhone();
+    const card = memberCard(member.id);
+    // First attempt ends terminal (not_configured in mock-off, failed if transport errors).
+    await queueCardDelivery(db, manager, { cardId: card.id });
+    const first = await sendPendingCardDeliveries(db, manager, 10);
+    expect(first.notConfigured + first.failed).toBe(1);
+
+    // Re-queue once WhatsApp is enabled again — must flip the SAME row to
+    // pending, never attempt a second INSERT (dedupe_key is UNIQUE).
+    process.env.GYM_CRM_MOCK = "1";
+    const re = await queueCardDelivery(db, manager, { cardId: card.id });
+    expect(re.status).toBe("pending");
+    expect(re.error).toBeNull();
+
+    const history = listCardDeliveries(db, manager, { memberId: member.id });
+    expect(history).toHaveLength(1); // still one row
+    expect(history[0].status).toBe("pending");
+    expect(countPendingCardDeliveries(db, manager)).toBe(1);
+
+    // And it actually sends now.
+    const sent = await sendPendingCardDeliveries(db, manager, 10);
+    expect(sent.sent).toBe(1);
+  });
+
+  it("re-queues a skipped_no_phone row once the member gets a phone", async () => {
+    const member = await memberWithPhone("بلا رقم لاحقاً", null);
+    const card = memberCard(member.id);
+    await queueCardDelivery(db, manager, { cardId: card.id });
+    const first = await sendPendingCardDeliveries(db, manager, 10);
+    expect(first.skippedNoPhone).toBe(1);
+
+    // Member now has a phone → re-queue updates the snapshot and re-sends.
+    await updateMember(db, manager, member.id, { fullName: "بلا رقم لاحقاً", phone: "01099998888" });
+    const re = await queueCardDelivery(db, manager, { cardId: card.id });
+    expect(re.status).toBe("pending");
+    expect(re.phone).toBe("01099998888");
+    const sent = await sendPendingCardDeliveries(db, manager, 10);
+    expect(sent.sent).toBe(1);
+    expect(listCardDeliveries(db, manager, { memberId: member.id })).toHaveLength(1);
   });
 
   it("listCardDeliveries filters by status and limits rows", async () => {
