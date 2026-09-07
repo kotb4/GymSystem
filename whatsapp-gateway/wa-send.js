@@ -26,18 +26,27 @@ async function send(phone, message, media) {
       const err = await wa.attachImage(page, media.caption || message || '', Buffer.from(media.base64, 'base64'));
       if (err) return { ok: false, error: err };
     } else if (message) {
-      const input = page.locator('div[contenteditable="true"][data-tab="10"]');
       await input.fill('');
       await input.type(message, { delay: 5 });
-      await page.waitForTimeout(400);
+      await page.waitForTimeout(300);
     } else {
       return { ok: false, error: 'nothing to send' };
     }
 
-    const sendBtn = page.locator('span[data-icon="send"]').first();
-    await sendBtn.waitFor({ timeout: 20000 });
+    // Resilient send-button chain (WhatsApp renamed it before).
+    const sendBtn = page
+      .locator(
+        [
+          'span[data-icon="send"]',
+          'button[aria-label="Send"]',
+          'button[aria-label="إرسال"]',
+          '[data-testid="send"]',
+        ].join(','),
+      )
+      .first();
+    await sendBtn.waitFor({ timeout: 15000 });
     await sendBtn.click();
-    await page.waitForTimeout(1200);
+    await page.waitForTimeout(900);
     log.info(`sent to ${normalized}`);
     return { ok: true };
   } catch (err) {

@@ -2,6 +2,19 @@
 
 > **Reading order for the next agent:** `AGENTS.md` → `.ai/project.md` → `.ai/current-state.md` → `.ai/tasks.md` → `.ai/decisions.md` (when relevant) → inspect the actual source. The repository files are the persistent memory; chat history is not part of the project.
 
+## TASK-050: WhatsApp Web send broken again (search field renamed) — resilient selectors (TASK-049 follow-up)
+- Status: done (2026-09-07). User chose (via plan-mode question) the quick-fix option; only the gateway was touched — **no EXE build, no GitHub push** (owner mandate in AGENTS.md §7/16).
+- **Root cause (gateway log-proven):** `POST /send -> 502` every time with `locator.waitFor: Timeout 15000ms ... waiting for locator('div[contenteditable="true"][data-tab="3"]')` — WhatsApp Web renamed/reshaped its search field AGAIN (same class of breakage as the QR capture in TASK-047). `openChat`'s hard-coded search selector died → send never found the box → 15 s stall → fail. This is why sending felt slow AND failed.
+- **Fix (`whatsapp-gateway/wa-session.js` + `wa-send.js`):** replaced rigid single selectors with resilient chains:
+  - Search box: `[data-tab="3"]` → `[aria-label*="search"]` → `[aria-placeholder*="Search"]` → `[data-tab="2"][spellcheck="true"]` → `[aria-label*="بحث"]`.
+  - Message box: `[data-tab="10"]` → `[aria-label*="Type a message"]` → `[aria-placeholder*="Message"]`.
+  - Send button: `[data-icon="send"]` → `button[aria-label="Send"]` → `button[aria-label="إرسال"]` → `[data-testid="send"]`.
+  - Attachment: replaced the fragile "Attach menu" dance with **direct `input[type="file"][accept*="image"]` + `setInputFiles()`** (far more stable).
+  - Shortened timeouts/wait-for: search 15→8 s, btn 20→15 s, typing delays and post-Enter waits trimmed (fixes the perceived slowness).
+- **Deploy (no EXE build):** copied the two edited files into `dist-exe\gateway\` alongside the repo copies; killed the running gateway (PID 10484, which ran the repo copy — the running gateway was `node whatsapp-gateway/index.js`) and restarted it (PID 15016). `/health` OK; `/pair` restarted the browser; after WhatsApp Web settled, `/health` → `browserReady:true paired:true` (session preserved). The user should re-try a send from the cards page.
+- **Verification:** `node --check` clean on both files; gateway runs with the new code; paired state confirmed. **No build/test suite run** (gateway JS only; repo TS untouched). No commit of code beyond the two JS files.
+- **Commits:** local only, this session (no push — owner mandate).
+
 ## TASK-049: «فشل إرسال 1 رسالة — أعد المحاولة من صفحة الكروت» — whatsappTransport POSTs the wrong URL
 - Status: done (2026-09-07). User re-sent a card after TASK-048 and got «فشل إرسال 1 رسالة».
 - **Root cause:** `whatsappTransport` in `src/core/services/card-delivery.service.ts` did `fetch(apiUrl, ...)` — POSTing the raw `whatsapp_api_url` setting (e.g. `http://127.0.0.1:8891`) with no `/send` path. The gateway serves `/send` only; a body on `/` → 404 → `res.ok=false` → delivery marked `failed`. Gateway log confirmed `POST /` ×2 with NO `POST /send`; server + gateway processes and loopback both healthy, so it was purely the URL, not connectivity.
