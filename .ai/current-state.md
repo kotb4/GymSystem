@@ -1,5 +1,7 @@
 # Current Development State
 
+> **⚠️ ملك (owner) — قاعدة إلزامية من المالك:** **لا تُبنِ/تُحدّث `GymSystem.exe` / Setup installer (`npm run build:exe` / `build:installer`) ولا ترفع أي شيء على GitHub (`git push`) إلا بعد موافقة صريحة من المالك بالرسالة.** الالتزام المحلي (commit) عادي؛ الرفع للـ GitHub والبناء الـ EXE ممنوعان بدون إذن صريح. (مضافة 2026-09-07 بناءً على طلب المالك.)
+
 - **Last updated:** 2026-09-07
 - **Current objective (TASK-049, delivered this session):** fix «فشل إرسال 1 رسالة». Root: `whatsappTransport` POSTed the raw `whatsapp_api_url` (`http://127.0.0.1:8891`) — no `/send` path — so the gateway 404'd every send → delivery `failed` (gateway log: `POST /` ×2, zero `/send`; processes + loopback healthy). Fix: treat the setting as a BASE URL and append `/send` (tolerating an existing `/send`). Test added (11/11 in-file); full **502/502**; typecheck ×2; rpc-consistency; build; EXE rebuilt + **verified** `sendUrl` token inside `GymSystem.exe`; **Setup rebuilt** (48.6 MB). No migration.
 - **Previous objective (TASK-048):** «حدث خطأ غير متوقع» on re-send — `queueCardDelivery` now re-queues terminal rows in place (no UNIQUE crash) + instant gateway `/health` — committed `b4e1078` + pushed; TASK-047 `2088963` + TASK-048 `b4e1078` hashes recorded in the docs(ai) commit.
