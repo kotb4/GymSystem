@@ -407,13 +407,10 @@ function WhatsAppSettingsCard() {
     setStarting(true);
     try {
       const res = await api.system.ensureWhatsAppGateway();
-      if (res.ok && res.result?.running) {
-        toast("success", t("settings.whatsappRunning"));
-      } else {
-        toast("error", t("settings.whatsappStartFailed"));
-      }
-    } catch {
-      toast("error", t("settings.whatsappStartFailed"));
+      if (!res.running) throw new Error("gateway ensure returned running=false");
+      toast("success", t("settings.whatsappRunning"));
+    } catch (err) {
+      toast("error", describeError(err, t));
     } finally {
       setStarting(false);
     }

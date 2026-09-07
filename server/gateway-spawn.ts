@@ -98,7 +98,9 @@ export async function ensureGateway(url: string, opts: EnsureOptions): Promise<E
   const spawnFn = opts.spawnFn ?? defaultSpawn;
   const log = opts.log ?? (() => {});
   const pollMs = opts.pollMs ?? 400;
-  const startTimeoutMs = opts.startTimeoutMs ?? 4000;
+  // Generous: a cold first start on a scanned/slow machine can take a while
+  // before /health answers; the UI keeps its spinner until this resolves.
+  const startTimeoutMs = opts.startTimeoutMs ?? 12000;
   if (!isLoopbackUrl(url)) return { running: false, alreadyRunning: false, error: "invalid_url" };
 
   if (await probe(url, 1500)) return { running: true, alreadyRunning: true };

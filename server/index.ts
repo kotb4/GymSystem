@@ -463,7 +463,23 @@ async function handleApi(ctx: Ctx): Promise<void> {
         });
       }
       const result = await ensureGateway(url, { packaged: isPackagedExe(), log: logLine });
-      return sendJson(res, 200, { ok: result.running, result });
+      logLine(
+        result.running
+          ? result.alreadyRunning
+            ? "whatsapp gateway ensure: already running"
+            : "whatsapp gateway ensure: started"
+          : `whatsapp gateway ensure failed: ${result.error ?? "unknown"}`,
+      );
+      if (!result.running) {
+        throw errValidation(
+          result.error === "not_found"
+            ? "errors.whatsappGatewayNotFound"
+            : result.error === "invalid_url"
+              ? "errors.whatsappGatewayInvalidUrl"
+              : "errors.whatsappGatewayTimeout",
+        );
+      }
+      return sendJson(res, 200, { ok: true, result });
     } catch (error) {
       const mapped = errorBody(error);
       return sendJson(res, mapped.status, mapped.body);

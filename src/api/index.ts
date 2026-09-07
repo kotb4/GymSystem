@@ -1186,7 +1186,8 @@ export const api = {
   system: {
     /** Start the local WhatsApp gateway on demand (idempotent; settings.edit). */
     ensureWhatsAppGateway: () =>
-      postJson<{ ok: boolean; result?: { running: boolean; alreadyRunning: boolean; mock?: boolean } }>(
+      // request() unwraps {ok, result}; failures throw a translatable AppError.
+      postJson<{ running: boolean; alreadyRunning: boolean; mock?: boolean }>(
         "/api/system/ensure-whatsapp-gateway",
         {},
       ),

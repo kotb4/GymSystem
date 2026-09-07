@@ -16,7 +16,7 @@
 - Trainers & training plans (auto-sweep expired)
 - Employees & salaries (monthly/daily/per_class/custom; pay→expense+ledger)
 - InBody body assessments + custom fitness tests
-- WhatsApp QR card delivery — local `whatsapp-gateway/` (127.0.0.1:8891, Playwright) with batched pending-send UI + i18n; mock transport for tests/audit (`GYM_CRM_MOCK=1`); **pending real-account verification** (needs the gym to install deps + pair once). NOTE: CRM bulk messaging was removed in TASK-044 (leads/trials kept; tables retained).
+- WhatsApp QR card delivery — local `whatsapp-gateway/` (127.0.0.1:8891, Playwright) with batched pending-send UI + i18n; mock transport for tests/audit (`GYM_CRM_MOCK=1`); gateway starts **on demand** (in-app button/route, no app restart — ADR-030); **pending real-account verification** (needs a one-time phone QR link on the gym machine). NOTE: CRM bulk messaging was removed in TASK-044 (leads/trials kept; tables retained).
 - Notifications digest
 - 4-role permission system (owner/manager/reception/trainer, 72 permissions, DB-backed editable grants)
 - Department isolation (men/women/general scoping)
@@ -26,9 +26,9 @@
 - Revenue-refund accounting fix (dashboard + reports correctly handle refunds)
 - Backup/restore with integrity verification
 - Legacy IndexedDB import
-- Desktop packaging (ADR-029): `npm run build:exe` → single-file `dist-exe/GymSystem.exe` (Node SEA + embedded frontend, auto-opens Edge App-Mode, double-launch guard) + portable `runtime/node.exe` + bundled `gateway/` (WhatsApp gateway auto-spawns when enabled; in-app QR pairing). Inno Setup script `scripts/installer.iss` ready for the Setup.exe delivery — compiling needs `iscc` (pending in this env).
+- Desktop packaging (ADR-029): `npm run build:exe` → single-file `dist-exe/GymSystem.exe` (Node SEA + embedded frontend, auto-opens Edge App-Mode, double-launch guard) + portable `runtime/node.exe` + bundled `gateway/` (WhatsApp gateway auto-spawns when enabled; in-app QR pairing). Setup installer: `npm run build:installer` → `dist-exe/GymSystem-Setup-*.exe` (ISCC auto-located; clean-install smoke-tested — ADR-030).
 - Full Arabic RTL UI with dark premium theme
-- 205+ unit tests across 20 files
+- 499 unit tests across 44 files
 - AI development infrastructure (AGENTS.md, docs/ai/*, .ai/*, .opencode/*)
 
 ## Current
@@ -36,7 +36,6 @@
 - Production readiness stabilization
 - Edge case coverage in financial reports
 - E2E test coverage expansion
-- Setup-installer build (Inno `iscc`) once available on the build machine
 
 ## Next
 
