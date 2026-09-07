@@ -1113,6 +1113,8 @@ function fileUrl(fileId: string): string {
 export interface GatewayHealth {
   ok: boolean;
   service: string;
+  /** False = the in-gateway browser is not launched yet (/pair launches it). */
+  browserReady?: boolean;
   paired: boolean;
   sessionDir?: string;
 }
@@ -1139,13 +1141,21 @@ async function gatewayFetch(baseUrl: string, path: string, init?: RequestInit, t
 }
 
 async function gatewayHealth(baseUrl: string): Promise<GatewayHealth> {
-  const res = await gatewayFetch(baseUrl, "/health");
+  // Generous timeout: /pair can keep the gateway busy launching its browser.
+  const res = await gatewayFetch(baseUrl, "/health", undefined, 15000);
   if (!res.ok) throw new Error(`HTTP ${res.status}`);
   return (await res.json()) as GatewayHealth;
 }
 
 async function gatewayPair(baseUrl: string): Promise<GatewayPairResult> {
-  const res = await gatewayFetch(baseUrl, "/pair", { method: "POST", headers: { "Content-Type": "application/json" }, body: "{}" });
+  // First /pair on a cold gateway launches the in-gateway browser and waits
+  // for WhatsApp Web — that can take well over the old 5 s abort window.
+  const res = await gatewayFetch(
+    baseUrl,
+    "/pair",
+    { method: "POST", headers: { "Content-Type": "application/json" }, body: "{}" },
+    30000,
+  );
   const body: GatewayPairResult & { error?: string } = await res.json();
   if (res.status !== 200) throw new Error(body.error ?? `HTTP ${res.status}`);
   return body;

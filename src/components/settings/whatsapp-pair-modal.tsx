@@ -39,6 +39,11 @@ export function WhatsAppPairModal({
         setState("paired");
         return setQr(null);
       }
+    } catch {
+      setState("down");
+      return setQr(null);
+    }
+    try {
       const pair = await api.gateway.pair(gatewayUrl);
       if (!pair.paired) {
         setState("ready");
@@ -48,7 +53,10 @@ export function WhatsAppPairModal({
         setQr(null);
       }
     } catch {
-      setState("down");
+      // The gateway answered /health but could not serve the QR (e.g. its
+      // in-gateway browser failed to launch) — surface that instead of
+      // bouncing back to the "gateway down" state.
+      setState("error");
       setQr(null);
     }
   }, [gatewayUrl]);
@@ -111,7 +119,7 @@ export function WhatsAppPairModal({
         )}
 
         {state === "error" && (
-          <p className="text-center text-[13px] text-danger">{t("settings.whatsappPairFailed")}</p>
+          <p className="text-center text-[13px] text-danger">{t("settings.whatsappBrowserFailed")}</p>
         )}
       </div>
 

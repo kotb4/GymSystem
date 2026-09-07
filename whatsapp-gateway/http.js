@@ -59,12 +59,14 @@ async function handle(req, res) {
 
   try {
     if (req.method === 'GET' && path === '/health') {
-      const { ok, page } = await wa.ensureBrowser();
-      const paired = ok ? await wa.isPaired(page) : false;
+      // Cheap, launch-free probe: /pair is the only endpoint that starts the
+      // in-gateway browser, so health polling can never time out behind it.
+      const status = await wa.healthStatus();
       return json(res, 200, {
         ok: true,
         service: 'whatsapp-gateway',
-        paired,
+        browserReady: status.browserReady,
+        paired: status.paired,
         sessionDir: waSessionDir(),
       });
     }

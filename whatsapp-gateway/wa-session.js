@@ -15,6 +15,19 @@ function setCfg(cfg) {
 }
 
 async function ensureBrowser() {
+  // Zombie guard: the visible window may have been closed or the context may
+  // have died while the gateway kept running — relaunch fresh instead of
+  // silently failing every later /pair and /send forever.
+  if (_page && _page.isClosed()) {
+    try {
+      if (_context) await _context.close();
+    } catch {
+      /* already gone */
+    }
+    _page = null;
+    _context = null;
+    _launching = null;
+  }
   if (_page) return { ok: true, page: _page };
   if (_launching) return _launching;
 
@@ -62,20 +75,49 @@ async function isPaired(page) {
   }
 }
 
+/**
+ * Cheap health probe: reports pairing state WITHOUT launching the browser.
+ * `browserReady:false` simply means "not launched yet" — /pair launches it.
+ * Keeps /health instant so callers (ensure route, pairing modal polling)
+ * never time out behind a cold browser launch.
+ */
+async function healthStatus() {
+  if (_page && !_page.isClosed()) {
+    return { browserReady: true, paired: await isPaired(_page) };
+  }
+  return { browserReady: false, paired: false };
+}
+
 async function readQr(page) {
   try {
-    const dataUrl = await page.evaluate(async () => {
-      const canvas = document.querySelector('canvas[data-ref]');
-      if (!canvas) return null;
+    // WhatsApp Web changed its DOM more than once: the QR used to be
+    // `canvas[data-ref]`, now `[data-ref]` sits on a plain wrapper while the
+    // QR itself may be a canvas, an img or anything else. So do NOT assume an
+    // element type — locate the QR node in any frame and SCREENSHOT it.
+    for (const frame of page.frames()) {
+      const handle = await frame
+        .evaluateHandle(() => {
+          return (
+            document.querySelector('canvas[data-ref]') ||
+            document.querySelector('[data-ref] canvas') ||
+            document.querySelector('[data-ref]') ||
+            document.querySelector('canvas')
+          );
+        })
+        .catch(() => null);
+      const el = handle ? handle.asElement() : null;
+      if (!el) continue;
       // Let the QR re-render for a beat so the latest frame is captured.
-      await new Promise((r) => setTimeout(r, 250));
-      return canvas.toDataURL('image/png');
-    });
-    if (!dataUrl) return null;
-    const base64 = dataUrl.replace(/^data:image\/png;base64,/, '');
-    const file = join(_cfg.sessionDir, 'pairing-qr.png');
-    fs.writeFileSync(file, Buffer.from(base64, 'base64'));
-    return { pngPath: file, pngBase64: base64 };
+      await page.waitForTimeout(250);
+      const buf = await el.screenshot({ type: 'png' }).catch(() => null);
+      if (buf && buf.length > 500) {
+        const base64 = buf.toString('base64');
+        const file = join(_cfg.sessionDir, 'pairing-qr.png');
+        fs.writeFileSync(file, buf);
+        return { pngPath: file, pngBase64: base64 };
+      }
+    }
+    return null;
   } catch (err) {
     log.warn(`qr capture failed: ${err.message}`);
     return null;
@@ -153,6 +195,7 @@ async function close() {
 module.exports = {
   setCfg,
   ensureBrowser,
+  healthStatus,
   isPaired,
   readQr,
   waitForPairing,

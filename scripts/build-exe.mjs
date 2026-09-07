@@ -161,8 +161,24 @@ function copyRuntime() {
     if (only.includes(rel)) copyFileSync(path.join(gatewaySrc, rel), path.join(gatewayDst, rel));
   }
   if (existsSync(path.join(gatewaySrc, "node_modules", "playwright"))) {
+    // Fail loudly on an incomplete playwright runtime instead of shipping a
+    // gateway that can never launch its browser (silent no-QR bug).
+    // playwright-core may sit flat (node_modules/playwright-core) or nested
+    // under playwright (node_modules/playwright/node_modules/playwright-core)
+    // depending on the resolved version — accept both layouts.
+    const coreCandidates = [
+      path.join(gatewaySrc, "node_modules", "playwright-core"),
+      path.join(gatewaySrc, "node_modules", "playwright", "node_modules", "playwright-core"),
+    ];
+    const coreSrc = coreCandidates.find((dir) => existsSync(path.join(dir, "package.json")));
+    const pwPkg = path.join(gatewaySrc, "node_modules", "playwright", "package.json");
+    if (!coreSrc || !existsSync(pwPkg)) {
+      throw new Error(
+        "gateway playwright runtime incomplete — delete whatsapp-gateway/node_modules, run `npm install` inside whatsapp-gateway, then rebuild",
+      );
+    }
     copyTree(path.join(gatewaySrc, "node_modules", "playwright"), path.join(gatewayDst, "node_modules", "playwright"));
-    copyTree(path.join(gatewaySrc, "node_modules", "playwright-core"), path.join(gatewayDst, "node_modules", "playwright-core"));
+    copyTree(coreSrc, path.join(gatewayDst, path.relative(gatewaySrc, coreSrc)));
     if (existsSync(path.join(gatewaySrc, "node_modules", ".bin"))) {
       copyTree(path.join(gatewaySrc, "node_modules", ".bin"), path.join(gatewayDst, "node_modules", ".bin"));
     }
