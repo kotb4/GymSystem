@@ -2,6 +2,14 @@
 
 > **Reading order for the next agent:** `AGENTS.md` → `.ai/project.md` → `.ai/current-state.md` → `.ai/tasks.md` → `.ai/decisions.md` (when relevant) → inspect the actual source. The repository files are the persistent memory; chat history is not part of the project.
 
+## TASK-049: «فشل إرسال 1 رسالة — أعد المحاولة من صفحة الكروت» — whatsappTransport POSTs the wrong URL
+- Status: done (2026-09-07). User re-sent a card after TASK-048 and got «فشل إرسال 1 رسالة».
+- **Root cause:** `whatsappTransport` in `src/core/services/card-delivery.service.ts` did `fetch(apiUrl, ...)` — POSTing the raw `whatsapp_api_url` setting (e.g. `http://127.0.0.1:8891`) with no `/send` path. The gateway serves `/send` only; a body on `/` → 404 → `res.ok=false` → delivery marked `failed`. Gateway log confirmed `POST /` ×2 with NO `POST /send`; server + gateway processes and loopback both healthy, so it was purely the URL, not connectivity.
+- **Fix (`whatsappTransport`):** treat `whatsapp_api_url` as a BASE URL — trim trailing `/`, append `/send` (tolerating a value that already ends with `/send`), then POST `{phone, message, media}` there.
+- **Test added (`tests/card-delivery.test.ts`):** mocks `globalThis.fetch`, asserts the transport POSTs to `http://127.0.0.1:8891/send` with the right JSON payload, and that a configured `/send/` URL still yields one `/send`.
+- **Verification:** `npx vitest run tests/card-delivery.test.ts` 11/11; full `npm test` **502/502 (44 files)**; typecheck ×2 clean; rpc-consistency 273/no-missing; `npm run build` clean; `npm run build:exe` rebuilt and **verified** (`sendUrl` token present in `dist-exe/GymSystem.exe`) + `npm run build:installer` → `GymSystem-Setup-0.1.0.exe` (48.6 MB). No DB migration.
+- **Commits:** this session (hash recorded in the docs(ai) commit that follows).
+
 ## TASK-048: «حدث خطأ غير متوقع» on re-sending a card QR — queueCardDelivery broke the UNIQUE dedupe_key (TASK-044 regression)
 - Status: done (2026-09-07). User-reported: «حدث خطأ غير متوقع»; server.log showed `rpc internal error: UNIQUE constraint failed: card_deliveries.dedupe_key at Object.queueCardDelivery`.
 - **Root cause:** `queueCardDelivery` READ the existing dedupe row OUTSIDE the transaction and INSERTed a fresh row whenever the old row was not pending/sent — but `card_deliveries.dedupe_key` is UNIQUE (migration v33 line 844), so re-queueing a terminal row (failed/skipped_no_phone/not_configured) — exactly what happens after old sends failed while the gateway was broken — threw `UNIQUE constraint failed` → 500 → generic «حدث خطأ غير متوقع». The documented rule («a failed one creates a fresh attempt») was impossible with the schema from day one; triggered live once the QR/gateway got fixed. Secondary: `wa-session.healthStatus()` used `isPaired` (3000 ms waitForSelector behind a loaded page) → `/health` could take ~3 s > 1.5 s probe timeout → repeated ensure/spawn attempts (EADDRINUSE noise in the gateway log).

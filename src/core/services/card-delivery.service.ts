@@ -69,9 +69,13 @@ export const whatsappTransport =
   (apiUrl: string): MessageTransport =>
   async (phone, body, media) => {
     try {
+      const base = apiUrl.trim().replace(/\/+$/, "");
+      // The gateway exposes POST /send; treat the setting as a BASE URL and
+      // append /send — but tolerate a value that already ends with /send.
+      const sendUrl = /\/send$/i.test(base) ? base : `${base}/send`;
       const controller = new AbortController();
       const timer = setTimeout(() => controller.abort(), 10000);
-      const res = await fetch(apiUrl, {
+      const res = await fetch(sendUrl, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ phone, message: body, media }),

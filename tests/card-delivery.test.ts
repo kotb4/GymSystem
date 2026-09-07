@@ -8,6 +8,7 @@ import {
   sendPendingCardDeliveries,
   listCardDeliveries,
   countPendingCardDeliveries,
+  whatsappTransport,
 } from "@/core/services/card-delivery.service";
 import type { Db } from "@/db/engine";
 import type { ServiceActor } from "@/core/permissions";
@@ -204,5 +205,40 @@ describe("card-delivery service (TASK-044)", () => {
     await expect(
       queueCardDelivery(db, owner, { cardId: "00000000-0000-0000-0000-000000000000" }),
     ).rejects.toMatchObject({ code: "NOT_FOUND" });
+  });
+
+  it("whatsappTransport posts to {base}/send — never the whole setting URL", async () => {
+    const seen: Array<{ url: string; body: string }> = [];
+    const originalFetch = globalThis.fetch;
+    globalThis.fetch = (async (url: RequestInfo | URL, init?: RequestInit) => {
+      seen.push({ url: String(url), body: String(init?.body ?? "") });
+      return new Response(JSON.stringify({ ok: true }), { status: 200 });
+    }) as typeof fetch;
+    try {
+      const transport = whatsappTransport("http://127.0.0.1:8891");
+      const result = await transport("01012345678", "msg", {
+        base64: "AA",
+        mime: "image/png",
+        caption: "c",
+      });
+      expect(result.ok).toBe(true);
+      expect(seen).toHaveLength(1);
+      expect(seen[0].url).toBe("http://127.0.0.1:8891/send");
+      const parsed = JSON.parse(seen[0].body);
+      expect(parsed.phone).toBe("01012345678");
+      expect(parsed.media.base64).toBe("AA");
+
+      // Tolerates a configured value that already ends with /send.
+      const seen2: string[] = [];
+      globalThis.fetch = (async (url: RequestInfo | URL) => {
+        seen2.push(String(url));
+        return new Response(JSON.stringify({ ok: true }), { status: 200 });
+      }) as typeof fetch;
+      const transport2 = whatsappTransport("http://127.0.0.1:8891/send/");
+      await transport2("01011112222", "m", null);
+      expect(seen2[0]).toBe("http://127.0.0.1:8891/send");
+    } finally {
+      globalThis.fetch = originalFetch;
+    }
   });
 });
