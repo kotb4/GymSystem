@@ -77,7 +77,7 @@ Every rule below was read from the actual implementation. Anything unverified is
 - First-run setup creates the single owner; setup endpoint refuses once an owner exists.
 - Lockout: 5 failed logins → 300 s lock; success resets counter.
 - Sessions: HttpOnly cookie, SHA-hashed token in `auth_sessions`, 12 h sliding TTL, pruned at boot/login.
-- 73 permissions × 4 roles; owner always passes every check; other roles resolve from `role_permissions` table cached in memory (refreshed on boot and after each committed write); editable at runtime from Permissions page (requires `users.view` to view, `settings.edit` to mutate; owner row immutable). Multiple owner accounts are allowed — each passes everything by design (e.g., the "Anwar" account, ADR-007). Manager holds `settings.edit` since migration v7, enabling permission control over subordinate roles (ADR-007).
+- 91 permissions × 4 roles; owner always passes every check; other roles resolve from `role_permissions` table cached in memory (refreshed on boot and after each committed write); editable at runtime from Permissions page (requires `users.view` to view, `settings.edit` to mutate; owner row immutable). Multiple owner accounts are allowed — each passes everything by design (e.g., the "Anwar" account, ADR-007). Manager holds `settings.edit` since migration v7, enabling permission control over subordinate roles (ADR-007).
 - Deactivating self or the last active owner is refused.
 
 ## Backups / Restore

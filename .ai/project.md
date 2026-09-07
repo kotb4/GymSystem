@@ -39,8 +39,8 @@ Members & trash/purge/photos · Plans & subscriptions (time/sessions/open kinds,
 - Single-machine app; the backend binds `127.0.0.1` (loopback-only by default) but there is no built-in multi-user collaborative workflow beyond the shared local SQLite — one writer process at a time (ADR-011: source is on private GitHub for collab, live DB stays local; ADR-010's LAN default was reversed by ADR-023).
 - WhatsApp QR-card delivery works via the optional local gateway (`whatsapp-gateway/`, `127.0.0.1:8891`, Playwright, paired once). Bulk CRM messaging was removed in TASK-044 (leads/trials kept). Sending is off until the gym installs + pairs the gateway (`npm run setup-whatsapp-gateway`).
 - File assets (member photos, InBody reports, expense attachments) live on disk under `Files\` and are registered in the `files` table; they are included in `.gymbak` backups (ADR-018).
-- No EXE/installer packaging yet (bat launcher only).
+- No EXE/installer packaging yet (bat launcher only). → **2026-09-07 FIXED (ADR-029):** `npm run build:exe` produces `dist-exe/GymSystem.exe` (Node SEA, embedded frontend, auto-opens Edge App-Mode, double-launch-guarded) + portable `runtime/node.exe` + bundled `gateway/`; an Inno Setup script (`scripts/installer.iss`) is ready for the Setup.exe delivery (needs `iscc`, not yet present in this env). The WhatsApp gateway is auto-spawned from the package when `whatsapp_enabled=1`; pairing is in-app.
 
 ## NOT IMPLEMENTED (verified absent)
 
-NFC check-in · Printing/receipts · Multi-user LAN (true concurrent multi-writer) · Automated messaging transport · Installer packaging.
+NFC check-in · Printing/receipts · Multi-user LAN (true concurrent multi-writer) · Automated messaging transport (send enabled; auto-import not) · Setup-installer artifact (`iscc` pending) ·

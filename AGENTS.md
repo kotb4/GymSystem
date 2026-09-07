@@ -37,7 +37,7 @@ Local Node.js backend (server/index.ts, bundled to dist-server/index.cjs)
 SQLite (WAL) at %LOCALAPPDATA%\GymSystem\Database\gym.db  + Files\ + Backups\ + Logs\
 ```
 
-- **No Electron/Tauri.** The "desktop app" is the local Node server plus a browser window (Edge App Mode) launched by `scripts/windows/start-gymsystem.bat`.
+- **No Electron/Tauri.** The "desktop app" is the local Node server plus a browser window (Edge App Mode) launched either by `scripts/windows/start-gymsystem.bat` (dev) or automatically by the packaged `GymSystem.exe` (ADR-029: Node SEA, embedded `dist/`, GUI subsystem, auto-opens an Edge App-Mode window, second launch just focuses and exits).
 - **Single source of truth:** the SQLite file on disk. The browser holds NO business data (no IndexedDB/localStorage for data).
 - **Business logic lives ONLY in the backend.** Services from `src/core/services/*.service.ts` execute inside the Node process; the frontend calls them through `/api/rpc` with a strict whitelist registry (`server/rpc.ts`).
 - All UI text is Arabic via `src/i18n/ar.ts`; currency is EGP stored as integer minor units (100 piastres = 1 EGP).
@@ -56,10 +56,14 @@ SQLite (WAL) at %LOCALAPPDATA%\GymSystem\Database\gym.db  + Files\ + Backups\ + 
 | Unit tests (watch) | `npm run test:watch` |
 | Single test file | `npx vitest run tests/<file>.test.ts` |
 | Backend E2E smoke (start → seed → restart → verify) | `npm run e2e` |
-| Larger E2E audit (42 checks) | `powershell -NoProfile -ExecutionPolicy Bypass -File scripts/e2e-audit.ps1` |
+| Larger E2E audit (dynamically counted checks) | `powershell -NoProfile -ExecutionPolicy Bypass -File scripts/e2e-audit.ps1` |
 | Run built backend | `npm start` |
+| Build single-file desktop EXE (SEA + embedded dist + bundled WhatsApp gateway) | `npm run build:exe` |
+| Build Windows Setup installer (needs Inno Setup `iscc` on PATH) | `npm run build:installer` |
 | Value-level doc sync (counts/versions from source) | `npm run sync:docs` (also auto-runs via pre-commit hook) |
 | One-shot commit+push (add all → commit "msg" → push) | `git a "commit message"` |
+
+Packaged desktop app (ADR-029): `npm run build:exe` produces `dist-exe/GymSystem.exe` (Node SEA, embedded `dist/`, PE subsystem=GUI) plus `dist-exe/runtime/node.exe` + `dist-exe/gateway/` (portable WhatsApp gateway). A double-click opens the backend (listening `127.0.0.1:8890`) and an Edge App-Mode window pointing at it; if it is already running, the second launch just focuses the window and exits 0. `%LOCALAPPDATA%\GymSystem` remains the data dir; `GYMSYSTEM_PORT`, `GYMSYSTEM_NO_OPEN=1`, `GYMSYSTEM_DATA_DIR` all work. In the packaged EXE the frontend is served from the **embedded bundle** unless a `dist/` folder sits next to the exe (dev override). Installer layout: `{app}\GymSystem.exe` + `{app}\runtime\` + `{app}\gateway\`.
 
 Demo data seeding: seeding runs in the Node backend only (`server/context.ts`), opt-in via `GYM_SEED_DEMO=1`. Set it in the shell (e.g. `set GYM_SEED_DEMO=1 && npm run dev:server` for dev, or a `GYM_SEED_DEMO=1` system env for the built backend). The frontend-only `VITE_SEED_DEMO` in `.env.development` does NOT reach the backend process and does not trigger seeding.
 

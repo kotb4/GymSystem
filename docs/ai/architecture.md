@@ -126,6 +126,15 @@ Tailwind CSS v4 with `@theme` design tokens in `src/index.css`:
 6. `db.onDirty(() => loadPermissionsCache(db))` — auto-refresh on writes
 7. Optional demo seed (if env enabled AND `settings.demo_seeded` is unset)
 
+### Desktop Packaging (ADR-029)
+- `npm run build:exe` (`scripts/build-exe.mjs`): full build → embed `dist/` (base64) into `server/embedded-dist.ts` (committed EMPTY stub) → rebuild server bundle → SEA-pack via postject (FUSE sentinel) → patch PE subsystem 3→2 (GUI) → copy `runtime/node.exe` (copy of `process.execPath`) + `gateway/` (WhatsApp gateway incl. `package.json`, so Node treats it as CommonJS, + playwright runtime, Edge channel) → `dist-exe/GymSystem.exe`. `dist-exe/` is gitignored.
+- Packaged modes in `server/index.ts` (`isPackagedExe()` = exe basename `gymsystem|gympro` OR `GYMSYSTEM_AUTO_OPEN=1`):
+  - auto-opens an Edge App-Mode window after `listen` (`openAppWindow`, msedge `--app=` → `cmd /c start` fallback); `GYMSYSTEM_NO_OPEN=1` suppresses it.
+  - **double-launch guard:** second instance hits `EADDRINUSE` → opens the window, logs «port busy», `exit(0)`.
+  - `autospawnWhatsappGateway()` when `whatsapp_enabled=1` (writes default `whatsapp_api_url` `http://127.0.0.1:8891`) — spawns `{exeDir}\runtime\node.exe {exeDir}\gateway\index.js` hidden.
+- `serveStatic`: disk `DIST_DIR` first, else embedded map; hashed `/assets/*` immutable, index `no-cache`; boot log reports `serving frontend from disk|embedded bundle`.
+- Installer: `scripts/installer.iss` (Inno Setup, per-user `{localappdata}\Programs\GymSystem`, Arabic, desktop+Start Menu shortcuts, uninstall never touches data). Requires `iscc` on the build machine.
+
 ## Key Files Quick Reference
 
 | File | Purpose |
@@ -141,7 +150,7 @@ Tailwind CSS v4 with `@theme` design tokens in `src/index.css`:
 | `src/db/engine.ts` | Db wrapper class |
 | `src/db/migrations.ts` | Schema migrations v1..v33 |
 | `src/db/seed.ts` | Demo data seeding |
-| `src/core/permissions.ts` | 73 permissions, 4 roles, requirePermission |
+| `src/core/permissions.ts` | 91 permissions, 4 roles, requirePermission |
 | `src/core/errors.ts` | AppError factories |
 | `src/core/auth/password.ts` | Argon2id hash/verify |
 | `src/core/dates.ts` | Date key utilities |

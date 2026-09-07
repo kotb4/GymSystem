@@ -26,6 +26,8 @@ npm install
 
 ```bash
 npm run build    # Full build: typecheck client + server, vite build, esbuild server bundle
+npm run build:exe         # dist-exe/GymSystem.exe (SEA, embedded dist/, GUI) + runtime/node.exe + gateway/
+npm run build:installer   # Setup.exe via Inno Setup (requires `iscc` on PATH)
 npm run typecheck         # Frontend TypeScript only
 npm run typecheck:server  # Backend TypeScript only
 ```
@@ -33,6 +35,7 @@ npm run typecheck:server  # Backend TypeScript only
 Build output:
 - `dist/` — Vite frontend (SPA)
 - `dist-server/index.cjs` — esbuild backend bundle (CJS, Node 24 target)
+- `dist-exe/` — packaged desktop app (ADR-029): `GymSystem.exe` (Node SEA, embedded `dist/`, PE subsystem GUI), `runtime/node.exe`, `gateway/` (WhatsApp gateway + playwright). `~201 MB`, gitignored. Double-click opens the app in Edge App-Mode; a second launch just focuses and exits 0. Smoke-testing the exe: set `GYMSYSTEM_DATA_DIR=<temp>` + `GYMSYSTEM_PORT=<free>` + `GYMSYSTEM_NO_OPEN=1`, run from an empty cwd (no `dist/` next to the exe) to force embedded serving.
 
 ## Testing
 

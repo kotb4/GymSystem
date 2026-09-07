@@ -26,6 +26,7 @@
 - Revenue-refund accounting fix (dashboard + reports correctly handle refunds)
 - Backup/restore with integrity verification
 - Legacy IndexedDB import
+- Desktop packaging (ADR-029): `npm run build:exe` → single-file `dist-exe/GymSystem.exe` (Node SEA + embedded frontend, auto-opens Edge App-Mode, double-launch guard) + portable `runtime/node.exe` + bundled `gateway/` (WhatsApp gateway auto-spawns when enabled; in-app QR pairing). Inno Setup script `scripts/installer.iss` ready for the Setup.exe delivery — compiling needs `iscc` (pending in this env).
 - Full Arabic RTL UI with dark premium theme
 - 205+ unit tests across 20 files
 - AI development infrastructure (AGENTS.md, docs/ai/*, .ai/*, .opencode/*)
@@ -35,10 +36,10 @@
 - Production readiness stabilization
 - Edge case coverage in financial reports
 - E2E test coverage expansion
+- Setup-installer build (Inno `iscc`) once available on the build machine
 
 ## Next
 
-- Production EXE installer / packaging
 - Demo mode with synthetic data for marketing
 - Automated backup scheduling (background)
 - Notification delivery (beyond digest)
