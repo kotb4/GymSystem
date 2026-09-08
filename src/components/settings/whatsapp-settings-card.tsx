@@ -136,6 +136,12 @@ export function WhatsAppSettingsCard() {
           <span className={cn("text-[13px] font-semibold", statusColor)}>{statusLabel}</span>
         </div>
 
+        {!isReady && info?.lastError && (
+          <p className="rounded-xl border border-red/30 bg-red/10 px-3.5 py-2.5 text-[12px] font-semibold text-red">
+            {t(info.lastError)}
+          </p>
+        )}
+
         {info?.connectedNumber && (
           <div className="flex items-center justify-between rounded-xl border border-line bg-surface px-3.5 py-3">
             <span className="text-[13px] font-semibold">{t("whatsapp.connectedNumber")}</span>

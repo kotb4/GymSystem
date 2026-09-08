@@ -141,7 +141,7 @@ export class WhatsAppService {
     // 2. Validate phone
     const phone = normalizeEgyNumber(member.phone);
     if (!phone) {
-      return { ok: false, sent: false, messageKey: "whatsappNoPhone" };
+      return { ok: false, sent: false, messageKey: "errors.whatsappNoPhone" };
     }
 
     // 3. Deduplication: skip if already auto-sent (unless forced)
@@ -151,13 +151,13 @@ export class WhatsAppService {
         [memberId],
       );
       if (existing && existing.c > 0) {
-        return { ok: true, sent: false, messageKey: "whatsappQrAlreadySent" };
+        return { ok: true, sent: false, messageKey: "settings.whatsappQrAlreadySent" };
       }
     }
 
     // 4. Check connection
     if (!this.client.isReady()) {
-      return { ok: false, sent: false, messageKey: "whatsappNotConnected" };
+      return { ok: false, sent: false, messageKey: "errors.whatsappNotConnected" };
     }
 
     // 5. Locate the QR barcode (virtual card's barcode = member code)
@@ -193,7 +193,7 @@ export class WhatsAppService {
         auto: isAuto === 1,
       });
 
-      return { ok: true, sent: true, messageKey: "whatsappMemberQrSent" };
+      return { ok: true, sent: true, messageKey: "settings.whatsappMemberQrSent" };
     } catch (err: any) {
       const msg = err?.message ?? "send failed";
       db.run(
@@ -201,7 +201,7 @@ export class WhatsAppService {
          VALUES (?, ?, 'failed', ?, ?, ?, ?, ?)`,
         [id, memberId, isAuto, phone, msg, stamp, stamp],
       );
-      return { ok: false, sent: false, messageKey: "whatsappMemberQrFailed" };
+      return { ok: false, sent: false, messageKey: "settings.whatsappMemberQrFailed" };
     } finally {
       try {
         await unlink(qrPath);

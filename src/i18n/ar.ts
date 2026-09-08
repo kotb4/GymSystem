@@ -190,6 +190,7 @@ export const ar = {
     whatsappNoPhone: "العضو ليس لديه رقم هاتف صالح للإرسال",
     whatsappSendFailed: "تعذر إرسال الرسالة عبر واتساب",
     whatsappAuthFailed: "فشل التحقق من حساب واتساب — حاول إعادة المسح",
+    whatsappBrowserFailed: "تعذّر تشغيل متصفح واتساب الداخلي — تحقق من وجود Microsoft Edge ثم أعد المحاولة",
     whatsappDisconnected: "انقطع اتصال واتساب — أعد الاتصال من الإعدادات",
     accountLocked: "تم قفل الحساب مؤقتًا بسبب محاولات فاشلة متكررة. أعد المحاولة بعد {seconds} ثانية",
     setupAlreadyDone: "تم تهيئة النظام بالفعل",
