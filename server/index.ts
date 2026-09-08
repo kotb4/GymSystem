@@ -1,4 +1,4 @@
-﻿import http from "node:http";
+import http from "node:http";
 import path from "node:path";
 import fs from "node:fs";
 import os from "node:os";
@@ -6,13 +6,8 @@ import crypto from "node:crypto";
 import { spawn } from "node:child_process";
 import { getDbContext, openDatabase, logLine, isMaintenanceMode, flushLogging } from "./context";
 import { embeddedDist } from "./embedded-dist";
-import {
-  SETTING_KEYS,
-  readSetting,
-  writeSettingInternalIfMissing,
-} from "../src/core/services/settings.service";
+
 import { resolveHttpHost } from "./config";
-import { ensureGateway } from "./gateway-spawn";
 import {
   SESSION_COOKIE,
   createSessionToken,
@@ -35,8 +30,9 @@ import {
   getFileMeta,
 } from "./files.service";
 import { requirePermission } from "../src/core/permissions";
-import { renderQrPngBase64 } from "../src/core/qr";
+import { getWhatsAppService } from "./whatsapp/index.js";
 import { getCardByBarcode } from "../src/core/services/cards.service";
+import { renderQrPngBase64 } from "../src/core/qr";
 
 const PORT = Number(process.env.GYMSYSTEM_PORT ?? 8890);
 /** Secure default: loopback-only (ADR-023). GYMSYSTEM_HOST still allows LAN exposure. */
@@ -53,9 +49,9 @@ const DIST_DIR = path.resolve(process.env.GYMSYSTEM_DIST ?? path.join(process.cw
 
 /**
  * True when running as the packaged SEA executable (GymSystem.exe) instead of
- * plain node. Drives auto-open of the app window, the double-launch guard and
- * the WhatsApp gateway autostart. Overridable with GYMSYSTEM_AUTO_OPEN=1 for
- * smoke-testing those paths from plain node.
+ * plain node. Drives auto-open of the app window and the double-launch guard.
+ * Overridable with GYMSYSTEM_AUTO_OPEN=1 for smoke-testing those paths from
+ * plain node.
  */
 function isPackagedExe(): boolean {
   try {
@@ -91,27 +87,7 @@ function openAppWindow(url: string = `http://${HOST}:${PORT}/`): void {
  * is a separate process so a crash never takes the gym DB down with it.
  * Idempotent — an already-reachable gateway is left alone.
  */
-function autospawnWhatsappGateway(): void {
-  if (!isPackagedExe()) return;
-  void (async () => {
-    try {
-      const db = getDbContext().db;
-      if (readSetting(db, SETTING_KEYS.whatsappEnabled) !== "1") return;
-      writeSettingInternalIfMissing(db, SETTING_KEYS.whatsappApiUrl, "http://127.0.0.1:8891");
-      const url = readSetting(db, SETTING_KEYS.whatsappApiUrl) || "http://127.0.0.1:8891";
-      const result = await ensureGateway(url, { packaged: true, log: logLine });
-      logLine(
-        result.alreadyRunning
-          ? "whatsapp gateway already running"
-          : result.running
-            ? "whatsapp gateway autostarted"
-            : `whatsapp gateway autostart failed: ${result.error ?? "unknown"}`,
-      );
-    } catch (error) {
-      logLine(`whatsapp gateway autostart skipped: ${String(error)}`);
-    }
-  })();
-}
+
 
 const MIME: Record<string, string> = {
   ".html": "text/html; charset=utf-8",
@@ -448,44 +424,6 @@ async function handleApi(ctx: Ctx): Promise<void> {
     }
   }
 
-  // On-demand WhatsApp gateway start: enabling WhatsApp mid-session must not
-  // force an app restart. Idempotent (probe → spawn only if not reachable).
-  if (route === "POST /api/system/ensure-whatsapp-gateway") {
-    try {
-      requirePermission(actor, "settings.edit");
-      const db = getDbContext().db;
-      writeSettingInternalIfMissing(db, SETTING_KEYS.whatsappApiUrl, "http://127.0.0.1:8891");
-      const url = readSetting(db, SETTING_KEYS.whatsappApiUrl) || "http://127.0.0.1:8891";
-      if (process.env.GYM_CRM_MOCK === "1") {
-        return sendJson(res, 200, {
-          ok: true,
-          result: { running: true, alreadyRunning: true, mock: true },
-        });
-      }
-      const result = await ensureGateway(url, { packaged: isPackagedExe(), log: logLine });
-      logLine(
-        result.running
-          ? result.alreadyRunning
-            ? "whatsapp gateway ensure: already running"
-            : "whatsapp gateway ensure: started"
-          : `whatsapp gateway ensure failed: ${result.error ?? "unknown"}`,
-      );
-      if (!result.running) {
-        throw errValidation(
-          result.error === "not_found"
-            ? "errors.whatsappGatewayNotFound"
-            : result.error === "invalid_url"
-              ? "errors.whatsappGatewayInvalidUrl"
-              : "errors.whatsappGatewayTimeout",
-        );
-      }
-      return sendJson(res, 200, { ok: true, result });
-    } catch (error) {
-      const mapped = errorBody(error);
-      return sendJson(res, mapped.status, mapped.body);
-    }
-  }
-
   if (route === "POST /api/backups/create") {
     const body = await readJsonBody(req);
     try {
@@ -702,7 +640,7 @@ function serveStatic(ctx: Ctx): void {
 
 export function startHttpServer(): void {
   openDatabase();
-  autospawnWhatsappGateway();
+  getWhatsAppService().init(getDbContext().db);
   try { pruneExpiredSessions(getDbContext().db); } catch { /* first boot: table just created */ }
   // Prune expired sessions hourly so the session table never grows unbounded
   // (login also prunes opportunistically with each successful login).

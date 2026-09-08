@@ -1,5 +1,6 @@
 import { postJson, postRaw, rpc, request } from "./client";
 import type { MeResponse } from "./client";
+import { whatsappApi } from "./whatsapp.js";
 
 // Types only — the implementations live in the local backend.
 import type {
@@ -1278,6 +1279,7 @@ export const api = {
     deactivate: () =>
       rpc<{ ok: boolean }>("license", "deactivate", []),
   },
+  whatsapp: whatsappApi,
 };
 
 export default api;

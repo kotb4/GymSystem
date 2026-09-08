@@ -1,5 +1,5 @@
-﻿import { useEffect, useState, type FormEvent } from "react";
-import { KeyRound, Loader2, Lock, Play, Save, Smartphone } from "lucide-react";
+import { useEffect, useState, type FormEvent } from "react";
+import { KeyRound, Lock, Save } from "lucide-react";
 import { useAuth } from "@/contexts/auth-context";
 import { useT } from "@/i18n";
 import { useToast } from "@/components/ui/toast";
@@ -13,11 +13,11 @@ import { PasswordInput } from "@/components/ui/password-input";
 import { Tabs } from "@/components/ui/tabs";
 import { HealthTab } from "@/components/settings/health-tab";
 import { ScannerTab } from "@/components/settings/scanner-tab";
-import { WhatsAppPairModal } from "@/components/settings/whatsapp-pair-modal";
+import { WhatsAppSettingsCard } from "@/components/settings/whatsapp-settings-card";
 import { cn } from "@/utils/cn";
 
-/** Default local gateway URL written when enabling WhatsApp delivery. */
-const DEFAULT_GATEWAY_URL = "http://127.0.0.1:8891";
+
+
 
 const DAY_KEYS = [
   "settings.day0",
@@ -314,180 +314,6 @@ function ScannerSettingsCard() {
 
   return (
     <SettingsForm title={t("settings.scannerTab")} drafts={drafts} values={values} setValue={setValue} />
-  );
-}
-
-function WhatsAppToggle({
-  value,
-  onChange,
-  pluginEntries,
-  onEnabled,
-}: {
-  value: boolean;
-  onChange: (v: boolean) => void;
-  pluginEntries?: Array<{ key: string; value: string }>;
-  onEnabled?: () => void;
-}) {
-  const t = useT();
-  const { hasPermission } = useAuth();
-  const { toast } = useToast();
-  const { save } = useSettingsSaver();
-  const canEdit = hasPermission("settings.edit");
-  return (
-    <button
-      type="button"
-      role="switch"
-      aria-checked={value}
-      disabled={!canEdit}
-      onClick={() => {
-        const next = value ? "0" : "1";
-        onChange(!value);
-        const entries: Array<{ key: string; value: string }> = [{ key: SETTING_KEYS.whatsappEnabled, value: next }];
-        if (next === "1" && pluginEntries) entries.push(...pluginEntries);
-        void save(entries, () => {
-          toast("success", next === "1" ? t("settings.whatsappOn") : t("settings.whatsappOff"));
-          if (next === "1") onEnabled?.();
-        });
-      }}
-      className={cn(
-        "flex w-full items-center justify-between rounded-xl border border-line bg-surface px-3.5 py-3 text-[13px] font-semibold transition-colors",
-        canEdit && "hover:border-line-strong"
-      )}
-    >
-      <span>{t("settings.whatsappEnabled")}</span>
-      <span
-        aria-hidden
-        className={cn(
-          "relative h-6 w-11 rounded-full transition-colors",
-          value ? "bg-neon/70" : "bg-white/10"
-        )}
-      >
-        <span
-          aria-hidden
-          className={cn(
-            "absolute top-0.5 size-5 rounded-full bg-white shadow transition-all",
-            value ? "start-0.5" : "start-[22px]"
-          )}
-        />
-      </span>
-    </button>
-  );
-}
-
-function WhatsAppSettingsCard() {
-  const t = useT();
-  const { hasPermission } = useAuth();
-  const { toast } = useToast();
-  const [values, setValues] = useState<Record<string, string>>({});
-  const [enabled, setEnabled] = useState(false);
-  const [pairOpen, setPairOpen] = useState(false);
-  const [starting, setStarting] = useState(false);
-
-  useEffect(() => {
-    let alive = true;
-    api.settings
-      .readAll()
-      .then((all) => {
-        if (!alive) return;
-        setValues({
-          [SETTING_KEYS.whatsappApiUrl]: all[SETTING_KEYS.whatsappApiUrl] ?? "",
-        });
-        setEnabled(all[SETTING_KEYS.whatsappEnabled] === "1");
-      })
-      .catch((err) => console.error(err));
-    return () => {
-      alive = false;
-    };
-  }, []);
-
-  const setValue = (key: string, value: string) => setValues((prev) => ({ ...prev, [key]: value }));
-
-  const ensureRunning = async () => {
-    if (starting) return;
-    setStarting(true);
-    try {
-      const res = await api.system.ensureWhatsAppGateway();
-      if (!res.running) throw new Error("gateway ensure returned running=false");
-      toast("success", t("settings.whatsappRunning"));
-    } catch (err) {
-      toast("error", describeError(err, t));
-    } finally {
-      setStarting(false);
-    }
-  };
-
-  const handleToggle = (next: boolean) => {
-    if (next && (values[SETTING_KEYS.whatsappApiUrl] ?? "").trim() === "") {
-      setValue(SETTING_KEYS.whatsappApiUrl, DEFAULT_GATEWAY_URL);
-    }
-    setEnabled(next);
-  };
-
-  const gatewayUrl = (values[SETTING_KEYS.whatsappApiUrl] ?? "").trim();
-
-  const drafts: SettingDraft[] = [
-    { key: SETTING_KEYS.whatsappApiUrl, label: "settings.whatsappApiUrl", hint: "settings.whatsappApiUrlHint", dir: "ltr" },
-  ];
-
-  return (
-    <>
-      <SettingsForm
-        title={t("settings.whatsappTitle")}
-        drafts={drafts}
-        values={values}
-        setValue={setValue}
-        extra={
-          <>
-            <WhatsAppToggle
-              value={enabled}
-              onChange={handleToggle}
-              onEnabled={() => void ensureRunning()}
-              pluginEntries={
-                (values[SETTING_KEYS.whatsappApiUrl] ?? "").trim() === "" && !enabled
-                  ? [{ key: SETTING_KEYS.whatsappApiUrl, value: DEFAULT_GATEWAY_URL }]
-                  : undefined
-              }
-            />
-            {hasPermission("settings.view") && (
-              <div className="flex gap-2">
-                <Button
-                  type="button"
-                  variant="secondary"
-                  size="sm"
-                  disabled={starting}
-                  onClick={() => void ensureRunning()}
-                >
-                  {starting ? (
-                    <Loader2 className="size-4 animate-spin" />
-                  ) : (
-                    <Play className="size-4" />
-                  )}
-                  {starting ? t("settings.whatsappStarting") : t("settings.whatsappStartButton")}
-                </Button>
-                <Button
-                  type="button"
-                  variant="secondary"
-                  size="sm"
-                  className="flex-1"
-                  disabled={gatewayUrl === ""}
-                  onClick={() => setPairOpen(true)}
-                >
-                  <Smartphone className="size-4" />
-                  {t("settings.whatsappPairButton")}
-                </Button>
-              </div>
-            )}
-          </>
-        }
-      />
-      <WhatsAppPairModal
-        open={pairOpen}
-        onClose={() => setPairOpen(false)}
-        gatewayUrl={gatewayUrl || DEFAULT_GATEWAY_URL}
-        starting={starting}
-        onStart={() => void ensureRunning()}
-      />
-    </>
   );
 }
 
