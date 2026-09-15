@@ -4,34 +4,9 @@ import type { WhatsAppState, WhatsAppStatus } from "./types.js";
 import { WHATSAPP_STATUS } from "./types.js";
 
 /**
- * Guard `LocalWebCache.persist` against the 2026 WhatsApp Web HTML. The page no
- * longer embeds a versioned `manifest-<version>.json` (it now uses a fixed
- * `/data/manifest.json`), so the library's persist() throws
- * `TypeError: Cannot read properties of null (reading '1')` inside initialize()
- * — which previously surfaced as the misleading «خطأ في المصادقة». The guarded
- * persist simply skips caching: every session loads WhatsApp Web live (the same
- * approach the Playwright gateway uses), which is proven to reach the QR screen.
- */
-async function guardWebVersionCachePersist(): Promise<void> {
-  try {
-    const mod: any = await import("whatsapp-web.js/src/webCache/LocalWebCache.js");
-    const LWC = mod?.LocalWebCache ?? mod?.default ?? mod;
-    if (!LWC?.prototype || (LWC.prototype as any).__persistGuarded) return;
-    (LWC.prototype as any).__persistGuarded = true;
-    LWC.prototype.persist = async function (indexHtml: string): Promise<void> {
-      if (typeof indexHtml !== "string" || !/manifest-[\d.]+\.json/.test(indexHtml)) return;
-    };
-  } catch {
-    // Deep import unavailable in this packaging mode; if the unguarded persist
-    // later crashes initialize(), it surfaces as ERROR — never AUTH_FAILURE.
-  }
-}
-
-/**
- * Resolve the browser executable for the embedded puppeteer launcher.
- * The project targets Windows, where Edge is guaranteed present; the bundled
- * Chromium (puppeteer 13.7.0, 2022) is too old to run today's WhatsApp Web.
- * Falls back to puppeteer's bundled path when Edge is missing (dev machines).
+ * Resolve the browser executable for the puppeteer launcher.
+ * The project targets Windows, where Edge is guaranteed present. Falls back to
+ * puppeteer's own Chrome-for-Testing when Edge is missing.
  */
 function resolveBrowserExecutable(): string | null {
   const candidates = [
@@ -104,15 +79,13 @@ export class WhatsAppClient extends EventEmitter {
     if (this.client) return;
     this.setStatus(WHATSAPP_STATUS.CONNECTING);
 
-    // Normalize the CJS namespace: under the ESM loader (and esbuild's
-    // external dynamic import) the named exports may only be reachable via
-    // `default` — destructuring `await import(...)` directly can yield
-    // undefined and blow up with «LocalAuth is not a constructor».
+    // Normalize the CJS namespace: under the ESM loader the named exports may
+    // only be reachable via `default` — destructuring `await import(...)` can
+    // yield undefined and blow up with «LocalAuth is not a constructor».
     const mod: any = await import("whatsapp-web.js");
     const Lib = mod?.default ?? mod;
     const Client = Lib?.Client ?? mod?.Client;
     const LocalAuth = Lib?.LocalAuth ?? mod?.LocalAuth;
-    await guardWebVersionCachePersist();
 
     const executablePath = resolveBrowserExecutable();
     // A modern user-agent is REQUIRED in BOTH places: as a launch arg (which
