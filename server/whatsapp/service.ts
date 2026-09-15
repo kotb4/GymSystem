@@ -173,7 +173,11 @@ export class WhatsAppService {
 
     // 7. Send image (with caption)
     const caption = opts.caption ?? `بطاقة العضوية - ${member.full_name}`;
-    const { MessageMedia } = await import("whatsapp-web.js");
+    // Normalize the CJS namespace (see client.ts) — direct destructuring of
+    // `await import()` can yield undefined under the ESM loader.
+    const wmod: any = await import("whatsapp-web.js");
+    const wlib = wmod?.default ?? wmod;
+    const MessageMedia = wlib?.MessageMedia ?? wmod?.MessageMedia;
     const media = MessageMedia.fromFilePath(qrPath);
 
     const id = crypto.randomUUID();

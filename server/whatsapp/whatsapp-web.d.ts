@@ -15,3 +15,11 @@ declare module "whatsapp-web.js" {
     fromFilePath(path: string): any;
   };
 }
+
+declare module "whatsapp-web.js/src/webCache/LocalWebCache.js" {
+  export class LocalWebCache {
+    resolve(version?: string): Promise<string | null>;
+    persist(indexHtml: string): Promise<void>;
+    [key: string]: unknown;
+  }
+}

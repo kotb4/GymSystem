@@ -1,20 +1,31 @@
 import { EventEmitter } from "node:events";
-import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
-import { join } from "node:path";
+import { existsSync } from "node:fs";
 import type { WhatsAppState, WhatsAppStatus } from "./types.js";
 import { WHATSAPP_STATUS } from "./types.js";
 
 /**
- * Pinned WhatsApp Web version. The library's bundled default (2.2346.52) is a
- * 2022 build whose cache-lookup path leads into LocalWebCache.persist(), which
- * crashes on today's WhatsApp Web HTML (the manifest is no longer versioned —
- * `manifest-<version>.json` became a fixed `/data/manifest.json`, so the
- * library's version regex matches null). Pinning our own version + strict local
- * cache makes the client serve WhatsApp Web from a pre-seeded local HTML file
- * (request interception) and never run persist() at all.
+ * Guard `LocalWebCache.persist` against the 2026 WhatsApp Web HTML. The page no
+ * longer embeds a versioned `manifest-<version>.json` (it now uses a fixed
+ * `/data/manifest.json`), so the library's persist() throws
+ * `TypeError: Cannot read properties of null (reading '1')` inside initialize()
+ * — which previously surfaced as the misleading «خطأ في المصادقة». The guarded
+ * persist simply skips caching: every session loads WhatsApp Web live (the same
+ * approach the Playwright gateway uses), which is proven to reach the QR screen.
  */
-const PINNED_WEB_VERSION = "2.3000.0";
-const WHATSAPP_WEB_URL = "https://web.whatsapp.com/";
+async function guardWebVersionCachePersist(): Promise<void> {
+  try {
+    const mod: any = await import("whatsapp-web.js/src/webCache/LocalWebCache.js");
+    const LWC = mod?.LocalWebCache ?? mod?.default ?? mod;
+    if (!LWC?.prototype || (LWC.prototype as any).__persistGuarded) return;
+    (LWC.prototype as any).__persistGuarded = true;
+    LWC.prototype.persist = async function (indexHtml: string): Promise<void> {
+      if (typeof indexHtml !== "string" || !/manifest-[\d.]+\.json/.test(indexHtml)) return;
+    };
+  } catch {
+    // Deep import unavailable in this packaging mode; if the unguarded persist
+    // later crashes initialize(), it surfaces as ERROR — never AUTH_FAILURE.
+  }
+}
 
 /**
  * Resolve the browser executable for the embedded puppeteer launcher.
@@ -33,36 +44,6 @@ function resolveBrowserExecutable(): string | null {
     if (existsSync(p)) return p;
   }
   return null;
-}
-
-/**
- * Ensure the pinned-version WhatsApp Web index.html exists in the local cache.
- * On first run (or after the cache dir is cleared) this downloads the page once
- * from the internet; afterwards this path is fully offline. When the download
- * fails (offline first boot) we return false — the client then skips request
- * interception and WhatsApp Web loads directly in the real browser.
- */
-async function seedWebVersionCache(cacheDir: string): Promise<boolean> {
-  try {
-    const file = join(cacheDir, `${PINNED_WEB_VERSION}.html`);
-    if (existsSync(file) && readFileSync(file, "utf8").length > 1000) return true;
-
-    const res = await fetch(WHATSAPP_WEB_URL, {
-      headers: {
-        "User-Agent":
-          "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0 Safari/537.36",
-      },
-    });
-    if (!res.ok) return false;
-    const html = await res.text();
-    if (html.length < 1000) return false;
-
-    mkdirSync(cacheDir, { recursive: true });
-    writeFileSync(file, html, "utf8");
-    return true;
-  } catch {
-    return false;
-  }
 }
 
 /**
@@ -123,16 +104,36 @@ export class WhatsAppClient extends EventEmitter {
     if (this.client) return;
     this.setStatus(WHATSAPP_STATUS.CONNECTING);
 
-    const { Client, LocalAuth } = await import("whatsapp-web.js");
+    // Normalize the CJS namespace: under the ESM loader (and esbuild's
+    // external dynamic import) the named exports may only be reachable via
+    // `default` — destructuring `await import(...)` directly can yield
+    // undefined and blow up with «LocalAuth is not a constructor».
+    const mod: any = await import("whatsapp-web.js");
+    const Lib = mod?.default ?? mod;
+    const Client = Lib?.Client ?? mod?.Client;
+    const LocalAuth = Lib?.LocalAuth ?? mod?.LocalAuth;
+    await guardWebVersionCachePersist();
 
-    // Cache dir lives next to the session dir (app data), not the repo.
-    const cacheDir = join(sessionDir, "..", "WhatsAppWebCache");
-    const haveCachedPage = await seedWebVersionCache(cacheDir);
     const executablePath = resolveBrowserExecutable();
-
+    // A modern user-agent is REQUIRED in BOTH places: as a launch arg (which
+    // makes the library skip pushing its ancient Chrome/101 default) AND as
+    // the client `userAgent` option — the library calls
+    // `page.setUserAgent(this.options.userAgent)` after launch, so without the
+    // option the page reverts to the 2022 UA and WhatsApp Web never finishes
+    // loading (initialize() hangs in CONNECTING forever).
+    const userAgent =
+      "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/140.0.0.0 Safari/537.36";
     const puppeteerOptions: Record<string, unknown> = {
       headless: true,
-      args: ["--no-sandbox", "--disable-setuid-sandbox", "--disable-gpu"],
+      // remote-allow-origins: Chromium 111+ rejects the DevTools WebSocket of
+      // older puppeteer versions otherwise — initialize() then hangs forever.
+      args: [
+        "--no-sandbox",
+        "--disable-setuid-sandbox",
+        "--disable-gpu",
+        "--remote-allow-origins=*",
+        `--user-agent=${userAgent}`,
+      ],
     };
     if (executablePath) puppeteerOptions.executablePath = executablePath;
     Object.assign(puppeteerOptions, this.puppeteerOptions);
@@ -142,16 +143,7 @@ export class WhatsAppClient extends EventEmitter {
         dataPath: sessionDir,
         clientId: "gym-system",
       }),
-      // Pin the web version + strict local cache: request interception serves
-      // the cached page, so LocalWebCache.persist() never runs. strict:true
-      // means a missing cache file is a loud VersionResolveError we surface
-      // as ERROR (not the misleading AUTH_FAILURE).
-      ...(haveCachedPage
-        ? {
-            webVersion: PINNED_WEB_VERSION,
-            webVersionCache: { type: "local", path: cacheDir, strict: true },
-          }
-        : {}),
+      userAgent,
       puppeteer: puppeteerOptions,
     });
 
