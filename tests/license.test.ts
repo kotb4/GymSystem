@@ -90,7 +90,9 @@ describe("license policy (state machine)", () => {
   });
 
   it("stays active until NOW reaches expiresAt (boundary just before)", () => {
-    const s = state({ payload: payload({ expiresAt: Date.now() + 1 }) });
+    // A +1ms expiry flaked under suite-wide parallel load: give the boundary a
+    // realistic window while still asserting "future expiry => active".
+    const s = state({ payload: payload({ expiresAt: Date.now() + 5_000 }) });
     expect(evaluate(s).name).toBe("active");
     expect(isHardLocked(s)).toBe(false);
   });

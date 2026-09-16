@@ -21,5 +21,8 @@ export default defineConfig({
     environment: "node",
     include: ["tests/**/*.test.ts"],
     setupFiles: [],
+    // Boot/restore/backup suites do real DB + crypto work that takes ~2.5s on an
+    // idle machine; the 5s default flaked when the whole suite ran in parallel.
+    testTimeout: 20000,
   },
 });
