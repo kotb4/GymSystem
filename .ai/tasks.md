@@ -1,6 +1,16 @@
-# Current AI Development Tasks
+﻿# Current AI Development Tasks
 
 > **Reading order for the next agent:** `AGENTS.md` → `.ai/project.md` → `.ai/current-state.md` → `.ai/tasks.md` → `.ai/decisions.md` (when relevant) → inspect the actual source. The repository files are the persistent memory; chat history is not part of the project.
+
+## TASK-062: First-run network gate — setup & legacy import restricted to loopback, even under opt-in LAN binding
+- Status: **done (2026-09-19). No DB migration.** Fresh helper `server/first-run.ts` exported by `server/index.ts`; policy + 3 loopback-gate tests in `tests/first-run.test.ts`; i18n message `errors.firstRunLocalOnly` (ar.ts). Committed `e3caa2b` + this docs record (ADR-035) - **pushed to origin/main** (owner approved push for this task) at the end of this step.
+- Goal: first-run adoption — `POST /api/auth/setup` and the no-owner `POST /api/system/import-legacy` — must never be reachable from another machine. The default bind is already loopback (ADR-023 / `DEFAULT_HTTP_HOST = 127.0.0.1`, and `tests/host-bind.test.ts` pins it), so LAN exposure is opt-in via `GYMSYSTEM_HOST`. The gap: when an operator DOES opt into `GYMSYSTEM_HOST=0.0.0.0`, the unauthenticated adoption routes become visible to the LAN. Closed by a network-level loopback gate independent of any auth/session logic:
+  - `isLoopbackAddress(address)` — accepts `127.x`/`::1`, normalizes Node's IPv4-mapped `::ffff:…` form; rejects everything else including `0.0.0.0`, `10.x`, `192.168.x` and `undefined`.
+  - `canAdoptFirstRun(hasActiveOwner, address)` — `!hasActiveOwner && isLoopbackAddress` (ADR policy).
+  - Wired as the **first statement** of the two adoption branches in `server/index.ts` (setup branch rejects before any owner-count body work; import-legacy branch only assigns the synthetic owner actor when `owners === 0 && isLoopbackAddress`). Refused with 403 plus the loopback-only key. No session/auth redesign; `requirePermission` enforcement unchanged.
+- **Docs/comments updated:** `server/first-run.ts` header comment + `docs/ai/security.md` "first-run network gate" bullet; ADR-035 appended.
+- Verification: typecheck client clean + `typecheck:server` clean; targeted `tests/first-run.test.ts` (3) + `tests/host-bind.test.ts` (4) + `tests/auth.users.test.ts` + `tests/restore-authz.test.ts` + `tests/i18n-coverage.test.ts` **all green** (37/37 across 5 files). Functional first-run/legacy-import behavior (legit adopt, refusal once owner exists) remains covered end-to-end by `tests/restore-authz.test.ts`. **No EXE build** (owner mandate).
+- Note: the premise stating `server/index.ts` defaults to `0.0.0.0` is **outdated** — the loopback default landing earlier via ADR-023; this task adds the belt-and-suspenders gate for the opt-in LAN case. Full record: ADR-035.
 
 ## TASK-061: «نظام الرسائل» — WhatsApp outreach segments (absent / upcoming birthday / expiring) with per-member + per-segment send and history
 - Status: done (2026-09-19). DB migration **v34**. Committed `7e9cccd` + docs `b05c86f`, **pushed to `origin/main`** (owner explicitly approved `git push` on 2026-09-19). **No EXE build** (owner mandate).

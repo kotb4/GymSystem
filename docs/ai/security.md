@@ -10,6 +10,7 @@
 - **Password hashing:** Argon2id via `hash-wasm` (19 MiB memory, 2 iterations, parallelism 1, 32-byte hash, 16-byte salt).
 - **Lockout:** 5 failed login attempts → 300 seconds locked. Stored in `users.failed_attempts` / `users.locked_until`.
 - **First-run setup:** `POST /api/auth/setup` creates the single owner. Refuses once an active owner exists.
+- **First-run network gate:** `POST /api/auth/setup` and the no-owner `POST /api/system/import-legacy` adopt first-run state **only from the loopback interface** (`127.0.0.1`/`::1`, IPv4-mapped included). Even when `GYMSYSTEM_HOST` opts into LAN binding (ADR-023), a peer on the network cannot reach the unauthenticated adoption routes — server logic `server/first-run.ts`, refused with 403/401. Default bind remains loopback-only (ADR-023), so the gate only matters in the opt-in LAN case.
 
 ## Sessions
 

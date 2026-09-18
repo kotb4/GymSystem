@@ -1,5 +1,12 @@
 # Architecture Decision Log
 
+## ADR-035: First-run adoption is loopback-only — setup & no-owner legacy import refused from any non-local peer, even under opt-in LAN binding (TASK-062)
+- Date: 2026-09-19
+- Status: accepted
+- Context: the system adopts first-run state through two unauthenticated routes — `POST /api/auth/setup` (creates the single owner) and the no-owner `POST /api/system/import-legacy` (one-time adopt of legacy v≤5 data). Default binding is already loopback-only (`DEFAULT_HTTP_HOST = 127.0.0.1`, ADR-023), so those routes are not on the wire unless the operator opts into LAN exposure via `GYMSYSTEM_HOST`, but an operator CAN legitimately opt in (packaged local app, LAN convenience). The gap: with `GYMSYSTEM_HOST=0.0.0.0` the unauthenticated adoption routes become visible to every machine on the network — anyone could claim the owner seat or inject a legacy database before setup completes.
+- Decision: both adoption routes are network-gated to the loopback interface independent of any auth/session logic. Every request whose peer address is not the local machine (`127.0.0.1`/`::1`, IPv4-mapped `::ffff:…` normalized) is refused with 403 + a loopback-only error key. Belts-and-suspenders: even if ADR-023's loopback default is ever reverted, LAN peers can never reach first-run adoption; the gate also refuses adoption once an active owner exists.
+- Consequences: `server/first-run.ts` (`isLoopbackAddress` + `canAdoptFirstRun(hasActiveOwner, address)`) wired as the FIRST statement of both adoption branches in `server/index.ts` (setup gate before any body work; import-legacy synthetic-owner assignment only when `owners === 0 && isLoopbackAddress`), refusing with 403 + i18n `errors.firstRunLocalOnly`. Loopback-only default unchanged (ADR-023); the gate is the belt-and-suspenders for the opt-in LAN case. No DB migration; RPC/whitelist/auth surface unchanged. Tests: `tests/first-run.test.ts` (3) — isLoopbackAddress accepts 127.x/::1/::ffff-mapped and rejects LAN/unknown; canAdoptFirstRun allows loopback + no owner, refuses LAN even with no owner, refuses localhost once an owner exists. Docs: security.md "First-run network gate" bullet + docs/ai/security.md.
+
 ## ADR-034: Messages module — computed WhatsApp outreach segments, view/send permission split, gateway transport reuse (TASK-061)
 - Date: 2026-09-19
 - Status: accepted
