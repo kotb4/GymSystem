@@ -60,6 +60,69 @@ function toRawBase64(value) {
   return idx >= 0 ? value.slice(idx + 1) : value;
 }
 
+// Chromium-scoped profile litter that survives a killed/crashed gateway launch
+// and then blocks the NEXT cold start with "The browser is already running for
+// <userDataDir> … use a different userDataDir" until removed by hand.
+const PROFILE_LOCK_FILES = [
+  'DevToolsActivePort',
+  'SingletonLock',
+  'SingletonSocket',
+  'SingletonCookie',
+];
+
+/**
+ * True when any running Edge/Chrome process has `profileDir` in its command
+ * line. Guards deleteStaleProfileLocks: locks of a LIVE browser must never be
+ * removed, only the litter left behind by a crashed launch.
+ */
+function browserProcessHolds(profileDir) {
+  try {
+    // eslint-disable-next-line global-require
+    const { execFileSync } = require('node:child_process');
+    const needle = String(profileDir).replace(/'/g, "''");
+    const script =
+      `Get-CimInstance Win32_Process -Filter "Name='msedge.exe' OR Name='chrome.exe'" | ` +
+      `Where-Object { $_.CommandLine -and $_.CommandLine.IndexOf('${needle}', [System.StringComparison]::OrdinalIgnoreCase) -ge 0 } | ` +
+      `Measure-Object | Select-Object -ExpandProperty Count`;
+    const out = execFileSync(
+      'powershell.exe',
+      ['-NoProfile', '-NonInteractive', '-Command', script],
+      { encoding: 'utf8', timeout: 4000, windowsHide: true },
+    );
+    return String(out).trim() !== '0';
+  } catch {
+    // Cannot inspect (PowerShell unavailable) → assume the profile is in use so
+    // we never delete a live browser's locks by mistake.
+    return true;
+  }
+}
+
+/**
+ * Cold-start hardening: remove Chromium singleton/devtools lock litter from the
+ * profile dir. `force` skips the live-browser guard — used only right after a
+ * launch itself failed on those exact lock files (a working browser cannot
+ * coexist with that failure, so the litter is provably stale).
+ */
+function clearStaleLocks(userDataDir, { force = false } = {}) {
+  if (!userDataDir) return [];
+  if (!fs.existsSync(userDataDir)) return [];
+  const locks = PROFILE_LOCK_FILES.map((name) => join(userDataDir, name)).filter((p) => fs.existsSync(p));
+  if (!locks.length) return [];
+  if (!force && browserProcessHolds(userDataDir)) {
+    log.warn('profile locks present but a live browser holds the profile — leaving them untouched');
+    return [];
+  }
+  for (const lock of locks) {
+    try {
+      fs.rmSync(lock, { force: true, recursive: true });
+      log.warn(`removed stale browser lock: ${lock}`);
+    } catch (err) {
+      log.warn(`could not remove stale lock ${lock}: ${err.message}`);
+    }
+  }
+  return locks;
+}
+
 async function ensureBrowser() {
   // Zombie guard: if the previous client closed its page (browser killed,
   // session logged out on the phone, etc.), drop it and relaunch fresh.
@@ -87,18 +150,26 @@ async function ensureBrowser() {
     }
 
     const sessionDir = _cfg.sessionDir;
+    const profileDir = join(sessionDir, 'wpp-profile');
+    // Cold-start hardening: a gateway killed mid-launch (app force-quit,
+    // session cleanup, machine shutdown) leaves Chromium singleton/devtools
+    // litter in the profile that makes the NEXT launch fail with "The browser
+    // is already running for … use a different userDataDir". Clear it first —
+    // safely (only when no live Edge/Chrome holds the profile).
+    clearStaleLocks(profileDir);
+
     // Profile (tokens + WhatsApp session data) must live in the app data dir so
     // pairing survives restarts just like the old wa-profile folder. Pass it as
     // puppeteerOptions.userDataDir — wppconnect otherwise defaults to
     // cwd/folderNameToken/session which would scatter state under the repo.
     const puppeteerOptions = {
       executablePath,
-      userDataDir: join(sessionDir, 'wpp-profile'),
+      userDataDir: profileDir,
       args: ['--no-sandbox', '--disable-blink-features=AutomationControlled'],
     };
 
     log.info(`launching browser (headless=${_cfg.headless})`);
-    const client = await wpp.create({
+    const options = {
       session: 'gym-gateway',
       headless: _cfg.headless,
       // useChrome:false + our own executablePath = Edge wins; without this
@@ -118,7 +189,25 @@ async function ensureBrowser() {
         log.debug(`status: ${status} (${session})`);
         if (status === 'inChat') _lastQrBase64 = null;
       },
-    });
+    };
+
+    let client;
+    try {
+      client = await wpp.create(options);
+    } catch (err) {
+      const msg = String((err && err.message) || err);
+      if (/already running|userDataDir|DevToolsActivePort|SingletonLock|Failed to launch/i.test(msg)) {
+        // Same class of failure as above, surfacing through the real launch —
+        // force-clear (the failed launch itself proves nothing alive owns the
+        // profile) and retry exactly once.
+        log.warn(`launch failed on stale profile locks — clearing and retrying once: ${msg}`);
+        clearStaleLocks(profileDir, { force: true });
+        client = await wpp.create(options);
+      } else {
+        throw err;
+      }
+    }
+
     _client = client;
     log.info('browser session connected to WhatsApp Web');
     return { ok: true, client: _client };
@@ -237,4 +326,5 @@ module.exports = {
   readQr,
   waitForPairing,
   close,
+  clearStaleLocks,
 };
