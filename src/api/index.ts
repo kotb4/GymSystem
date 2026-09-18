@@ -1,6 +1,15 @@
 import { postJson, postRaw, rpc, request } from "./client";
 import type { MeResponse } from "./client";
-import { whatsappApi } from "./whatsapp.js";
+
+/** Engine install state surfaced by the Settings WhatsApp card. */
+export interface SystemEngineStatus {
+  engineDir: string;
+  installed: boolean;
+  version: string | null;
+  installing: boolean;
+  lastError: string | null;
+  logTail: string[];
+}
 
 // Types only — the implementations live in the local backend.
 import type {
@@ -184,8 +193,8 @@ const cardsApi = {
   listForMember: (memberId: string) => rpc<CardWithMember[]>("cards", "listMemberCards", [memberId]),
   bulkRegister: (barcodes: string[]) => rpc<BulkRegisterResult>("cards", "registerCardsBulk", [barcodes]),
   qrUrl: (barcode: string) => `/api/cards/qr/${encodeURIComponent(barcode)}`,
-  queueDelivery: (cardId: string) =>
-    rpc<PublicCardDelivery>("cards", "queueCardDelivery", [{ cardId }]),
+  queueDelivery: (cardId: string, force = false) =>
+    rpc<PublicCardDelivery>("cards", "queueCardDelivery", [{ cardId, force }]),
   sendPendingDeliveries: (limit?: number) => rpc<{ sent: number; failed: number; skippedNoPhone: number; notConfigured: number }>("cards", "sendPendingCardDeliveries", [limit ?? 20]),
   listDeliveries: (query?: { memberId?: string; status?: CardDeliveryStatus | "all"; limit?: number }) =>
     rpc<PublicCardDelivery[]>("cards", "listCardDeliveries", [query ?? {}]),
@@ -1118,6 +1127,8 @@ export interface GatewayHealth {
   browserReady?: boolean;
   paired: boolean;
   sessionDir?: string;
+  /** True when the wppconnect engine is installed in the data dir. */
+  engineReady?: boolean;
 }
 
 export interface GatewayPairResult {
@@ -1202,6 +1213,11 @@ export const api = {
         "/api/system/ensure-whatsapp-gateway",
         {},
       ),
+    /** Install the wppconnect engine into the data dir (settings.edit). */
+    installWhatsAppEngine: () =>
+      postJson<SystemEngineStatus & { started: boolean }>("/api/system/gateway/install-engine", {}),
+    /** Poll the engine install status/progress (settings.view). */
+    whatsAppEngineStatus: () => request<SystemEngineStatus>("/api/system/gateway/engine-status"),
   },
   auth: {
     /** Session probe used by the auth context; mirrors GET /api/auth/me. */
@@ -1279,7 +1295,6 @@ export const api = {
     deactivate: () =>
       rpc<{ ok: boolean }>("license", "deactivate", []),
   },
-  whatsapp: whatsappApi,
 };
 
 export default api;

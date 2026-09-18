@@ -74,7 +74,9 @@ export const whatsappTransport =
       // append /send — but tolerate a value that already ends with /send.
       const sendUrl = /\/send$/i.test(base) ? base : `${base}/send`;
       const controller = new AbortController();
-      const timer = setTimeout(() => controller.abort(), 10000);
+      // Cold gateway launches (fresh browser + WhatsApp page settle) regularly
+      // take 10-20s; abort must not cut a delivery in half.
+      const timer = setTimeout(() => controller.abort(), 45000);
       const res = await fetch(sendUrl, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
@@ -82,7 +84,16 @@ export const whatsappTransport =
         signal: controller.signal,
       });
       clearTimeout(timer);
-      if (!res.ok) return { ok: false, error: `HTTP ${res.status}` };
+      if (!res.ok) {
+        let detail = "";
+        try {
+          const parsed = (await res.json()) as { error?: unknown };
+          if (typeof parsed.error === "string" && parsed.error) detail = ` — ${parsed.error}`;
+        } catch {
+          /* non-JSON error body */
+        }
+        return { ok: false, error: `HTTP ${res.status}${detail}` };
+      }
       return { ok: true };
     } catch (error) {
       return { ok: false, error: String(error instanceof Error ? error.message : error) };
@@ -148,11 +159,13 @@ async function pacingDelay(isMock: boolean): Promise<void> {
  * not_configured are flipped back to pending with fresh member snapshots.
  * card_deliveries.dedupe_key is UNIQUE, so a second INSERT for the same card
  * is impossible; we always reuse the existing row instead.
+ * `force: true` explicitly re-queues an already-sent card (flips it back to
+ * pending) so the delivery can be sent again on demand.
  */
 export async function queueCardDelivery(
   db: Db,
   actor: ServiceActor,
-  input: { cardId: string },
+  input: { cardId: string; force?: boolean },
 ): Promise<PublicCardDelivery> {
   requirePermission(actor, "cards.send");
   const card = getCardById(db, input.cardId);
@@ -169,9 +182,8 @@ export async function queueCardDelivery(
       `${DELIVERY_SELECT} WHERE dedupe_key = ? ORDER BY created_at DESC LIMIT 1`,
       [dedupeKey],
     );
-    if (existing && (existing.status === "pending" || existing.status === "sent")) {
-      return toDelivery(existing);
-    }
+    if (existing && existing.status === "pending") return toDelivery(existing);
+    if (existing && existing.status === "sent" && !input.force) return toDelivery(existing);
     if (existing) {
       // Re-queue an old terminal row (failed/skipped_no_phone/not_configured):
       // reuse the id, refresh member snapshots, clear the error.

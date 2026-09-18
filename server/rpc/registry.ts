@@ -38,7 +38,6 @@ import { memberProfile } from "./member-profile.rpc";
 import { referral } from "./referral.rpc";
 import { loyalty } from "./loyalty.rpc";
 import { license } from "./license.rpc";
-import { whatsapp } from "./whatsapp.rpc";
 
 /**
  * The frontend never touches SQLite. It calls whitelisted service functions
@@ -81,7 +80,6 @@ export const REGISTRY: Record<string, Record<string, Exposed>> = {
   referral,
   loyalty,
   license,
-  whatsapp,
 };
 
 export interface SerializedError {

@@ -38,6 +38,7 @@ Name: "desktopicon"; Description: "{cm:CreateDesktopIcon}"; GroupDescription: "{
 [Files]
 Source: "..\dist-exe\GymSystem.exe"; DestDir: "{app}"; Flags: ignoreversion
 Source: "..\dist-exe\runtime\node.exe"; DestDir: "{app}\runtime"; Flags: ignoreversion
+Source: "..\dist-exe\runtime\npm\*"; DestDir: "{app}\runtime\npm"; Flags: ignoreversion recursesubdirs createallsubdirs
 Source: "..\dist-exe\gateway\*"; DestDir: "{app}\gateway"; Flags: ignoreversion recursesubdirs createallsubdirs
 
 [Icons]

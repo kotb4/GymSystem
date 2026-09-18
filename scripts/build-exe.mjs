@@ -152,6 +152,23 @@ function copyRuntime() {
   copyFileSync(process.execPath, path.join(runtimeDir, "node.exe"));
   log("portable node runtime copied");
 
+  // The WhatsApp wppconnect engine is NOT shipped — it is installed once by
+  // the user into the data dir (Settings → «تثبيت محرك الواتساب»). That install
+  // runs npm, so the bundled npm CLI is copied next to the runtime:
+  //   runtime\node.exe runtime\npm\bin\npm-cli.js install ...
+  // (server/whatsapp-engine.ts resolves exactly this layout.)
+  const nodeDir = path.dirname(process.execPath);
+  const npmSrc = path.join(nodeDir, "node_modules", "npm");
+  if (!existsSync(path.join(npmSrc, "bin", "npm-cli.js"))) {
+    throw new Error(
+      `bundled npm not found at ${npmSrc} — a standard Node install must exist to package runtime/npm`,
+    );
+  }
+  const npmDst = path.join(runtimeDir, "npm");
+  mkdirSync(npmDst, { recursive: true });
+  copyTree(npmSrc, npmDst);
+  log(`bundled npm runtime (${npmSrc}) → runtime/npm`);
+
   const gatewaySrc = path.join(ROOT, "whatsapp-gateway");
   if (!existsSync(gatewaySrc)) return;
   const gatewayDst = path.join(OUT_DIR, "gateway");
@@ -160,32 +177,8 @@ function copyRuntime() {
   for (const rel of walkRestricted(gatewaySrc)) {
     if (only.includes(rel)) copyFileSync(path.join(gatewaySrc, rel), path.join(gatewayDst, rel));
   }
-  if (existsSync(path.join(gatewaySrc, "node_modules", "playwright"))) {
-    // Fail loudly on an incomplete playwright runtime instead of shipping a
-    // gateway that can never launch its browser (silent no-QR bug).
-    // playwright-core may sit flat (node_modules/playwright-core) or nested
-    // under playwright (node_modules/playwright/node_modules/playwright-core)
-    // depending on the resolved version — accept both layouts.
-    const coreCandidates = [
-      path.join(gatewaySrc, "node_modules", "playwright-core"),
-      path.join(gatewaySrc, "node_modules", "playwright", "node_modules", "playwright-core"),
-    ];
-    const coreSrc = coreCandidates.find((dir) => existsSync(path.join(dir, "package.json")));
-    const pwPkg = path.join(gatewaySrc, "node_modules", "playwright", "package.json");
-    if (!coreSrc || !existsSync(pwPkg)) {
-      throw new Error(
-        "gateway playwright runtime incomplete — delete whatsapp-gateway/node_modules, run `npm install` inside whatsapp-gateway, then rebuild",
-      );
-    }
-    copyTree(path.join(gatewaySrc, "node_modules", "playwright"), path.join(gatewayDst, "node_modules", "playwright"));
-    copyTree(coreSrc, path.join(gatewayDst, path.relative(gatewaySrc, coreSrc)));
-    if (existsSync(path.join(gatewaySrc, "node_modules", ".bin"))) {
-      copyTree(path.join(gatewaySrc, "node_modules", ".bin"), path.join(gatewayDst, "node_modules", ".bin"));
-    }
-    log("playwright runtime copied (messaging ready)");
-  } else {
-    log("WARNING: gateway node_modules missing — run `npm run setup-whatsapp-gateway` first");
-  }
+  // No node_modules are needed beside the gateway: wppconnect is loaded from
+  // the data-dir engine install at runtime (CJS require rooted via createRequire).
 }
 
 function walkRestricted(dir, base = dir, acc = []) {
@@ -230,13 +223,16 @@ function main() {
   log("step 4/6: SEA build + postject + GUI subsystem");
   buildSea();
 
-  log("step 5/6: copying runtime + gateway");
+  log("step 5/6: copying runtime + bundled npm + gateway");
   copyRuntime();
 
   log("step 6/6: done");
   log(`→ ${path.join(OUT_DIR, EXE_NAME)}`);
   if (existsSync(path.join(OUT_DIR, "runtime", "node.exe"))) {
     log(`→ ${path.join(OUT_DIR, "runtime", "node.exe")} (portable node)`);
+  }
+  if (existsSync(path.join(OUT_DIR, "runtime", "npm", "bin", "npm-cli.js"))) {
+    log(`→ ${path.join(OUT_DIR, "runtime", "npm")} (bundled npm for engine install)`);
   }
   if (existsSync(path.join(OUT_DIR, "gateway", "index.js"))) {
     log(`→ ${path.join(OUT_DIR, "gateway")} (WhatsApp gateway)`);

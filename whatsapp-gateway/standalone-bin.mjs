@@ -1,21 +1,24 @@
-// Installs the Playwright browser binaries this gateway needs.
-// 'msedge' (Windows default) reuses the installed Edge and needs no download;
-// chromium is installed as a fallback for non-Windows machines.
-import { spawnSync } from 'node:child_process';
+// Verifies the wppconnect engine this gateway needs is already installed in
+// the GymSystem data dir (Settings → «تثبيت محرك الواتساب»). No browser
+// download is needed: wppconnect runs on the installed Microsoft Edge.
+import { existsSync } from 'node:fs';
+import { join } from 'node:path';
 
-const which = process.platform === 'win32' ? 'msedge' : 'chromium';
-const needsBrowser = process.env.GW_CHANNEL
-  ? !process.env.GW_CHANNEL.includes('msedge')
-  : which !== 'msedge';
+const baseDataDir = () =>
+  join(
+    process.env.GYMSYSTEM_DATA_DIR ||
+      join(process.env.LOCALAPPDATA || join(process.env.USERPROFILE || '.', 'AppData', 'Local'), 'GymSystem'),
+  );
 
-if (needsBrowser) {
-  const result = spawnSync('npx', ['playwright', 'install', 'chromium'], {
-    stdio: 'inherit',
-    shell: process.platform === 'win32',
-  });
-  if (result.status !== 0) process.exit(result.status || 1);
+const engineDir = join(baseDataDir(), 'WhatsAppEngine');
+const wppPath = join(engineDir, 'node_modules', '@wppconnect-team', 'wppconnect');
+
+if (existsSync(wppPath)) {
+  console.log(`wppconnect engine found at ${wppPath}`);
 } else {
-  console.log('Using the installed Microsoft Edge channel — no browser download needed.');
+  console.error('wppconnect engine NOT installed.');
+  console.error('Open GymSystem → Settings → WhatsApp and use «تثبيت محرك الواتساب», then retry.');
+  process.exit(1);
 }
 
-console.log('whatsapp-gateway dependencies ready.');
+console.log('whatsapp-gateway dependencies ready (uses installed Microsoft Edge — no browser download).');

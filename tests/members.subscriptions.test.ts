@@ -283,6 +283,85 @@ describe("subscriptions service", () => {
     ).toBe(1);
   });
 
+  it("purges a trashed member even with card deliveries, leads, trials, referrals and loyalty rows", async () => {
+    const { trashMember, purgeMember, listTrashedMembers } = await import(
+      "@/core/services/members.service"
+    );
+
+    const m = await member({ fullName: "عضو بحشوات جديدة" });
+    const other = await member({ fullName: "عضو محيل آخر" });
+    const ts = new Date().toISOString();
+
+    db.run(
+      "INSERT INTO cards (id, barcode_value, status, member_id, kind, assigned_at, created_at, updated_at)\nVALUES ('card-purge-1', 'PURGE-BARCODE-1', 'assigned', ?, 'virtual', ?, ?, ?)",
+      [m.id, ts, ts, ts],
+    );
+    db.run(
+      "INSERT INTO card_deliveries (id, member_id, card_id, barcode_value, dedupe_key, created_by, created_at)\nVALUES ('cd-purge-1', ?, 'card-purge-1', 'PURGE-BARCODE-1', 'card:' || ? || ':v1', NULL, ?)",
+      [m.id, m.id, ts],
+    );
+
+    db.run(
+      "INSERT INTO leads (id, full_name, source, converted_member_id, created_at, updated_at)\nVALUES ('lead-purge-1', 'عميل محوَّل', 'walk_in', ?, ?, ?)",
+      [m.id, ts, ts],
+    );
+
+    db.run(
+      "INSERT INTO trials (id, trial_type, member_id, converted_member_id, department, start_date, end_date, created_at, updated_at)\nVALUES ('trial-purge-1', 'free', ?, ?, 'general', '2026-09-01', '2026-09-03', ?, ?)",
+      [m.id, m.id, ts, ts],
+    );
+
+    db.run(
+      "INSERT INTO referrals (id, referrer_id, referred_name, referred_member_id, referral_code, created_at)\nVALUES ('ref-purge-1', ?, 'المُحيل بنفسه', NULL, 'CODE-1', ?)",
+      [m.id, ts],
+    );
+    db.run(
+      "INSERT INTO referrals (id, referrer_id, referred_name, referred_member_id, referral_code, created_at)\nVALUES ('ref-purge-2', ?, 'مُحال للعضو', ?, 'CODE-2', ?)",
+      [other.id, m.id, ts],
+    );
+    db.run(
+      "INSERT INTO referral_rewards (id, referral_id, referrer_id, reward_type, reward_value, created_at)\nVALUES ('rw-purge-1', 'ref-purge-2', ?, 'free_days', 3, ?)",
+      [other.id, ts],
+    );
+
+    db.run(
+      "INSERT INTO loyalty_transactions (id, member_id, delta, balance_after, kind, source, created_by, created_at)\nVALUES ('lt-purge-1', ?, 10, 10, 'earn', 'checkin', ?, ?)",
+      [m.id, owner.userId, ts],
+    );
+    db.run(
+      "INSERT INTO loyalty_credit_transactions (id, member_id, loyalty_transaction_id, reward_id, amount_minor, created_by, created_at)\nVALUES ('lct-purge-1', ?, 'lt-purge-1', 'reward-x', 5000, ?, ?)",
+      [m.id, owner.userId, ts],
+    );
+
+    await trashMember(db, owner, m.id, "اختبار");
+    expect(listTrashedMembers(db, owner)).toHaveLength(1);
+
+    await purgeMember(db, owner, m.id);
+
+    expect(listTrashedMembers(db, owner)).toHaveLength(0);
+    expect(db.count("SELECT COUNT(*) AS c FROM members WHERE id = ?", [m.id])).toBe(0);
+    expect(db.count("SELECT COUNT(*) AS c FROM members WHERE id = ?", [other.id])).toBe(1);
+    expect(db.count("SELECT COUNT(*) AS c FROM card_deliveries WHERE member_id = ?", [m.id])).toBe(0);
+    expect(db.count("SELECT COUNT(*) AS c FROM cards WHERE id = 'card-purge-1'")).toBe(0);
+    const lead = db.first<{ converted_member_id: string | null }>(
+      "SELECT converted_member_id FROM leads WHERE id = 'lead-purge-1'",
+    );
+    expect(lead?.converted_member_id).toBeNull();
+    const trial = db.first<{ member_id: string | null; converted_member_id: string | null }>(
+      "SELECT member_id, converted_member_id FROM trials WHERE id = 'trial-purge-1'",
+    );
+    expect(trial?.member_id).toBeNull();
+    expect(trial?.converted_member_id).toBeNull();
+    expect(db.count("SELECT COUNT(*) AS c FROM referrals WHERE id IN ('ref-purge-1','ref-purge-2')")).toBe(0);
+    expect(db.count("SELECT COUNT(*) AS c FROM referral_rewards WHERE id = 'rw-purge-1'")).toBe(0);
+    expect(
+      db.count("SELECT COUNT(*) AS c FROM loyalty_transactions WHERE member_id = ?", [m.id]),
+    ).toBe(0);
+    expect(
+      db.count("SELECT COUNT(*) AS c FROM loyalty_credit_transactions WHERE member_id = ?", [m.id]),
+    ).toBe(0);
+  });
+
   it("purge unlinks a trashed member's photo bytes from disk (registry + Files/)", async () => {
     const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "gym-purge-files-"));
     try {

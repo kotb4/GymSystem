@@ -7,56 +7,40 @@ const wa = require('./wa-session');
 /**
  * Sends a WhatsApp message, image (+caption), or both to an Egyptian mobile.
  * Returns { ok:true } or { ok:false, error } — never throws.
+ *
+ * wppconnect wraps the page and exposes stable, script-injected send APIs
+ * (WPP.chat) so no DOM selector dance is needed — unlike the old Playwright
+ * composer walk, this survives WhatsApp Web UI changes.
  */
 async function send(phone, message, media) {
   try {
     const normalized = normalizeEgyNumber(phone);
     if (!normalized) return { ok: false, error: `invalid Egyptian number: ${phone}` };
 
-    const { ok, page } = await wa.ensureBrowser();
-    if (!ok || !page) return { ok: false, error: 'browser unavailable' };
+    const { ok, client } = await wa.ensureBrowser();
+    if (!ok || !client) return { ok: false, error: 'browser unavailable' };
 
-    if (!(await wa.isPaired(page))) {
+    if (!(await wa.isPaired(client))) {
       // The browser may still be settling after a cold launch — the session
-      // (#side) often appears a few seconds after the first probe. Give it a
-      // few chances before declaring it unpaired.
-      let paired = false;
-      for (let i = 0; i < 8; i++) {
-        await new Promise((r) => setTimeout(r, 2500));
-        paired = await wa.isPaired(page);
-        if (paired) break;
-      }
-      if (!paired) return { ok: false, error: 'not paired: run /pair and scan the QR first' };
+      // often goes in-chat a few seconds after pairing. Give it chances.
+      const waited = await wa.waitForPairing(client, 40000);
+      if (!waited.paired) return { ok: false, error: 'not paired: run /pair and scan the QR first' };
     }
 
-    const composer = await wa.openChat(page, normalized);
+    const chatId = `${normalized}@c.us`;
 
     if (media && media.base64) {
-      const err = await wa.attachImage(page, media.caption || message || '', Buffer.from(media.base64, 'base64'));
-      if (err) return { ok: false, error: err };
+      const mime = media.mime || 'image/png';
+      const dataUrl = `data:${mime};base64,${media.base64}`;
+      const filename = `gym-card-${Date.now()}.${mime.split('/')[1] || 'png'}`;
+      const caption = media.caption || message || '';
+      await client.sendFileFromBase64(chatId, dataUrl, filename, caption);
     } else if (message) {
-      await composer.click();
-      await composer.press('ControlOrMeta+a');
-      await composer.type(message, { delay: 5 });
-      await page.waitForTimeout(300);
+      await client.sendText(chatId, message);
     } else {
       return { ok: false, error: 'nothing to send' };
     }
 
-    // Resilient send-button chain (WhatsApp renamed it before).
-    const sendBtn = page
-      .locator(
-        [
-          'span[data-icon="send"]',
-          'button[aria-label="Send"]',
-          'button[aria-label="إرسال"]',
-          '[data-testid="send"]',
-        ].join(','),
-      )
-      .first();
-    await sendBtn.waitFor({ timeout: 15000 });
-    await sendBtn.click();
-    await page.waitForTimeout(900);
     log.info(`sent to ${normalized}`);
     return { ok: true };
   } catch (err) {

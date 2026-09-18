@@ -17,10 +17,8 @@ await build({
   format: "cjs",
   sourcemap: true,
   legalComments: "none",
-  // whatsapp-web.js must load from node_modules at runtime — bundling it
-  // breaks its dynamic requires and puppeteer's chromium path resolution
-  // (and would desync the LocalWebCache prototype patch in client.ts).
-  external: ["whatsapp-web.js"],
+  // The WhatsApp wppconnect engine is loaded at runtime from the in-app
+  // install (data dir) via createRequire — never bundled, never external.
 });
 
 console.log("server bundle written to dist-server/index.cjs");

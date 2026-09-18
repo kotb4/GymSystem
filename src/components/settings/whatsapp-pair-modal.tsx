@@ -27,6 +27,7 @@ export function WhatsAppPairModal({
   const t = useT();
   const [state, setState] = useState<"down" | "ready" | "paired" | "error">("down");
   const [qr, setQr] = useState<string | null>(null);
+  const [engineMissing, setEngineMissing] = useState(false);
 
   const tick = useCallback(async () => {
     try {
@@ -52,10 +53,12 @@ export function WhatsAppPairModal({
         setState("paired");
         setQr(null);
       }
-    } catch {
-      // The gateway answered /health but could not serve the QR (e.g. its
-      // in-gateway browser failed to launch) — surface that instead of
-      // bouncing back to the "gateway down" state.
+    } catch (err) {
+      // The gateway answered /health but could not serve the QR (its in-gateway
+      // browser failed to launch, or the wppconnect engine is not installed
+      // yet) — surface that instead of bouncing back to "gateway down".
+      const msg = err instanceof Error ? err.message : "";
+      setEngineMissing(/engine not installed/i.test(msg));
       setState("error");
       setQr(null);
     }
@@ -65,6 +68,7 @@ export function WhatsAppPairModal({
     if (!open) return;
     setState("down");
     setQr(null);
+    setEngineMissing(false);
     void tick();
     const timer = setInterval(() => void tick(), 4000);
     return () => clearInterval(timer);
@@ -119,7 +123,11 @@ export function WhatsAppPairModal({
         )}
 
         {state === "error" && (
-          <p className="text-center text-[13px] text-danger">{t("settings.whatsappBrowserFailed")}</p>
+          <p className="text-center text-[13px] text-danger">
+            {engineMissing
+              ? t("settings.whatsappEngineNotInstalled")
+              : t("settings.whatsappBrowserFailed")}
+          </p>
         )}
       </div>
 

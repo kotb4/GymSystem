@@ -2,17 +2,14 @@
   "name": "whatsapp-gateway",
   "version": "1.0.0",
   "private": true,
-  "description": "Yassen Mohamed Kotb | 01288536381 — local WhatsApp Web gateway for QR card delivery (binds 127.0.0.1 only).",
+  "description": "Yassen Mohamed Kotb | 01288536381 — local WhatsApp Web gateway for QR card delivery (binds 127.0.0.1 only). Requires the wppconnect engine pre-installed in the GymSystem data dir (Settings → install engine) — this package has NO npm dependencies and ships with zero node_modules.",
   "main": "index.js",
   "scripts": {
     "start": "node index.js",
     "dev": "node --watch index.js",
-    "install-deps": "npm install && node standalone-bin.mjs"
+    "install-deps": "node standalone-bin.mjs"
   },
   "engines": {
     "node": ">=18"
-  },
-  "dependencies": {
-    "playwright": "^1.48.0"
   }
 }

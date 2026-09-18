@@ -65,6 +65,7 @@ async function handle(req, res) {
       return json(res, 200, {
         ok: true,
         service: 'whatsapp-gateway',
+        engineReady: wa.engineReady(),
         browserReady: status.browserReady,
         paired: status.paired,
         sessionDir: waSessionDir(),
@@ -72,12 +73,17 @@ async function handle(req, res) {
     }
 
     if (req.method === 'POST' && path === '/pair') {
-      const { ok, page } = await wa.ensureBrowser();
-      if (!ok) return json(res, 503, { ok: false, error: 'browser unavailable' });
-      if (await wa.isPaired(page)) {
+      const launched = await wa.ensureBrowser();
+      if (!launched.ok) {
+        const msg = launched.error && /engine not installed/i.test(launched.error)
+          ? 'engine not installed'
+          : 'browser unavailable';
+        return json(res, 503, { ok: false, error: msg });
+      }
+      if (await wa.isPaired()) {
         return json(res, 200, { ok: true, paired: true });
       }
-      const qr = await wa.readQr(page);
+      const qr = await wa.readQr();
       return json(res, 200, {
         ok: true,
         paired: false,
@@ -101,9 +107,9 @@ async function handle(req, res) {
     }
 
     if (req.method === 'GET' && path === '/pair') {
-      const { ok, page } = await wa.ensureBrowser();
-      if (ok && !(await wa.isPaired(page))) {
-        const qr = await wa.readQr(page);
+      const { ok } = await wa.ensureBrowser();
+      if (ok && !(await wa.isPaired())) {
+        const qr = await wa.readQr();
         const html = qr
           ? `<img src="data:image/png;base64,${qr.pngBase64}" alt="pairing qr" style="width:256px;height:256px;image-rendering:pixelated"/>
              <p>افتح واتساب على جوالك > الأجهزة المرتبطة > ربط جهاز.</p>`

@@ -580,11 +580,12 @@ export async function restoreMember(
  * Hard delete for trashed members (members.purge). Intentionally cascades ALL
  * related history — payments, refunds, ledger rows, attendance, subscriptions,
  * freezes, cards, store sales/items/debts/repayments, CRM messages, bookings,
- * training plans, assessments, test results — in FK-safe order inside one
- * transaction so nothing references the purged member afterward. This is an
- * approved product decision (ADR-001 in .ai/decisions.md) that supersedes the
- * original refuse-on-history guard; the audit trail records MEMBER_PURGED with
- * the cascade count.
+ * training plans, assessments, test results, card deliveries, loyalty balances,
+ * referral records — in FK-safe order inside one transaction so nothing
+ * references the purged member afterward. leads/trials keep their rows but lose
+ * the member reference (NULLed). This is an approved product decision (ADR-001
+ * in .ai/decisions.md) that supersedes the original refuse-on-history guard;
+ * the audit trail records MEMBER_PURGED with the cascade count.
  */
 export async function purgeMember(db: Db, actor: ServiceActor, memberId: string): Promise<void> {
   requirePermission(actor, "members.purge");
@@ -614,10 +615,26 @@ export async function purgeMember(db: Db, actor: ServiceActor, memberId: string)
     db.run("DELETE FROM store_returns WHERE sale_id IN (SELECT id FROM store_sales WHERE member_id = ?)", [memberId]);
     db.run("DELETE FROM store_sales WHERE member_id = ?", [memberId]);
     db.run("DELETE FROM member_subscriptions WHERE member_id = ?", [memberId]);
+    db.run("DELETE FROM card_deliveries WHERE member_id = ?", [memberId]);
     db.run("DELETE FROM cards WHERE member_id = ?", [memberId]);
     db.run("DELETE FROM training_plans WHERE member_id = ?", [memberId]);
     db.run("DELETE FROM body_assessments WHERE member_id = ?", [memberId]);
     db.run("DELETE FROM fitness_test_results WHERE member_id = ?", [memberId]);
+    db.run(
+      "DELETE FROM referral_rewards WHERE referrer_id = ? OR referral_id IN (SELECT id FROM referrals WHERE referrer_id = ? OR referred_member_id = ?)",
+      [memberId, memberId, memberId],
+    );
+    db.run(
+      "DELETE FROM referrals WHERE referrer_id = ? OR referred_member_id = ?",
+      [memberId, memberId],
+    );
+    db.run("UPDATE leads SET converted_member_id = NULL WHERE converted_member_id = ?", [memberId]);
+    db.run(
+      "UPDATE trials SET member_id = NULL, converted_member_id = NULL WHERE member_id = ? OR converted_member_id = ?",
+      [memberId, memberId],
+    );
+    db.run("DELETE FROM loyalty_credit_transactions WHERE member_id = ?", [memberId]);
+    db.run("DELETE FROM loyalty_transactions WHERE member_id = ?", [memberId]);
     db.run("DELETE FROM members WHERE id = ?", [memberId]);
     let filesRemoved = 0;
     if (row.photo_file_id) {

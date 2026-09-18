@@ -122,6 +122,18 @@ describe("card-delivery service (TASK-044)", () => {
     const again = await queueCardDelivery(db, manager, { cardId: card.id });
     expect(again.status).toBe("sent");
     expect(listCardDeliveries(db, manager, { memberId: member.id })).toHaveLength(1);
+
+    // But force:true explicitly re-queues the sent record so it can be resent
+    // (owner wants the card re-delivered); same row, no UNIQUE crash.
+    const forced = await queueCardDelivery(db, manager, { cardId: card.id, force: true });
+    expect(forced.status).toBe("pending");
+    expect(listCardDeliveries(db, manager, { memberId: member.id })).toHaveLength(1);
+    const resent = await sendPendingCardDeliveries(db, manager, 10);
+    expect(resent.sent).toBe(1);
+    expect(countPendingCardDeliveries(db, manager)).toBe(0);
+    const after = listCardDeliveries(db, manager, { memberId: member.id });
+    expect(after).toHaveLength(1);
+    expect(after[0].status).toBe("sent");
   });
 
   it("marks skipped_no_phone when the member has no phone", async () => {
@@ -237,6 +249,15 @@ describe("card-delivery service (TASK-044)", () => {
       const transport2 = whatsappTransport("http://127.0.0.1:8891/send/");
       await transport2("01011112222", "m", null);
       expect(seen2[0]).toBe("http://127.0.0.1:8891/send");
+
+      // Gateway errors keep the HTTP status AND surface the gateway's message.
+      globalThis.fetch = (async () =>
+        new Response(JSON.stringify({ ok: false, error: "not paired: run /pair first" }), {
+          status: 502,
+        })) as typeof fetch;
+      const failed = await whatsappTransport("http://127.0.0.1:8891")("01033334444", "m", null);
+      expect(failed.ok).toBe(false);
+      expect(failed.error).toBe("HTTP 502 — not paired: run /pair first");
     } finally {
       globalThis.fetch = originalFetch;
     }

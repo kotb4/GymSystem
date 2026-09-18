@@ -14,7 +14,8 @@ function main() {
   log.info('whatsapp-gateway starting (local only)');
   log.info(`binding  ${cfg.host}:${cfg.port}`);
   log.info(`session  ${cfg.sessionDir}`);
-  log.info(`browser  channel=${cfg.channel} headless=${cfg.headless}`);
+  log.info(`engine   ${cfg.engineDir}`);
+  log.info(`browser  headless=${cfg.headless} (wppconnect on installed Edge)`);
   log.info('==========================================');
 
   const server = createServer(cfg.port, cfg.host);

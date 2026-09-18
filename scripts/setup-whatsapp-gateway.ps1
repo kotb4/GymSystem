@@ -2,22 +2,21 @@ param(
   [switch]$SkipInstall
 )
 # One-off setup for the local WhatsApp gateway (TASK-044).
-# Installs the gateway's npm deps + browser binary, then prints usage.
+# The gateway itself ships with no npm deps; the wppconnect engine is installed
+# into the GymSystem data dir from inside the app (Settings → «تثبيت محرك
+# الواتساب»). This script verifies the engine is present and prints usage.
 $ErrorActionPreference = 'Stop'
 $root = Split-Path -Parent (Split-Path -Parent $MyInvocation.MyCommand.Path)
 
 Write-Host "whatsapp-gateway setup ($root)" -ForegroundColor Cyan
 
-Set-Location -LiteralPath (Join-Path $root 'whatsapp-gateway')
-
 if (-not $SkipInstall) {
-  Write-Host "Installing whatsapp-gateway dependencies…" -ForegroundColor Cyan
-  & npm install
-  if ($LASTEXITCODE -ne 0) { throw "npm install failed" }
+  Write-Host "Verifying the wppconnect engine (data dir)…" -ForegroundColor Cyan
+  Set-Location -LiteralPath (Join-Path $root 'whatsapp-gateway')
   & node standalone-bin.mjs
-  if ($LASTEXITCODE -ne 0) { throw "browser install failed" }
+  if ($LASTEXITCODE -ne 0) { throw "wppconnect engine not installed — start GymSystem and use Settings → «تثبيت محرك الواتساب»" }
 } else {
-  Write-Host "Skipping dependency install (already done)." -ForegroundColor Yellow
+  Write-Host "Skipping engine check (already done)." -ForegroundColor Yellow
 }
 
 Write-Host @"
