@@ -1,5 +1,18 @@
 # Architecture Decision Log
 
+## ADR-034: Messages module — computed WhatsApp outreach segments, view/send permission split, gateway transport reuse (TASK-061)
+- Date: 2026-09-19
+- Status: accepted
+- Context: the owner wanted a proper «نظام الرسائل» instead of ad-hoc blasting. The product needed a way to reach (a) members who stopped showing up, (b) members with an upcoming birthday, (c) members whose subscription is about to expire — each with a configurable threshold, plus per-member and whole-segment sending with a durable history. The repo already had (1) a permission/audit/RPC/transaction backbone, (2) a working WhatsApp transport in `card-delivery.service.ts` (TASK-044/058) with the gateway as the only packaged-shippable send path, and (3) an i18n coverage gate that forbids untranslated UI.
+- Decision:
+  1. **One generic outbox table, not per-segment tables.** `member_messages` (migration v34) stores every attempt with a `segment` column (`absent|birthday|expiry`) and a status enum (`pending|sent|failed|skipped_no_phone|not_configured`). Segments are computed at send time from live member/subscription/attendance data — never persisted as recipient lists — so the data can never go stale.
+  2. **`dedupe_key` UNIQUE with a `uuid` suffix (`msg:<segment>:<memberId>:<uuid>`).** Deliberate re-sends are always allowed (unlike card-QR `card:<id>:v1`, which must never double-blink), so the key exists purely to make each attempt uniquely identifiable/idempotent at insert time.
+  3. **Two permissions with a real separation of powers.** `messages.view` guards `listRecipients`/`getMessagesConfig`; `messages.send` guards `sendMessage`/`sendSegment`/`listMessageHistory`. Grants: owner all, **manager view+send**, **reception view-only**, trainer neither. A viewer can prepare the list but cannot put a WhatsApp message on the gym's number.
+  4. **Coarse SQL pre-filter + exact JS window.** Segment SQL is intentionally loose (e.g. a date range wide enough to bound rows) and `matchesSegment` applies the precise rule, so the definition lives in one testable place instead of being spread across SQL date arithmetic. Never-visited members count as maximally absent (`Number.MAX_SAFE_INTEGER` in `segmentSort`). Thresholds are settings (`messages_absent_days`, `messages_birthday_days`, `messages_expiry_days`) and the page reads/writes them through the existing settings service.
+  5. **Reuse the gateway transport, no second send stack.** `resolveTransport` calls the exported `whatsappTransport`/`mockTransport` from `card-delivery.service.ts`; `GYM_CRM_MOCK=1` short-circuits to the mock and skips pacing. Batch sends pace 2–5 s between messages to stay under WhatsApp's spam heuristics; each attempt is audited (`MESSAGE_SENT`/`MESSAGE_FAILED`).
+  6. **Sending is manual and immediate — no scheduler.** The module has no auto/triggered sending; a human presses «إرسال للمقطع» behind a confirm. This keeps the blast surface explicit and avoids a background job that could message members without a deliberate action.
+- Consequences: no change to existing send paths; `purgeMember` gains one more cascade entry. 4 files created, 13 modified (list in `.ai/tasks.md` TASK-061). Migration assert 33→34 in three test files. Verification: typecheck ×2, `npm test` 524/524 (46 files), build clean, rpc-consistency 278/0 missing, i18n coverage green. Known limits: no live WhatsApp segment send proven on the gym PC; compose modal has an empty body/placeholder only (no template pre-fill); no opt-out/unsubscribe tracking; no scheduled sending.
+
 ## ADR-033: Remove the in-process WhatsApp module (QR visible in Settings); gateway + engine install become the only WhatsApp path (TASK-057)
 - Date: 2026-09-18
 - Status: accepted
