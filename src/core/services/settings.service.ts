@@ -34,6 +34,9 @@ export const SETTING_KEYS = {
   whatsappEnabled: "whatsapp_enabled",
   whatsappApiUrl: "whatsapp_api_url",
   allowNegativeStock: "allow_negative_stock",
+  messagesAbsentDays: "messages_absent_days",
+  messagesBirthdayDays: "messages_birthday_days",
+  messagesExpiryDays: "messages_expiry_days",
 } as const;
 
 export type SettingKey = (string & {}) | (typeof SETTING_KEYS)[keyof typeof SETTING_KEYS];
@@ -189,6 +192,9 @@ const SPECS: Record<string, KeySpec> = {
       return v;
     },
   },
+  [SETTING_KEYS.messagesAbsentDays]: { validate: (v) => String(intInRange(v, 1, 365)) },
+  [SETTING_KEYS.messagesBirthdayDays]: { validate: (v) => String(intInRange(v, 1, 365)) },
+  [SETTING_KEYS.messagesExpiryDays]: { validate: (v) => String(intInRange(v, 1, 365)) },
 };
 
 const EDITABLE_KEYS = new Set<string>(Object.keys(SPECS));
@@ -385,4 +391,19 @@ export function getWhatsAppConfig(db: Db): WhatsAppConfig {
       (readSetting(db, SETTING_KEYS.whatsappApiUrl) ?? "") !== "",
     apiUrl: readSetting(db, SETTING_KEYS.whatsappApiUrl) ?? "",
   };
+}
+
+/** Days of no visit that flags a member into the `absent` outreach segment. */
+export function getMessagesAbsentDays(db: Db): number {
+  return toInt(readSetting(db, SETTING_KEYS.messagesAbsentDays), 14, 1, 365);
+}
+
+/** Birthday window (upcoming N days) for the `birthday` outreach segment. */
+export function getMessagesBirthdayDays(db: Db): number {
+  return toInt(readSetting(db, SETTING_KEYS.messagesBirthdayDays), 7, 1, 365);
+}
+
+/** Subscription-end window (upcoming N days) for the `expiry` outreach segment. */
+export function getMessagesExpiryDays(db: Db): number {
+  return toInt(readSetting(db, SETTING_KEYS.messagesExpiryDays), 7, 1, 365);
 }

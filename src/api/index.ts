@@ -58,6 +58,14 @@ import type {
   RedemptionItem,
   RedemptionResult,
 } from "@/core/services/loyalty.service";
+import type {
+  MessageRecipient,
+  MessageSegment,
+  MessageSendResult,
+  MessagesConfig,
+  PublicMessageRow,
+  SegmentSendSummary,
+} from "@/core/services/messages.service";
 
 import type { AuditListQuery, AuditLogItem } from "@/core/services/audit.service";
 import type { MemberOverview } from "@/core/services/member-profile.service";
@@ -1295,6 +1303,18 @@ export const api = {
     deactivate: () =>
       rpc<{ ok: boolean }>("license", "deactivate", []),
   },
+  messages: {
+    listRecipients: (segment: MessageSegment) =>
+      rpc<MessageRecipient[]>("messages", "listRecipients", [{ segment }]),
+    send: (input: { memberId: string; segment: MessageSegment; body: string }) =>
+      rpc<MessageSendResult>("messages", "sendMessage", [input]),
+    sendSegment: (input: { segment: MessageSegment; body: string; limit?: number }) =>
+      rpc<SegmentSendSummary>("messages", "sendSegment", [input]),
+    listHistory: (limit?: number) =>
+      rpc<PublicMessageRow[]>("messages", "listMessageHistory", [{ limit: limit ?? 30 }]),
+    getConfig: () =>
+      rpc<MessagesConfig>("messages", "getMessagesConfig", []),
+  },
 };
 
 export default api;
@@ -1380,3 +1400,11 @@ export type {
   MemberTransactionPage,
   RedemptionResult,
 } from "@/core/services/loyalty.service";
+export type {
+  MessageRecipient,
+  MessageSegment,
+  MessageSendResult,
+  MessagesConfig,
+  PublicMessageRow,
+  SegmentSendSummary,
+} from "@/core/services/messages.service";

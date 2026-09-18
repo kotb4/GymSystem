@@ -37,6 +37,7 @@ import { dev } from "./dev.rpc";
 import { memberProfile } from "./member-profile.rpc";
 import { referral } from "./referral.rpc";
 import { loyalty } from "./loyalty.rpc";
+import { messages } from "./messages.rpc";
 import { license } from "./license.rpc";
 
 /**
@@ -79,6 +80,7 @@ export const REGISTRY: Record<string, Record<string, Exposed>> = {
   memberProfile,
   referral,
   loyalty,
+  messages,
   license,
 };
 

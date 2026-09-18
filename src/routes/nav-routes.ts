@@ -49,6 +49,7 @@ export const NAV_ROUTES: NavRoute[] = [
   { path: "/staff", key: "nav.staff", group: "team", permission: "users.view" },
   { path: "/crm", key: "nav.crm", group: "comms", permissions: ["leads.view", "trials.view"] },
   { path: "/referrals", key: "nav.referrals", group: "comms", permission: "referrals.view" },
+  { path: "/messages", key: "nav.messages", group: "comms", permission: "messages.view" },
   { path: "/cards", key: "nav.cards", group: "maintenance", permission: "cards.view" },
   { path: "/loyalty", key: "nav.loyalty", group: "maintenance", permission: "loyalty.manage" },
   { path: "/settings", key: "nav.settings", group: "maintenance", permission: "settings.view" },

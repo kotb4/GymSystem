@@ -102,3 +102,30 @@ export function secondsBetweenStamps(laterStamp: string, earlierStamp: string): 
   const earlier = parseStamp(earlierStamp).getTime();
   return Math.max(0, Math.floor((later - earlier) / 1000));
 }
+
+/**
+ * Next occurrence of a birthday (month/day of `dobKey`) on or after `fromKey`.
+ * Year-boundary aware; Feb 29 maps to Feb 28 in non-leap years. Returns null
+ * when either input is an invalid date key.
+ */
+export function nextAnniversaryKey(dobKey: string, fromKey: string): string | null {
+  const dob = safeParseDateKey(dobKey);
+  const from = safeParseDateKey(fromKey);
+  if (!dob || !from) return null;
+
+  let year = from.getFullYear();
+  const month = dob.getMonth();
+  const day = dob.getDate();
+
+  const clampDay = (y: number): number => {
+    const maxDay = new Date(y, month + 1, 0).getDate();
+    return Math.min(day, maxDay);
+  };
+
+  let candidate = new Date(year, month, clampDay(year));
+  if (candidate.getTime() < from.getTime()) {
+    year += 1;
+    candidate = new Date(year, month, clampDay(year));
+  }
+  return dateKey(candidate);
+}

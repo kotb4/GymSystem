@@ -882,6 +882,55 @@ CREATE INDEX IF NOT EXISTS idx_backups_created ON backups_log(created_at);`,
         db.run("DELETE FROM permissions WHERE code IN ('crm.send', 'crm.templates')");
       },
     },
+    {
+      // ---- v34: member messaging outbox + outreach segments (TASK-061) ----
+      // WhatsApp outreach lives in `member_messages`: one append-only row per
+      // send attempt (individual or segment batch) with snapshot fields and a
+      // status flow mirroring card_deliveries (pending/sent/failed/skipped_no_phone
+      // /not_configured). Segment windows (absence / birthday / expiry days) are
+      // plain settings rows with defaults; `messages.view` and `messages.send`
+      // gate the page and the send actions (manager: view+send, reception: view).
+      version: 34,
+      statements: [],
+      callback: (db: Db) => {
+        const hasTable = (name: string) =>
+          Number(db.scalar("SELECT COUNT(*) FROM sqlite_master WHERE type = 'table' AND name = ?", [name])) === 1;
+        if (!hasTable("member_messages")) {
+          db.exec(
+            "CREATE TABLE member_messages (\n" +
+              "  id TEXT PRIMARY KEY,\n" +
+              "  member_id TEXT NOT NULL REFERENCES members(id),\n" +
+              "  segment TEXT NOT NULL CHECK (segment IN ('absent', 'birthday', 'expiry')),\n" +
+              "  member_code TEXT NOT NULL,\n" +
+              "  member_name TEXT NOT NULL,\n" +
+              "  phone TEXT,\n" +
+              "  body TEXT NOT NULL,\n" +
+              "  status TEXT NOT NULL DEFAULT 'pending' CHECK (status IN ('pending', 'sent', 'failed', 'skipped_no_phone', 'not_configured')),\n" +
+              "  error TEXT,\n" +
+              "  dedupe_key TEXT NOT NULL UNIQUE,\n" +
+              "  sent_at TEXT,\n" +
+              "  created_by TEXT REFERENCES users(id),\n" +
+              "  created_at TEXT NOT NULL\n" +
+              ")",
+          );
+          db.run("CREATE INDEX IF NOT EXISTS idx_member_messages_member ON member_messages(member_id)");
+          db.run("CREATE INDEX IF NOT EXISTS idx_member_messages_status ON member_messages(status)");
+        }
+        const defaults: Array<[string, string]> = [
+          ["messages_absent_days", "14"],
+          ["messages_birthday_days", "7"],
+          ["messages_expiry_days", "7"],
+        ];
+        for (const [key, value] of defaults) {
+          db.run("INSERT OR IGNORE INTO settings (key, value) VALUES (?, ?)", [key, value]);
+        }
+        db.run("INSERT OR IGNORE INTO permissions (code) VALUES ('messages.view')");
+        db.run("INSERT OR IGNORE INTO permissions (code) VALUES ('messages.send')");
+        db.run("INSERT OR IGNORE INTO role_permissions (role_id, permission_code) VALUES ('manager', 'messages.view')");
+        db.run("INSERT OR IGNORE INTO role_permissions (role_id, permission_code) VALUES ('manager', 'messages.send')");
+        db.run("INSERT OR IGNORE INTO role_permissions (role_id, permission_code) VALUES ('reception', 'messages.view')");
+      },
+    },
   ];
 }
 

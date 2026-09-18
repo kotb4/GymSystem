@@ -161,6 +161,8 @@
   "LOYALTY_RULES_UPDATED",
   "LOYALTY_CATALOG_UPDATED",
   "WHATSAPP_QR_SENT",
+  "MESSAGE_SENT",
+  "MESSAGE_FAILED",
 ] as const;
 
 export type AuditAction = (typeof AUDIT_ACTIONS)[number];

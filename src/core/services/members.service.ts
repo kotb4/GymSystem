@@ -616,6 +616,7 @@ export async function purgeMember(db: Db, actor: ServiceActor, memberId: string)
     db.run("DELETE FROM store_sales WHERE member_id = ?", [memberId]);
     db.run("DELETE FROM member_subscriptions WHERE member_id = ?", [memberId]);
     db.run("DELETE FROM card_deliveries WHERE member_id = ?", [memberId]);
+    db.run("DELETE FROM member_messages WHERE member_id = ?", [memberId]);
     db.run("DELETE FROM cards WHERE member_id = ?", [memberId]);
     db.run("DELETE FROM training_plans WHERE member_id = ?", [memberId]);
     db.run("DELETE FROM body_assessments WHERE member_id = ?", [memberId]);
