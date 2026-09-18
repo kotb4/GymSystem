@@ -39,6 +39,7 @@ import {
 } from "../src/core/services/settings.service";
 import { ensureGateway } from "./gateway-spawn";
 import { startEngineInstall, engineStatus } from "./whatsapp-engine";
+import { canAdoptFirstRun, isLoopbackAddress } from "./first-run";
 
 const PORT = Number(process.env.GYMSYSTEM_PORT ?? 8890);
 /** Secure default: loopback-only (ADR-023). GYMSYSTEM_HOST still allows LAN exposure. */
@@ -360,6 +361,19 @@ async function handleApi(ctx: Ctx): Promise<void> {
   }
 
   if (route === "POST /api/auth/setup") {
+    // First-run ownership may only be claimed from the local machine, never from
+    // another host on the LAN even if GYMSYSTEM_HOST opted into LAN binding.
+    if (!isLoopbackAddress(req.socket.remoteAddress)) {
+      return sendJson(res, 403, {
+        ok: false,
+        error: {
+          name: "AppError",
+          code: "FORBIDDEN",
+          messageKey: "errors.firstRunLocalOnly",
+          params: {},
+        },
+      });
+    }
     const body = await readJsonBody(req);
     try {
       const user = await svcSetup(getDbContext().db, parseSetupPayload(body.input));
@@ -412,13 +426,14 @@ async function handleApi(ctx: Ctx): Promise<void> {
   let actor = currentActor(ctx);
 
   // One-time legacy import may run unauthenticated ONLY while the system is
-  // still uninitialized (no active owner) so old browser data can be adopted
-  // during first-run (spec section 18).
+  // still uninitialized (no active owner) AND the request comes from the local
+  // machine, so old browser data can be adopted during first-run (spec section
+  // 18) without letting a network peer seize the database.
   if (!actor && route === "POST /api/system/import-legacy") {
     const owners = getDbContext().db.count(
       "SELECT COUNT(*) FROM users WHERE role_id = 'owner' AND is_active = 1",
     );
-    if (owners === 0) {
+    if (canAdoptFirstRun(owners > 0, req.socket.remoteAddress)) {
       actor = { userId: "legacy-import", username: "system", roleId: "owner" };
     }
   }

@@ -189,6 +189,7 @@ export const ar = {
     whatsappGatewayTimeout: "بوابة الواتساب لم تصبح جاهزة في الوقت المتوقع — انتظر لحظات ثم أعد المحاولة",
     accountLocked: "تم قفل الحساب مؤقتًا بسبب محاولات فاشلة متكررة. أعد المحاولة بعد {seconds} ثانية",
     setupAlreadyDone: "تم تهيئة النظام بالفعل",
+    firstRunLocalOnly: "تهيئة النظام ممكنة فقط من نفس الجهاز (اتصال محلي) — افتح البرنامج على الجهاز الرئيسي",
     gymNameRequired: "أدخل اسم النادي",
     fullNameRequired: "أدخل الاسم الكامل",
     nameRequired: "أدخل الاسم",
