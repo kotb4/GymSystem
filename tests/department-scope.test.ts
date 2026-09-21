@@ -185,3 +185,31 @@ describe("department scoping beyond members service (audit F-04 / ADR-004)", () 
     expect(listMemberSubscriptions(db, manager, women.id)).toEqual([]);
   });
 });
+
+
+describe("searchMembersForPicker department isolation (TASK-065 picker dept-audit regression)", () => {
+  it("never surfaces a women member to a men-section receptionist picker search (name, phone tail, member code)", async () => {
+    const { searchMembersForPicker } = await import("@/core/services/members.service");
+    const women = await member("?????? ??????? ????", "women");
+    const men = await member("?????? ????", "men");
+
+    const byName = searchMembersForPicker(db, menReception, "??????");
+    expect(byName.some((m) => m.id === women.id)).toBe(false);
+
+    const byPhoneTail = searchMembersForPicker(db, menReception, women.phone!.slice(-4));
+    expect(byPhoneTail.some((m) => m.id === women.id)).toBe(false);
+
+    const byCode = searchMembersForPicker(db, menReception, women.memberCode);
+    expect(byCode.some((m) => m.id === women.id)).toBe(false);
+
+    const ownMen = searchMembersForPicker(db, menReception, "??????");
+    expect(ownMen.some((m) => m.id === men.id)).toBe(true);
+  });
+
+  it("lets the owner bypass department isolation in the picker (members.view_all_departments / owner bypass)", async () => {
+    const { searchMembersForPicker } = await import("@/core/services/members.service");
+    const women = await member("?????? ??????? ??????", "women");
+    const all = searchMembersForPicker(db, owner, "??????");
+    expect(all.some((m) => m.id === women.id)).toBe(true);
+  });
+});

@@ -513,10 +513,17 @@ export function searchMembersForPicker(
 ): PublicMember[] {
   requirePermission(actor, "members.view");
   const like = `%${term.trim()}%`;
+  const conditions: string[] = ["m.status != 'archived'", "m.deleted_at IS NULL"];
+  const params: Array<string | number> = [];
+  const scope = departmentScopeCondition(actor);
+  if (scope.sql) conditions.push(scope.sql.replace(/^\s*AND\s*/, ""));
+  if (scope.params.length) params.push(...scope.params);
+  conditions.push("(m.full_name LIKE ? OR m.phone LIKE ? OR m.member_code LIKE ?)");
+  params.push(like, like, like);
   return db
     .all<MemberRow>(
-      "SELECT * FROM members WHERE status != 'archived' AND deleted_at IS NULL AND (full_name LIKE ? OR phone LIKE ? OR member_code LIKE ?)\nORDER BY full_name LIMIT ?",
-      [like, like, like, limit],
+      `SELECT m.* FROM members m WHERE ${conditions.join(" AND ")}\nORDER BY m.full_name LIMIT ?`,
+      [...params, limit],
     )
     .map(toPublicMember);
 }
