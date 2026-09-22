@@ -7,10 +7,13 @@ import crypto from "node:crypto";
  *
  * Primary stable input on Windows: the machine-unique `MachineGuid` under
  * `HKEY_LOCAL_MACHINE\SOFTWARE\Microsoft\Cryptography`, read via `reg query`.
- * This survives NIC/CPU/hostname changes and differs between physical
- * machines, making a copy of the app/DB to another PC fail HWID binding.
- * Non-Windows builds fall back to `node:os` stable identifiers (hostname +
- * MACs + platform/arch), which is best-effort and not a hard guarantee.
+ * `MachineGuid` is the SOLE backbone of the fingerprint: it survives
+ * NIC/CPU/hostname renames, differs between physical machines, and alone is
+ * enough to fail a copy of the app/DB onto another PC.
+ * Hostname is deliberately EXCLUDED (it changes on rename / DNS / domain
+ * join and was the top source of false "device changed" support tickets).
+ * MACs stay as a secondary, non-essential input. Non-Windows builds fall back
+ * to `node:os` stable identifiers (MACs + platform/arch), best-effort only.
  *
  * The HWID is SHA-256 over a canonical JSON list of identifiers, truncated to
  * `GYM-XXXX-XXXX-XXXX-XXXX`.
@@ -45,7 +48,6 @@ function macAddresses(): string[] {
 export function computeHwId(pf: NodeJS.Platform = os.platform()): string {
   const identifiers: (string | null)[] = [];
   identifiers.push(machineGuid(pf));
-  identifiers.push(os.hostname());
   identifiers.push(pf);
   identifiers.push(os.arch());
   identifiers.push(...macAddresses());
