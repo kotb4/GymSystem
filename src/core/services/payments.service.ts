@@ -175,10 +175,6 @@ export async function recordPayment(
     }
     if (sub.status === "cancelled") throw errValidation("errors.subscriptionCancelled");
     subscriptionId = sub.id;
-    const subBalance = getSubscriptionBalanceInternal(db, subscriptionId);
-    if (subBalance.remainingMinor === 0) {
-      throw errValidation("errors.finance.subscriptionFullyPaid");
-    }
   }
 
   const kind: DiscountKind = input.discountKind ?? "none";
@@ -207,6 +203,17 @@ export async function recordPayment(
 
   try {
     await db.transaction(async () => {
+      // The remaining-balance guard MUST run inside the same BEGIN IMMEDIATE
+      // transaction as the INSERT. Doing the read here (after the write lock is
+      // acquired) serializes concurrent payments against the same subscription:
+      // a payment committed by another request just before us is visible, so a
+      // fully-paid subscription is rejected instead of being overcharged.
+      if (subscriptionId) {
+        const subBalance = getSubscriptionBalanceInternal(db, subscriptionId);
+        if (subBalance.remainingMinor === 0) {
+          throw errValidation("errors.finance.subscriptionFullyPaid");
+        }
+      }
       db.run(
         "INSERT INTO payments (id, member_id, subscription_id, base_amount_minor, discount_kind, discount_input, discount_amount_minor, net_amount_minor, paid_amount_minor, refunded_amount_minor, remaining_amount_minor, method_code, status, reference_no, notes, client_ref, paid_at, created_by, created_at, updated_at)\nVALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 0, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
         [
@@ -325,17 +332,9 @@ export async function refundPayment(
   if (row.status === "voided") throw errConflict("errors.finance.paymentVoided");
   assertDepartmentAccess(actor, memberDepartmentById(db, String(row.member_id)));
 
-  const paidMinorRow = Number(row.paid_amount_minor);
-  const refundedSoFar = Number(row.refunded_amount_minor);
-  const refundable = paidMinorRow - refundedSoFar;
   const refundMinor = Math.round(amountMinor);
   if (!Number.isFinite(refundMinor) || refundMinor <= 0) {
     throw errValidation("errors.finance.invalidRefundAmount");
-  }
-  if (refundMinor > refundable) {
-    throw errValidation("errors.finance.refundExceedsPaid", {
-      refundable: (refundable / 100).toFixed(2),
-    });
   }
 
   const method = methodCode ?? row.method_code;
@@ -344,12 +343,25 @@ export async function refundPayment(
   const refundId = crypto.randomUUID();
   const stamp = nowStamp();
   await db.transaction(async () => {
+    // The exceeds-paid guard MUST run inside the same BEGIN IMMEDIATE transaction
+    // as the INSERT. Re-reading the amounts here (after write-lock acquisition)
+    // serializes concurrent refunds against the same payment: a refund committed
+    // by another request just before us is visible, so a fully-refunded payment
+    // is rejected instead of being over-refunded.
+    const freshRow = getPaymentRow(db, paymentId);
+    if (!freshRow) throw errNotFound("errors.finance.paymentNotFound");
+    const freshRefundable = Number(freshRow.paid_amount_minor) - Number(freshRow.refunded_amount_minor);
+    if (refundMinor > freshRefundable) {
+      throw errValidation("errors.finance.refundExceedsPaid", {
+        refundable: (freshRefundable / 100).toFixed(2),
+      });
+    }
     db.run(
       "INSERT INTO payment_refunds (id, payment_id, amount_minor, reason, method_code, created_by, created_at)\nVALUES (?, ?, ?, ?, ?, ?, ?)",
       [refundId, paymentId, refundMinor, trimmedReason, method, actor.userId, stamp],
     );
-    const newRefunded = refundedSoFar + refundMinor;
-    const nextStatus: PaymentStatus = newRefunded >= paidMinorRow ? "refunded" : (row.status as PaymentStatus);
+    const newRefunded = Number(freshRow.refunded_amount_minor) + refundMinor;
+    const nextStatus: PaymentStatus = newRefunded >= Number(freshRow.paid_amount_minor) ? "refunded" : (row.status as PaymentStatus);
     db.run("UPDATE payments SET refunded_amount_minor = ?, status = ?, updated_at = ? WHERE id = ?", [
       newRefunded,
       nextStatus,
@@ -480,9 +492,11 @@ export async function undoRefund(
 
   const stamp = nowStamp();
   await db.transaction(async () => {
-    const newRefunded = Number(row.refunded_amount_minor) - Number(refund.amount_minor);
+    const freshRow = getPaymentRow(db, paymentId);
+    if (!freshRow) throw errNotFound("errors.finance.paymentNotFound");
+    const newRefunded = Number(freshRow.refunded_amount_minor) - Number(refund.amount_minor);
     const nextStatus: PaymentStatus = newRefunded <= 0
-      ? (Number(row.paid_amount_minor) >= Number(row.net_amount_minor) ? "paid" : "partial")
+      ? (Number(freshRow.paid_amount_minor) >= Number(freshRow.net_amount_minor) ? "paid" : "partial")
       : (row.status as PaymentStatus);
     db.run("UPDATE payments SET refunded_amount_minor = ?, status = ?, updated_at = ? WHERE id = ?", [
       Math.max(0, newRefunded),

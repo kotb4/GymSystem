@@ -218,16 +218,21 @@ export async function createSubscription(
     throw errValidation("errors.planSessionsInvalid");
   }
 
-  const overlap = findOverlap(db, input.memberId, startDate, endDate);
-  if (overlap) {
-    throw errConflict("errors.subscriptionOverlap", {
-      suggestedStart: calcSubscriptionEndDate(overlap.end_date, 2),
-      endDate: overlap.end_date,
-    });
-  }
-
   const id = crypto.randomUUID();
+  // Overlap validation MUST run inside the same BEGIN IMMEDIATE transaction that
+  // performs the insert (engine.ts opens every transaction with BEGIN IMMEDIATE),
+  // so a concurrent create for the same member can never pass the overlap check
+  // between the check query and the INSERT that both request A and B would
+  // otherwise race through.
   await db.transaction(async () => {
+    const overlap = findOverlap(db, input.memberId, startDate, endDate);
+    if (overlap) {
+      throw errConflict("errors.subscriptionOverlap", {
+        suggestedStart: calcSubscriptionEndDate(overlap.end_date, 2),
+        endDate: overlap.end_date,
+      });
+    }
+
     db.run(
       `INSERT INTO member_subscriptions (id, member_id, plan_id, start_date, end_date, price, status, sessions_total, sessions_used, notes, created_by, created_at, updated_at,
         package_id, package_name, package_model, package_duration_days, package_price, package_visit_limit, package_unlimited_visits, package_freeze_allowance_days, package_allowed_freezes, package_pt_sessions)
