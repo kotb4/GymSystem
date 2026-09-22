@@ -1,5 +1,14 @@
 # Architecture Decision Log
 
+## ADR-036: Subscription-overlap guard must live inside the same BEGIN IMMEDIATE transaction as the INSERT (TOCTOU closure, TASK-063)
+- Date: 2026-09-19
+- Status: accepted
+- Context: `createSubscription` sanity-checked `findOverlap` BEFORE opening the write transaction that performs the `INSERT`. Because concurrent HTTP-backed writer requests interleave at `await db.transaction(...)` boundaries, two creates for the same member could both pass the overlap check (no row committed yet) and then both run their inserts → two overlapping `active` subscriptions. The overlap operation itself is NOT destructive — but the ordering that lets the check race the insert is the vulnerability.
+- Decision:
+  1. **Move the overlap check + CONFLICT throw INSIDE the same transaction as the INSERT.** `src/core/services/subscriptions.service.ts` `createSubscription`: `const overlap = findOverlap(...)` + `throw errConflict("errors.subscriptionOverlap", {suggestedStart, endDate})` now run as the FIRST statements of the `await db.transaction(async () => {...})` body. Engine invariant: `src/db/engine.ts` opens every `Db.transaction` with `BEGIN IMMEDIATE` (`txDepth 0→1`), so the overlap check and the INSERT serialize as ONE atomic write at the SQLite level — a concurrent create for the same member can never pass the check between the check query and the INSERT.
+  2. **Error semantics unchanged.** Loser still rejects `CONFLICT` with `errors.subscriptionOverlap` + `{suggestedStart, endDate}` (computed from the overlap row that the loser now sees inside its own serialized write). No i18n, permission, schema, or RPC change.
+- Consequences: deterministic overlap rejection for a SINGLE sequential create is unchanged (existing green tests). A **faithful TOCTOU regression cannot be modeled on the repo's single synchronous in-memory harness** — see TASK-063 "why no concurrent test shipped" for the exact reasoning, and the discovered follow-up (a two-connection, file-backed race harness) therecars. This ADR supersedes the pre-063 implicit design (overlap checked outside the write transaction).
+
 ## ADR-035: First-run adoption is loopback-only — setup & no-owner legacy import refused from any non-local peer, even under opt-in LAN binding (TASK-062)
 - Date: 2026-09-19
 - Status: accepted
@@ -375,3 +384,7 @@
   3. **UX.** Enabling the WhatsApp toggle triggers `api.system.ensureWhatsAppGateway()` immediately; the WhatsApp settings card and the pairing modal gain a «تشغيل البوابة الآن» button with spinner + toasts. The old restart-required message is gone.
   4. **`npm run build:installer` resolves ISCC itself.** `scripts/build-installer.mjs` probes `ISCC_PATH` → `%LOCALAPPDATA%\Programs\Inno Setup 6\ISCC.exe` → ProgramFiles(x86) → `iscc` on PATH, with a clear error otherwise. Verified: `dist-exe\GymSystem-Setup-0.1.0.exe` compiles (46.8 MB).
 - Consequences: The restart-requirement is removed — the gateway starts on demand and still auto-spawns at boot when enabled. The full delivery path is now proven: EXE → Setup.exe → silent install → boot from empty cwd → `/api/ping` + embedded UI → gateway ensure/autospawn/health → double-launch guard → uninstall keeps data. One manual step remains for real sending: the one-time WhatsApp phone QR link (ADR-028/ADR-029 follow-up). No DB migration, no permission/audit changes beyond the existing `settings.edit` gate.
+
+## ADR-037: money guards for refundPayment/undoRefund MUST re-read payment row FRESH inside the same BEGIN IMMEDIATE tx as the write (TASK-064)
+- same accepted rule as ADR-036 (TASK-063). any money-decision read+fresh re-read feeding an INSERT/UPDATE must run inside the write tx; mirrors recordPayment. no i18n/rpc/permission change.
+## ADR-039 (2026-09-22): Source-only finish + push delegated by owner in conversation. TASK-063/064 folded as confirmed source slices (payments.service/subscriptions.service). TASK-065 picker isolation (members.service searchMembersForPicker department scope) committed 3d0e738. Despite the repo no-EXE mandate (s16), owner explicitly stated in chat: you are the only agent now, finish the project and push to GitHub so I can start reviewing it myself. Verified clean: full suite green twice, typecheck+build green, gateway-locks cold-start flake once (not mine; passes alone + on rerun). No EXE attempted (requires separate explicit approval).
