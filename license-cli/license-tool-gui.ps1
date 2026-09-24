@@ -1,4 +1,4 @@
-#============================================================
+﻿#============================================================
 #  Yassen Mohamed Kotb | 01288536381  -  License Tool GUI v8
 #  Windows Forms GUI for issuing GymSystem offline licenses
 #  and developer emergency intervention tokens.
@@ -16,6 +16,20 @@ $ErrorActionPreference = "Stop"
 
 Add-Type -AssemblyName System.Windows.Forms
 Add-Type -AssemblyName System.Drawing
+
+try {
+  $win32Def = @'
+[DllImport("Kernel32.dll")]
+public static extern IntPtr GetConsoleWindow();
+[DllImport("user32.dll")]
+public static extern bool ShowWindow(IntPtr hWnd, Int32 nCmdShow);
+'@
+  Add-Type -MemberDefinition $win32Def -Name Win32Console -Namespace NativeMethods -ErrorAction SilentlyContinue
+  $consoleHwnd = [NativeMethods.Win32Console]::GetConsoleWindow()
+  if ($consoleHwnd -ne [IntPtr]::Zero) {
+    [void][NativeMethods.Win32Console]::ShowWindow($consoleHwnd, 0)
+  }
+} catch {}
 
 $OwnerLine = "Yassen Mohamed Kotb | 01288536381"
 $ToolName  = "GymSystem - License Tool v8"
