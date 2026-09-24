@@ -1,5 +1,13 @@
 # Current Development State
 
+> **WhatsApp Gateway Hardening (Chromium lockfile + Orphaned Edge Cleanup): DONE, all-verified.**
+> - **سبب خطأ «البوابة تعمل لكن تعذّر تشغيل متصفحها الداخلي»**: كانت مكتبة Puppeteer في ويندوز تعثر على ملف `lockfile` الذي يتركه متصفح Edge عند أي إغلاق مفاجئ، فتقوم بإلقاء خطأ `The browser is already running...`؛ كما أن عمليات Edge السابقة كانت تبقى عالقة في الخلفية بنظام Process Singleton مما يمنع إطلاق جلسة جديدة.
+> - **الحل المطبق (`whatsapp-gateway/wa-session.js`)**:
+>   1. إضافة `lockfile` إلى مصفوفة `PROFILE_LOCK_FILES`.
+>   2. إضافة دالة `killOrphanedBrowserProcesses` لإنهاء أي عمليات Edge يتيمة متعلقة بالبوابة عند الإقلاع البارد عندما لا يكون هناك اتصال نشط (`_client === null`).
+>   3. تحديث اختبارات `tests/gateway-locks.test.ts` واجتيازها 4/4.
+>   4. إعادة تجميع الحزمة التنفيذية `npm run build:exe` بنجاح واختبار توليد الـ QR والربط بنجاح 100%.
+
 > **TASK-070 — آلية الاستحواذ التلقائي على السيرفر الفردي (Single Active Instance Auto-Takeover) وإلزامية بناء ملف EXE بعد كل تعديل (ADR-037): DONE, all-verified.**
 > - **الاستحواذ التلقائي على السيرفر الفردي (`server/single-instance.ts`)**: عند تشغيل `GymSystem.exe`، يقوم بفحص المنفذ 8890 والعمليات المشغلة له أو لملفات `GymSystem.exe` القديمة. يتم إرسال طلب إغلاق ناعم `POST /api/system/shutdown` للنسخة القديمة. في حال عدم الاستجابة أو كون النسخة قديمة، يتم إنهاء شجرة العمليات القديمة قسرياً (`taskkill /F /T`) لفك أي قفل على قاعدة البيانات وتحرير المنفذ. ويتم انتظار تفريغ المنفذ بالكامل (Polling) قبل فتح قاعدة البيانات وبدء السيرفر الجديد. وفي حال حدوث `EADDRINUSE` على `server.listen`، يعيد محاولة الاستحواذ بدلاً من الخروج.
 > - **مسار الإغلاق الناعم (`POST /api/system/shutdown`)**: مسار آمن مقتصر على Loopback interface فقط، يقوم بتفريغ السجلات وقاعدة البيانات والخروج النظيف بكود 0.
