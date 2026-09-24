@@ -64,11 +64,38 @@ function toRawBase64(value) {
 // and then blocks the NEXT cold start with "The browser is already running for
 // <userDataDir> … use a different userDataDir" until removed by hand.
 const PROFILE_LOCK_FILES = [
+  'lockfile',
   'DevToolsActivePort',
   'SingletonLock',
   'SingletonSocket',
   'SingletonCookie',
 ];
+
+function killOrphanedBrowserProcesses(userDataDir) {
+  if (process.platform !== 'win32' || !userDataDir) return;
+  try {
+    // eslint-disable-next-line global-require
+    const { execSync } = require('node:child_process');
+    const out = execSync('wmic process where "name=\'msedge.exe\' or name=\'chrome.exe\'" get ProcessId,CommandLine /format:csv', {
+      encoding: 'utf8',
+      stdio: ['ignore', 'pipe', 'ignore'],
+    });
+    for (const line of out.split(/\r?\n/)) {
+      if (line.includes(userDataDir) || line.includes('wpp-profile') || line.includes('WhatAppGateway')) {
+        const parts = line.split(',');
+        const pid = parts[parts.length - 1].trim();
+        if (pid && !isNaN(Number(pid))) {
+          try {
+            execSync(`taskkill /F /T /PID ${pid}`, { stdio: 'ignore' });
+            log.warn(`terminated orphaned browser process PID ${pid}`);
+          } catch {}
+        }
+      }
+    }
+  } catch (err) {
+    log.warn(`could not inspect/kill orphaned browser processes: ${err.message}`);
+  }
+}
 
 /**
  * True when any running Edge/Chrome process has `profileDir` in its command
@@ -99,19 +126,20 @@ function browserProcessHolds(profileDir) {
 
 /**
  * Cold-start hardening: remove Chromium singleton/devtools lock litter from the
- * profile dir. `force` skips the live-browser guard — used only right after a
- * launch itself failed on those exact lock files (a working browser cannot
- * coexist with that failure, so the litter is provably stale).
+ * profile dir. Terminates orphaned browser processes when force=true or when
+ * no active gateway client owns the browser.
  */
 function clearStaleLocks(userDataDir, { force = false } = {}) {
   if (!userDataDir) return [];
   if (!fs.existsSync(userDataDir)) return [];
+  if (force) {
+    killOrphanedBrowserProcesses(userDataDir);
+  } else if (browserProcessHolds(userDataDir)) {
+    log.warn('orphaned browser process holds the profile — terminating before launch');
+    killOrphanedBrowserProcesses(userDataDir);
+  }
   const locks = PROFILE_LOCK_FILES.map((name) => join(userDataDir, name)).filter((p) => fs.existsSync(p));
   if (!locks.length) return [];
-  if (!force && browserProcessHolds(userDataDir)) {
-    log.warn('profile locks present but a live browser holds the profile — leaving them untouched');
-    return [];
-  }
   for (const lock of locks) {
     try {
       fs.rmSync(lock, { force: true, recursive: true });

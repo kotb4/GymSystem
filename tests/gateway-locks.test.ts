@@ -4,7 +4,7 @@ import { tmpdir } from "node:os";
 import { join, basename } from "node:path";
 import { clearStaleLocks } from "../whatsapp-gateway/wa-session.js";
 
-const LOCK_NAMES = ["DevToolsActivePort", "SingletonLock", "SingletonSocket", "SingletonCookie"];
+const LOCK_NAMES = ["lockfile", "DevToolsActivePort", "SingletonLock", "SingletonSocket", "SingletonCookie"];
 
 describe("clearStaleLocks (gateway cold-start hardening)", () => {
   let dir: string;
