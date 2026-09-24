@@ -26,7 +26,7 @@ import {
   DEFAULT_WELCOME_TEMPLATE,
   DEFAULT_PAYMENT_TEMPLATE,
 } from "@/core/services/settings.service";
-import { buildWhatsAppDirectUrl } from "@/core/whatsapp";
+import { buildWhatsAppDirectUrl, fillMessagePlaceholders } from "@/core/whatsapp";
 
 const BirthdayTemplateDefault = DEFAULT_BIRTHDAY_TEMPLATE;
 const AbsentTemplateDefault = DEFAULT_ABSENT_TEMPLATE;
@@ -164,13 +164,14 @@ export function MessagesPage() {
   const visible = rows;
 
   const fillComposeBody = (tmpl: string, target: MessageRecipient, discount: string) =>
-    tmpl
-      .split("{اسم العميل}")
-      .join(target.memberName ?? "")
-      .split("{رقم العضوية}")
-      .join(target.memberCode ?? "")
-      .split("{الخصم}")
-      .join(discount);
+    fillMessagePlaceholders(tmpl, {
+      memberName: target.memberName,
+      memberCode: target.memberCode,
+      daysSinceLastVisit: target.daysSinceLastVisit,
+      endDate: target.subscriptionEndKey,
+      daysUntilExpiry: target.daysUntilExpiry,
+      discount,
+    });
 
   const onComposeDiscountChange = (value: string) => {
     setComposeDiscount(value);
