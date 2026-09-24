@@ -122,3 +122,50 @@ export function parseAndVerifyLicense(
     return null;
   }
 }
+
+export interface DeveloperActionPayload {
+  type: "developer_action";
+  hwid: string;
+  action: "reset_clock" | "reset_owner" | "emergency_grace" | "force_deactivate";
+  params?: {
+    newPassword?: string;
+    graceDays?: number;
+  };
+  issuedAt: number;
+  expiresAt: number;
+  nonce: string;
+}
+
+export function signDeveloperAction(
+  privateKeyPem: string,
+  payload: DeveloperActionPayload,
+): string {
+  const payloadStr = JSON.stringify(payload);
+  const signed = signLicense(privateKeyPem, payloadStr);
+  return JSON.stringify(signed);
+}
+
+export function parseAndVerifyDeveloperAction(
+  actionJson: string,
+  publicKeyPem?: string,
+): DeveloperActionPayload | null {
+  try {
+    const file: SignedLicenseFile = JSON.parse(actionJson);
+    if (typeof file.payload !== "string" || typeof file.signature !== "string") return null;
+    const ok = verifyLicense(file, publicKeyPem);
+    if (!ok) return null;
+    const parsed = JSON.parse(file.payload) as DeveloperActionPayload;
+    if (
+      parsed.type !== "developer_action" ||
+      typeof parsed.hwid !== "string" ||
+      typeof parsed.action !== "string" ||
+      typeof parsed.issuedAt !== "number" ||
+      typeof parsed.expiresAt !== "number"
+    ) {
+      return null;
+    }
+    return parsed;
+  } catch {
+    return null;
+  }
+}

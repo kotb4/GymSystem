@@ -1,5 +1,17 @@
 # Current Development State
 
+> **TASK-069 — ترقية شاملة لمنظومة التفعيل ونظام التحكم والدعم الفني للمطور (Developer Emergency Actions & License Suite): DONE, all-verified.**
+> - **إصلاح مطابقة الـ HWID**: إزالة `os.hostname()` من `license-tool.mjs` ليتطابق مع السيرفر `computeHwId` بنسبة 100%.
+> - **نظام تحكم المطور للطوارئ (Developer Action Tokens)**: تشفير وتوقيع رقمي Ed25519 لأكواد دعم فني تعمل أوفلاين دون إنترنت:
+>   1. تصفير تلاعب توقيت وساعة النظام (`reset_clock`) وفك حظر `tampered` فوراً.
+>   2. استعادة وتعيين كلمة مرور حساب المالك (`reset_owner`) وتصفير عداد الإغلاق الأمني `failed_attempts`.
+>   3. تمديد تشغيل طوارئ مؤقت (`emergency_grace`) لعدد أيام محددة (افتراضياً 7 أيام).
+>   4. إلغاء الترخيص والقفل الإجباري (`force_deactivate`).
+> - **حماية السيرفر والـ REST Endpoints**: تأمين `license.deactivate` لمنع أي تعطيل غير مصرح به، وقفل مسارات الـ REST (`/api/system/restore` / `/api/backups/create` / `/api/files`) عند انتهاء الترخيص.
+> - **واجهة التطبيق والـ UX**: إضافة بطاقة ترخيص كاملة في صفحة الإعدادات (`LicenseSettingsCard`) تتيح معاينة الـ HWID والتجديد المسبق والدعم الفني؛ زر تواصل مباشر عبر واتساب (`01288536381`) في شاشات التفعيل مع نسخ HWID؛ دعم السحب والإفلات لملفات `.lic`؛ وتعديل ظهور بانر التنبيه ليظهر فقط عند تبقي <= 30 يوماً.
+> - **تحديث الأداة الرسومية (`license-tool-gui.ps1`) وأداة الـ CLI (`license-tool.mjs`)**: أزرار مدد جاهزة (7 أيام، 30، 90، 180، 365، مدى الحياة)، أداة فحص التراخيص (`inspect`)، ومولد أكواد الدعم الفني للمطور (`action`).
+> - **التحقق والاختبارات**: 543/543 اختبار ناجح في Vitest (47 ملف اختبار، إضافة 5 اختبارات جديدة)، فحص اتساق RPC بنسبة 282/0، وفحص Typecheck للواجهة والسيرفر بنسبة 0 أخطاء.
+
 > **TASK-068 — ترقية شاملة لمنظومة الواتساب والرسائل (Migration v35 + wa.me Fallback + Anti-Ban Pacing & Cooldown + Quick Modal + Welcome & Payment): DONE, all-verified.**
 > - **Migration v35 (src/db/migrations.ts)**: توسيع قيود جدول member_messages لتشمل شرائح 'welcome', 'payment', 'custom' وحالة 'skipped_cooldown'. إضافة إعدادات التباعد العشوائي messages_pacing_min_seconds (8s)، messages_pacing_max_seconds (15s)، وفترة التهدئة messages_cooldown_days (7 أيام)، وقوالب الترحيب وإيصالات السداد الافتراضية.
 > - **وحدات الواتساب الأساسية (src/core/whatsapp.ts)**: تطبيع رقم الموبايل المصري normalizeEgyMobile، رابط إرسال مباشر buildWhatsAppDirectUrl عبر wa.me مجاني 100% وبدون متطلبات تقنية، واستبدال المتغيرات الذكية fillMessagePlaceholders لجميع الحقول ({اسم العميل}, {رقم العضوية}, {اسم الجيم}, {اسم الخطة}, {تاريخ الانتهاء}, {المبلغ}, إلخ).

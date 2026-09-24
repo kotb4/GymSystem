@@ -23,7 +23,7 @@ export function AppLayout() {
 
   const licenseStatus = license.status;
   const activeMsg =
-    licenseStatus && licenseStatus.state === "active" && licenseStatus.daysRemaining > 0
+    licenseStatus && licenseStatus.state === "active" && licenseStatus.daysRemaining > 0 && licenseStatus.daysRemaining <= 30
       ? t("license.bannerActive", { days: String(licenseStatus.daysRemaining) })
       : null;
   const hardMsg =
@@ -39,7 +39,9 @@ export function AppLayout() {
     ? "border-red/30 bg-red/10 text-red"
     : licenseStatus?.readOnly
       ? "border-amber/40 bg-amber/10 text-amber"
-      : "border-neon/30 bg-neon/10 text-neon";
+      : licenseStatus?.daysRemaining && licenseStatus.daysRemaining <= 7
+        ? "border-amber/40 bg-amber/10 text-amber"
+        : "border-neon/30 bg-neon/10 text-neon";
 
   return (
     <div className="relative isolate flex h-screen overflow-hidden">

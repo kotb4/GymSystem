@@ -1303,6 +1303,8 @@ export const api = {
       rpc<LicenseStatus>("license", "activate", [licJson]),
     deactivate: () =>
       rpc<{ ok: boolean }>("license", "deactivate", []),
+    executeDeveloperAction: (actionJson: string) =>
+      rpc<DeveloperActionResult>("license", "executeDeveloperAction", [actionJson]),
   },
   messages: {
     listRecipients: (segment: MessageSegment) =>
@@ -1349,6 +1351,14 @@ export interface LicenseStatus {
   readOnly: boolean;
   needsActivation: boolean;
   tampered: boolean;
+}
+
+export interface DeveloperActionResult {
+  action: string;
+  success: boolean;
+  messageKey: string;
+  params?: Record<string, string | number>;
+  status: LicenseStatus;
 }
 
 export type { AuditListQuery, AuditAction, AuditLogItem } from "@/core/services/audit.service";

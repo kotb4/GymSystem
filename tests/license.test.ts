@@ -19,6 +19,8 @@ import {
   exportPublicKeyPem,
   issueLicense,
   parseAndVerifyLicense,
+  signDeveloperAction,
+  parseAndVerifyDeveloperAction,
 } from "../server/license/crypto";
 import {
   _resetLicenseSession,
@@ -27,6 +29,7 @@ import {
   _overrideHwIdForTest,
   initLicenseSession,
   deactivateLicense,
+  executeDeveloperAction,
   rpcBlockReason,
   canWrite,
   licenseStatus,
@@ -371,6 +374,170 @@ describe("license session (read-only gate)", () => {
     expect(db.count("SELECT COUNT(*) AS c FROM license_activation")).toBe(0);
     expect(licenseStatus().state).toBe("unlicensed");
     expect(canWrite()).toBe(true);
+  });
+
+  describe("Developer Emergency Actions", () => {
+    it("reset_clock clears tampered clock lock", async () => {
+      const db = createTestDb();
+      const tmp = mkTmpDir();
+      _resetLicenseSession(tmp, db);
+      _overrideHwIdForTest("GYM-AAAA-BBBB-CCCC-DDDD");
+      const kp = generateKeyPair();
+      const priv = exportPrivateKeyPem(kp);
+      const pub = exportPublicKeyPem(kp);
+
+      const lic = issueLicense(priv, "GYM-AAAA-BBBB-CCCC-DDDD", "نادي", Date.now() - 10 * DAY, Date.now() + 30 * DAY);
+      _activateWithPublicKey(lic, pub);
+
+      // Simulate clock tampering
+      db.run("UPDATE license_activation SET last_active = ? WHERE hwid = 'GYM-AAAA-BBBB-CCCC-DDDD'", [
+        Date.now() + (CLOCK_ROLLBACK_TOLERANCE_MS + 14 * HOUR),
+      ]);
+      initLicenseSession(tmp, db);
+      expect(licenseStatus().state).toBe("tampered");
+
+      // Developer issues reset_clock action token
+      const token = signDeveloperAction(priv, {
+        type: "developer_action",
+        hwid: "GYM-AAAA-BBBB-CCCC-DDDD",
+        action: "reset_clock",
+        issuedAt: Date.now(),
+        expiresAt: Date.now() + 48 * HOUR,
+        nonce: "test-1",
+      });
+
+      const res = await executeDeveloperAction(db, token, pub);
+      expect(res.success).toBe(true);
+      expect(licenseStatus().state).toBe("active");
+    });
+
+    it("reset_owner updates owner password and clears lockout", async () => {
+      const db = createTestDb();
+      const tmp = mkTmpDir();
+      _resetLicenseSession(tmp, db);
+      _overrideHwIdForTest("GYM-AAAA-BBBB-CCCC-DDDD");
+      const kp = generateKeyPair();
+      const priv = exportPrivateKeyPem(kp);
+      const pub = exportPublicKeyPem(kp);
+
+      // Create owner user
+      db.run(
+        "INSERT INTO users (id, username, full_name, role_id, password_hash, is_active, failed_attempts, locked_until, created_at, updated_at) " +
+        "VALUES ('u-1', 'admin', 'المالك', 'owner', 'old-hash', 1, 5, '2099-01-01T00:00:00.000Z', '2026-01-01', '2026-01-01')"
+      );
+
+      const token = signDeveloperAction(priv, {
+        type: "developer_action",
+        hwid: "GYM-AAAA-BBBB-CCCC-DDDD",
+        action: "reset_owner",
+        params: { newPassword: "SuperSecretPassword123" },
+        issuedAt: Date.now(),
+        expiresAt: Date.now() + 48 * HOUR,
+        nonce: "test-2",
+      });
+
+      const res = await executeDeveloperAction(db, token, pub);
+      expect(res.success).toBe(true);
+
+      const user = db.first<{ password_hash: string; failed_attempts: number; locked_until: string | null }>(
+        "SELECT password_hash, failed_attempts, locked_until FROM users WHERE id = 'u-1'"
+      );
+      expect(user).not.toBeNull();
+      expect(user!.failed_attempts).toBe(0);
+      expect(user!.locked_until).toBeNull();
+      expect(user!.password_hash).not.toBe("old-hash");
+    });
+
+    it("emergency_grace extends expired license by grace days", async () => {
+      const db = createTestDb();
+      const tmp = mkTmpDir();
+      _resetLicenseSession(tmp, db);
+      _overrideHwIdForTest("GYM-AAAA-BBBB-CCCC-DDDD");
+      const kp = generateKeyPair();
+      const priv = exportPrivateKeyPem(kp);
+      const pub = exportPublicKeyPem(kp);
+
+      // Expired license
+      const lic = issueLicense(priv, "GYM-AAAA-BBBB-CCCC-DDDD", "نادي", Date.now() - 30 * DAY, Date.now() - 1 * DAY);
+      _activateWithPublicKey(lic, pub);
+      expect(licenseStatus().state).toBe("expired");
+
+      const token = signDeveloperAction(priv, {
+        type: "developer_action",
+        hwid: "GYM-AAAA-BBBB-CCCC-DDDD",
+        action: "emergency_grace",
+        params: { graceDays: 7 },
+        issuedAt: Date.now(),
+        expiresAt: Date.now() + 48 * HOUR,
+        nonce: "test-3",
+      });
+
+      const res = await executeDeveloperAction(db, token, pub);
+      expect(res.success).toBe(true);
+      expect(licenseStatus().state).toBe("active");
+      expect(licenseStatus().daysRemaining).toBe(7);
+    });
+
+    it("rejects action token with mismatched HWID, expired token, or invalid signature", async () => {
+      const db = createTestDb();
+      const tmp = mkTmpDir();
+      _resetLicenseSession(tmp, db);
+      _overrideHwIdForTest("GYM-AAAA-BBBB-CCCC-DDDD");
+      const kp = generateKeyPair();
+      const priv = exportPrivateKeyPem(kp);
+      const pub = exportPublicKeyPem(kp);
+
+      // 1. Mismatched HWID
+      const tokenWrongHwid = signDeveloperAction(priv, {
+        type: "developer_action",
+        hwid: "GYM-OTHER-DEVICE-1111",
+        action: "reset_clock",
+        issuedAt: Date.now(),
+        expiresAt: Date.now() + 48 * HOUR,
+        nonce: "test-4",
+      });
+      await expect(executeDeveloperAction(db, tokenWrongHwid, pub)).rejects.toMatchObject({
+        code: "ACTION_HWID_MISMATCH",
+      });
+
+      // 2. Expired token
+      const tokenExpired = signDeveloperAction(priv, {
+        type: "developer_action",
+        hwid: "GYM-AAAA-BBBB-CCCC-DDDD",
+        action: "reset_clock",
+        issuedAt: Date.now() - 50 * HOUR,
+        expiresAt: Date.now() - 2 * HOUR,
+        nonce: "test-5",
+      });
+      await expect(executeDeveloperAction(db, tokenExpired, pub)).rejects.toMatchObject({
+        code: "ACTION_EXPIRED",
+      });
+
+      // 3. Invalid / forged token
+      await expect(executeDeveloperAction(db, "not-json", pub)).rejects.toMatchObject({
+        code: "ACTION_INVALID",
+      });
+    });
+
+    it("executeDeveloperAction is permitted in FULL_LOCK_ALLOWLIST when expired or tampered", () => {
+      _setSessionForTest({
+        payload: payload({ expiresAt: Date.now() - 5 * DAY }),
+        signatureValid: true,
+        filePresent: true,
+        lastActive: null,
+      });
+      expect(licenseStatus().state).toBe("expired");
+      expect(rpcBlockReason("license", "executeDeveloperAction")).toBeNull();
+
+      _setSessionForTest({
+        payload: payload(),
+        signatureValid: true,
+        filePresent: true,
+        lastActive: Date.now() + 20 * HOUR,
+      });
+      expect(licenseStatus().state).toBe("tampered");
+      expect(rpcBlockReason("license", "executeDeveloperAction")).toBeNull();
+    });
   });
 });
 

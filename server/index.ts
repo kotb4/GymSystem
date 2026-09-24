@@ -16,7 +16,7 @@ import {
   pruneExpiredSessions,
 } from "./sessions";
 import { invokeRpc } from "./rpc";
-import { licenseStateName, refreshLicenseClock } from "./license/session";
+import { licenseStateName, refreshLicenseClock, canWrite } from "./license/session";
 import { startBackupScheduler } from "./backup-scheduler";
 import { createServerBackup, openSnapshotReadStream, importDatabaseBytes } from "./backups";
 import { toAppError, errValidation } from "../src/core/errors";
@@ -540,6 +540,12 @@ async function handleApi(ctx: Ctx): Promise<void> {
   }
 
   if (route === "POST /api/backups/create") {
+    if (!canWrite()) {
+      return sendJson(res, 423, {
+        ok: false,
+        error: { name: "AppError", code: "LOCKED", messageKey: "errors.license.blocked", params: { reason: licenseStateName() } },
+      });
+    }
     const body = await readJsonBody(req);
     try {
       const kind = body.kind === "auto" ? "auto" : "manual";
@@ -570,6 +576,12 @@ async function handleApi(ctx: Ctx): Promise<void> {
   }
 
   if (route === "POST /api/system/restore" || route === "POST /api/system/import-legacy") {
+    if (!canWrite()) {
+      return sendJson(res, 423, {
+        ok: false,
+        error: { name: "AppError", code: "LOCKED", messageKey: "errors.license.blocked", params: { reason: licenseStateName() } },
+      });
+    }
     const kind = route.endsWith("/restore") ? "restore" : "legacy_import";
     try {
       requirePermission(actor, "backup.restore");
@@ -594,6 +606,12 @@ async function handleApi(ctx: Ctx): Promise<void> {
 
   // ---- file storage (photos / reports) -------------------------------------
   if (route === "POST /api/files") {
+    if (!canWrite()) {
+      return sendJson(res, 423, {
+        ok: false,
+        error: { name: "AppError", code: "LOCKED", messageKey: "errors.license.blocked", params: { reason: licenseStateName() } },
+      });
+    }
     try {
       const kind = url.searchParams.get("kind") ?? "";
       const name = url.searchParams.get("name") ?? "file.bin";

@@ -1,12 +1,14 @@
 import { useEffect, useState } from "react";
-import { KeyRound, Copy, FileUp, ShieldAlert, Info } from "lucide-react";
+import { KeyRound, Copy, FileUp, ShieldAlert, Info, MessageSquare, Wrench } from "lucide-react";
 import { useNavigate } from "react-router-dom";
 import { useT } from "@/i18n";
 import { useToast } from "@/components/ui/toast";
 import { Button } from "@/components/ui/button";
+import { Modal } from "@/components/ui/modal";
 import { api } from "@/api";
 import { useLicense } from "@/contexts/license-context";
 import { describeError } from "@/utils/app-error";
+import { buildWhatsAppDirectUrl } from "@/core/whatsapp";
 
 /**
  * Activation + status screen for the offline license. Shown in place of the
@@ -23,6 +25,13 @@ export function LicensePage() {
   const [fileName, setFileName] = useState<string | null>(null);
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [isDragging, setIsDragging] = useState(false);
+
+  // Developer action modal
+  const [devModalOpen, setDevModalOpen] = useState(false);
+  const [devToken, setDevToken] = useState("");
+  const [devSubmitting, setDevSubmitting] = useState(false);
+  const [devError, setDevError] = useState<string | null>(null);
 
   useEffect(() => {
     document.title = `${t("license.title")} — ${t("app.name")}`;
@@ -43,12 +52,28 @@ export function LicensePage() {
     }
   };
 
+  const openWhatsAppSupport = () => {
+    if (!status) return;
+    const msg = `السلام عليكم، أحتاج تفعيل كود الجهاز لنظام GymSystem:\nكود الجهاز (HWID): ${status.hwid}`;
+    const url = buildWhatsAppDirectUrl("01288536381", msg);
+    if (url) window.open(url, "_blank");
+  };
+
   const onFile = (file: File) => {
     setFileName(file.name);
     setError(null);
     const reader = new FileReader();
     reader.onload = () => setPasted(String(reader.result ?? ""));
     reader.readAsText(file);
+  };
+
+  const onDrop = (e: React.DragEvent) => {
+    e.preventDefault();
+    setIsDragging(false);
+    const file = e.dataTransfer.files?.[0];
+    if (file) {
+      onFile(file);
+    }
   };
 
   const onActivate = async () => {
@@ -71,6 +96,7 @@ export function LicensePage() {
   };
 
   const onDeactivate = async () => {
+    if (!window.confirm(t("license.confirmDeactivate"))) return;
     setError(null);
     try {
       await api.license.deactivate();
@@ -78,6 +104,26 @@ export function LicensePage() {
       refresh();
     } catch (err) {
       setError(describeError(err, t));
+    }
+  };
+
+  const onExecuteDevToken = async () => {
+    setDevError(null);
+    if (!devToken.trim()) {
+      setDevError(t("license.devTokenEmpty"));
+      return;
+    }
+    setDevSubmitting(true);
+    try {
+      const result = await api.license.executeDeveloperAction(devToken.trim());
+      toast("success", t(result.messageKey as never, result.params));
+      setDevModalOpen(false);
+      setDevToken("");
+      refresh();
+    } catch (err) {
+      setDevError(describeError(err, t));
+    } finally {
+      setDevSubmitting(false);
     }
   };
 
@@ -90,8 +136,8 @@ export function LicensePage() {
         <div className="absolute -bottom-40 -start-24 size-[420px] rounded-full bg-cyan/[0.05] blur-[130px]" />
       </div>
 
-      <div className="w-full max-w-[520px]">
-        <div className="mb-8 flex flex-col items-center gap-3 text-center">
+      <div className="w-full max-w-[540px]">
+        <div className="mb-6 flex flex-col items-center gap-3 text-center">
           <h1 className="text-xl font-extrabold">{t("license.title")}</h1>
           <p className="mt-1 text-xs text-subtle">{t("license.subtitle")}</p>
           <span
@@ -110,7 +156,7 @@ export function LicensePage() {
           </span>
         </div>
 
-        <div className="rounded-2xl border border-line bg-panel p-7 shadow-card">
+        <div className="rounded-2xl border border-line bg-panel p-6 shadow-card">
           {(needsActivation || readOnly || tampered) && (
             <>
               <p className="rounded-xl border border-line bg-base px-3.5 py-2.5 text-[13px] leading-relaxed text-subtle">
@@ -128,16 +174,34 @@ export function LicensePage() {
                     <code dir="ltr" className="text-sm font-mono font-bold text-neon">
                       {status.hwid}
                     </code>
-                    <Button variant="secondary" size="sm" onClick={() => void copyHwid()}>
-                      <Copy className="size-3.5" />
-                      {t("license.btnCopy")}
-                    </Button>
+                    <div className="flex items-center gap-1.5">
+                      <Button variant="secondary" size="sm" onClick={() => void copyHwid()}>
+                        <Copy className="size-3.5" />
+                        {t("license.btnCopy")}
+                      </Button>
+                      <Button variant="secondary" size="sm" onClick={openWhatsAppSupport} title={t("license.whatsappSupport")}>
+                        <MessageSquare className="size-3.5 text-emerald" />
+                        <span className="text-[11px]">{t("license.whatsappSupportBtn")}</span>
+                      </Button>
+                    </div>
                   </div>
                 </div>
               )}
 
               <div className="mt-5 space-y-4">
-                <label className="flex cursor-pointer items-center justify-center gap-2 rounded-xl border border-dashed border-line-strong bg-base px-4 py-6 text-[13px] font-semibold text-subtle hover:border-neon/50">
+                <label
+                  onDragOver={(e) => {
+                    e.preventDefault();
+                    setIsDragging(true);
+                  }}
+                  onDragLeave={() => setIsDragging(false)}
+                  onDrop={onDrop}
+                  className={`flex cursor-pointer items-center justify-center gap-2 rounded-xl border border-dashed px-4 py-6 text-[13px] font-semibold transition-colors ${
+                    isDragging
+                      ? "border-neon bg-neon/10 text-neon"
+                      : "border-line-strong bg-base text-subtle hover:border-neon/50"
+                  }`}
+                >
                   <FileUp className="size-4 text-neon" />
                   {fileName ?? t("license.filePlaceholder")}
                   <input
@@ -151,7 +215,7 @@ export function LicensePage() {
                   <span className="block text-[13px] font-semibold text-subtle">{t("license.pasteLabel")}</span>
                   <textarea
                     dir="ltr"
-                    rows={4}
+                    rows={3}
                     disabled={submitting}
                     placeholder='{"payload":"...","signature":"..."}'
                     value={pasted}
@@ -200,13 +264,66 @@ export function LicensePage() {
             </div>
           )}
 
-          {!needsActivation && !readOnly && (
-            <Button variant="ghost" size="sm" fullWidth className="mt-3" onClick={() => navigate("/", { replace: true })}>
-              {t("license.goBack")}
-            </Button>
-          )}
+          <div className="mt-4 flex items-center justify-between border-t border-line/60 pt-3">
+            <button
+              type="button"
+              onClick={() => setDevModalOpen(true)}
+              className="flex items-center gap-1.5 text-xs text-subtle transition-colors hover:text-neon"
+            >
+              <Wrench className="size-3" />
+              <span>{t("license.devActionOpenBtn")}</span>
+            </button>
+            {!needsActivation && !readOnly && (
+              <Button variant="ghost" size="sm" onClick={() => navigate("/", { replace: true })}>
+                {t("license.goBack")}
+              </Button>
+            )}
+          </div>
         </div>
       </div>
+
+      {/* Developer Emergency Token Modal */}
+      <Modal
+        open={devModalOpen}
+        onClose={() => setDevModalOpen(false)}
+        title={t("license.devActionTitle")}
+        footer={
+          <div className="flex items-center justify-end gap-2">
+            <Button variant="ghost" size="sm" onClick={() => setDevModalOpen(false)}>
+              {t("common.cancel")}
+            </Button>
+            <Button
+              variant="primary"
+              size="sm"
+              loading={devSubmitting}
+              onClick={() => void onExecuteDevToken()}
+            >
+              <KeyRound className="size-3.5" />
+              {t("license.devActionExecuteBtn")}
+            </Button>
+          </div>
+        }
+      >
+        <div className="space-y-3 p-2">
+          <p className="text-xs leading-relaxed text-subtle">
+            {t("license.devActionDesc")}
+          </p>
+          <textarea
+            dir="ltr"
+            rows={4}
+            disabled={devSubmitting}
+            placeholder='{"payload":"{\"type\":\"developer_action\",...}","signature":"..."}'
+            value={devToken}
+            onChange={(e) => setDevToken(e.target.value)}
+            className="w-full rounded-xl border border-line bg-base px-3.5 py-2.5 text-xs font-mono text-ink placeholder:text-faint outline-none transition-colors focus:border-neon/60 focus:ring-2 focus:ring-neon/15 disabled:opacity-50"
+          />
+          {devError && (
+            <div className="rounded-lg border border-red/30 bg-red/10 px-3 py-2 text-xs font-semibold text-red">
+              {devError}
+            </div>
+          )}
+        </div>
+      </Modal>
     </div>
   );
 }

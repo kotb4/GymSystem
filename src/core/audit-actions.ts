@@ -1,4 +1,4 @@
-﻿export const AUDIT_ACTIONS = [
+export const AUDIT_ACTIONS = [
   "AUTH_LOGIN",
   "AUTH_LOGIN_FAILED",
   "AUTH_LOGOUT",
@@ -163,6 +163,7 @@
   "WHATSAPP_QR_SENT",
   "MESSAGE_SENT",
   "MESSAGE_FAILED",
+  "DEVELOPER_ACTION_EXECUTED",
 ] as const;
 
 export type AuditAction = (typeof AUDIT_ACTIONS)[number];

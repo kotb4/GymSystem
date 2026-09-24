@@ -14,6 +14,7 @@ import { Tabs } from "@/components/ui/tabs";
 import { HealthTab } from "@/components/settings/health-tab";
 import { ScannerTab } from "@/components/settings/scanner-tab";
 import { WhatsAppSettingsCard } from "@/components/settings/whatsapp-settings-card";
+import { LicenseSettingsCard } from "@/components/settings/license-settings-card";
 import { cn } from "@/utils/cn";
 
 
@@ -48,6 +49,7 @@ export function SettingsPage() {
       />
       {tab === "general" && (
         <div className="grid gap-4 xl:grid-cols-2">
+          <LicenseSettingsCard />
           <GeneralSettingsCard />
           <ScannerSettingsCard />
           <WhatsAppSettingsCard />

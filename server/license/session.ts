@@ -2,9 +2,11 @@ import fs from "node:fs";
 import path from "node:path";
 import { evaluate, isHardLocked, needsActivation, advanceLastActive, type LicenseState, type SignedPayload } from "./policy";
 import { computeHwId } from "./hwid";
-import { parseAndVerifyLicense } from "./crypto";
+import { parseAndVerifyLicense, parseAndVerifyDeveloperAction } from "./crypto";
 import { readLicenseState, writeLicenseState, deleteLicenseState, type LicenseStateFile } from "./store";
 import { nowStamp } from "../../src/core/dates";
+import { hashPassword } from "../../src/core/auth/password";
+import { recordAudit } from "../../src/core/services/audit.service";
 import type { Db, Row } from "../../src/db/engine";
 
 // ---------------------------------------------------------------------------
@@ -349,6 +351,7 @@ const FULL_LOCK_ALLOWLIST: ReadonlySet<string> = new Set([
   "license.status",
   "license.activate",
   "license.deactivate",
+  "license.executeDeveloperAction",
   "auth.needsSetup",
 ]);
 
@@ -356,6 +359,7 @@ const READONLY_ALLOWLIST: ReadonlySet<string> = new Set([
   "license.status",
   "license.activate",
   "license.deactivate",
+  "license.executeDeveloperAction",
   "auth.needsSetup",
   "settings.readAllSettings",
   "settings.getScannerConfig",
@@ -520,4 +524,179 @@ export function _setSessionForTest(state: Partial<LicenseState>): void {
     filePresent: state.filePresent ?? false,
     signatureValid: state.signatureValid ?? false,
   };
+}
+
+export interface DeveloperActionResult {
+  action: string;
+  success: boolean;
+  messageKey: string;
+  params?: Record<string, string | number>;
+  status: LicensePublicStatus;
+}
+
+/**
+ * Execute a cryptographically signed developer emergency action token.
+ * Validates Ed25519 signature, checks target HWID and expiration, then executes
+ * the requested intervention (e.g. clock reset, owner password reset, emergency grace).
+ */
+export async function executeDeveloperAction(
+  database: Db | null,
+  actionJson: string,
+  publicKeyPem?: string,
+): Promise<DeveloperActionResult> {
+  const payload = parseAndVerifyDeveloperAction(actionJson, publicKeyPem);
+  if (!payload) {
+    throw Object.assign(new Error("ACTION_INVALID"), {
+      code: "ACTION_INVALID",
+      messageKey: "errors.license.actionTokenInvalid",
+    });
+  }
+  if (payload.hwid !== currentHwid) {
+    throw Object.assign(new Error("ACTION_HWID_MISMATCH"), {
+      code: "ACTION_HWID_MISMATCH",
+      messageKey: "errors.license.actionHwidMismatch",
+    });
+  }
+  if (Date.now() > payload.expiresAt) {
+    throw Object.assign(new Error("ACTION_EXPIRED"), {
+      code: "ACTION_EXPIRED",
+      messageKey: "errors.license.actionExpired",
+    });
+  }
+
+  const actorRef = { userId: "developer", username: "developer" };
+
+  switch (payload.action) {
+    case "reset_clock": {
+      const now = Date.now();
+      current.lastActive = now;
+      if (dir) persistCurrent();
+      if (database) {
+        try {
+          database.run("UPDATE license_activation SET last_active = ? WHERE hwid = ?", [
+            now,
+            currentHwid,
+          ]);
+          recordAudit(database, actorRef, "DEVELOPER_ACTION_EXECUTED", "license", currentHwid, {
+            action: "reset_clock",
+          });
+        } catch {
+          /* best effort */
+        }
+      }
+      return {
+        action: "reset_clock",
+        success: true,
+        messageKey: "license.actionResetClockSuccess",
+        status: licenseStatus(),
+      };
+    }
+
+    case "reset_owner": {
+      if (!database) {
+        throw Object.assign(new Error("NO_DB"), {
+          code: "NO_DB",
+          messageKey: "errors.unexpected",
+        });
+      }
+      const newPassword = payload.params?.newPassword || "Owner@123456";
+      const hash = await hashPassword(newPassword);
+      const owner = database.first<{ id: string; username: string }>(
+        "SELECT id, username FROM users WHERE role_id = 'owner' AND is_active = 1 ORDER BY created_at ASC LIMIT 1",
+      );
+      if (!owner) {
+        throw Object.assign(new Error("NO_OWNER"), {
+          code: "NO_OWNER",
+          messageKey: "errors.unexpected",
+        });
+      }
+      database.run(
+        "UPDATE users SET password_hash = ?, failed_attempts = 0, locked_until = NULL, updated_at = ? WHERE id = ?",
+        [hash, nowStamp(), owner.id],
+      );
+      database.run("DELETE FROM auth_sessions WHERE user_id = ?", [owner.id]);
+      try {
+        recordAudit(database, actorRef, "DEVELOPER_ACTION_EXECUTED", "users", owner.id, {
+          action: "reset_owner",
+          username: owner.username,
+        });
+      } catch {
+        /* best effort */
+      }
+      return {
+        action: "reset_owner",
+        success: true,
+        messageKey: "license.actionResetOwnerSuccess",
+        params: { username: owner.username },
+        status: licenseStatus(),
+      };
+    }
+
+    case "emergency_grace": {
+      const days = Number(payload.params?.graceDays ?? 7);
+      const baseTime = Math.max(Date.now(), current.payload?.expiresAt ?? Date.now());
+      const newExpiresAt = baseTime + days * 24 * 60 * 60 * 1000;
+      if (current.payload) {
+        current.payload.expiresAt = newExpiresAt;
+      } else {
+        current.payload = {
+          hwid: currentHwid,
+          gym: "Emergency Access",
+          issuedAt: Date.now(),
+          expiresAt: newExpiresAt,
+          tier: "full",
+        };
+        current.filePresent = true;
+        current.signatureValid = true;
+      }
+      if (dir) persistCurrent();
+      if (database) {
+        try {
+          database.run("UPDATE license_activation SET expires_at = ? WHERE hwid = ?", [
+            newExpiresAt,
+            currentHwid,
+          ]);
+          recordAudit(database, actorRef, "DEVELOPER_ACTION_EXECUTED", "license", currentHwid, {
+            action: "emergency_grace",
+            days,
+            expiresAt: newExpiresAt,
+          });
+        } catch {
+          /* best effort */
+        }
+      }
+      return {
+        action: "emergency_grace",
+        success: true,
+        messageKey: "license.actionGraceSuccess",
+        params: { days },
+        status: licenseStatus(),
+      };
+    }
+
+    case "force_deactivate": {
+      deactivateLicense();
+      if (database) {
+        try {
+          recordAudit(database, actorRef, "DEVELOPER_ACTION_EXECUTED", "license", currentHwid, {
+            action: "force_deactivate",
+          });
+        } catch {
+          /* best effort */
+        }
+      }
+      return {
+        action: "force_deactivate",
+        success: true,
+        messageKey: "license.actionDeactivateSuccess",
+        status: licenseStatus(),
+      };
+    }
+
+    default:
+      throw Object.assign(new Error("ACTION_UNKNOWN"), {
+        code: "ACTION_UNKNOWN",
+        messageKey: "errors.license.actionTokenInvalid",
+      });
+  }
 }
