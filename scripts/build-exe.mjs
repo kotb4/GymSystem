@@ -149,8 +149,17 @@ function buildSea() {
 function copyRuntime() {
   const runtimeDir = path.join(OUT_DIR, "runtime");
   mkdirSync(runtimeDir, { recursive: true });
-  copyFileSync(process.execPath, path.join(runtimeDir, "node.exe"));
-  log("portable node runtime copied");
+  const dstNode = path.join(runtimeDir, "node.exe");
+  try {
+    copyFileSync(process.execPath, dstNode);
+    log("portable node runtime copied");
+  } catch (err) {
+    if (err.code === "EBUSY" && existsSync(dstNode)) {
+      log("portable node runtime is in use by gateway; existing runtime/node.exe preserved");
+    } else {
+      throw err;
+    }
+  }
 
   // The WhatsApp wppconnect engine is NOT shipped — it is installed once by
   // the user into the data dir (Settings → «تثبيت محرك الواتساب»). That install
@@ -206,6 +215,17 @@ function copyTree(src, dst) {
   }
 }
 
+function killRunningExe() {
+  if (process.platform === "win32") {
+    try {
+      execSync(`taskkill /F /IM ${EXE_NAME}`, { stdio: "ignore" });
+      log(`terminated running ${EXE_NAME} instance(s) prior to packaging`);
+    } catch {
+      // not running, that is expected
+    }
+  }
+}
+
 function main() {
   log("step 1/6: production build");
   run("npm", ["run", "build"]);
@@ -221,6 +241,7 @@ function main() {
   }
 
   log("step 4/6: SEA build + postject + GUI subsystem");
+  killRunningExe();
   buildSea();
 
   log("step 5/6: copying runtime + bundled npm + gateway");

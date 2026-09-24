@@ -93,7 +93,7 @@ src/
   core/
     services/               ALL business logic (36 files, backend-only)
     permissions.ts          Roles, 93 permissions, DB-backed grant cache
-    audit-actions.ts        Audit action enum (164 actions)
+    audit-actions.ts        Audit action enum (165 actions)
     errors.ts               AppError codes + i18n messageKeys
     dates.ts money.ts       Shared primitives (date keys, minor units)
   db/
@@ -198,7 +198,7 @@ Mandatory for every AI agent in this repo:
 13. Use transactions whenever multiple related writes must succeed together.
 14. Run relevant verification after implementation (typecheck + targeted tests + full `npm test` + `npm run build` for wide changes).
 15. Never claim success without actually executing verification.
-16. **Owner mandate (2026-09-07):** never build/update `GymSystem.exe`/the Setup installer (`npm run build:exe` / `build:installer`) and never `git push` to GitHub without explicit owner approval in the conversation. Local commits are fine; the EXE build and the remote push require explicit consent.
+16. **Owner mandate (updated 2026-09-24):** after completing modifications/tasks, the agent MUST automatically build the executable `dist-exe/GymSystem.exe` (`npm run build:exe`) so the packaged executable is always up-to-date and ready for testing. (Note: `git push` to GitHub and Inno Setup installer compilation `npm run build:installer` still require explicit owner approval in chat).
 
 ## 8. Required AI Workflow
 
@@ -209,6 +209,7 @@ ANALYZE   → inspect code/db/tests affected
 PLAN      → files, schema, RPC, UI, tests, risks
 IMPLEMENT → smallest correct change following conventions above
 TEST      → npx vitest run <affected>; then npm test; typecheck; build if broad
+BUILD EXE → npm run build:exe (owner mandate: automatically produce fresh executable)
 REVIEW    → review the diff
 SECURITY  → check authz, validation, injection, IDOR
 ```

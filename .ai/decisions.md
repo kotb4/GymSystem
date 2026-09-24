@@ -1,5 +1,28 @@
 # Architecture Decision Log
 
+## ADR-037: Single Active Instance Auto-Takeover & Automatic Desktop EXE Build on Task Completion (TASK-070)
+- Date: 2026-09-24
+- Status: accepted
+- Context:
+  1. Old instance blocking new builds/runs: When GymSystem.exe was running in the background, launching a newly compiled GymSystem.exe failed to take over because port 8890 was in use (EADDRINUSE). Previously (ADR-029), the second launch opened the browser window pointing to the old server and called process.exit(0). Consequently, newly built code or bug fixes never took effect until the user manually located and killed the old background process. Moreover, running npm run build:exe failed with EBUSY/EPERM whenever an old GymSystem.exe or dist-exe/runtime/node.exe was running.
+  2. Owner mandate for automatic packaging: The owner requested that after every task/modification, GymSystem.exe must be automatically built so that the ready-to-test desktop artifact is always in sync with code changes, and opening GymSystem.exe must automatically terminate any older running server and start the new one.
+- Decision:
+  1. Single active instance auto-takeover (server/single-instance.ts):
+     - Before binding port or opening SQLite database, GymSystem.exe inspects running processes and port 8890.
+     - If an old instance is detected: (a) sends a loopback POST /api/system/shutdown request for graceful termination; (b) if unresponsive or older version, forcefully terminates process tree (taskkill /F /T) matching other executable PIDs or the PID holding port 8890; (c) waits until port 8890 is fully released before opening DB and listening.
+     - If EADDRINUSE occurs on listen, terminates conflicting process and automatically retries listening instead of exiting.
+     - Added loopback-only POST /api/system/shutdown endpoint to allow clean graceful shutdown.
+  2. Build script resilience (scripts/build-exe.mjs):
+     - Automatically terminates running GymSystem.exe instances before SEA packaging.
+     - Added EBUSY fallback when copying runtime/node.exe so active background gateway processes do not abort the build.
+  3. Mandatory automatic EXE build workflow:
+     - Updated AGENTS.md Rule 16, Section 8 (Required AI Workflow), and Section 9 (Completion Requirements): Every agent MUST automatically run npm run build:exe upon completing non-trivial modifications. (Note: git push and Inno Setup installer compilation still require explicit owner chat consent).
+- Consequences:
+  - Opening a newer GymSystem.exe always terminates any older running instances and seamlessly takes over port 8890 and the database.
+  - dist-exe/GymSystem.exe is guaranteed to be up-to-date and freshly compiled after every task.
+  - Unit tests in tests/single-instance.test.ts (7 tests) verify port detection, port free waiting, graceful shutdown, and PID exclusion.
+  - Full test suite passes 550/550 across 48 test files. No DB migration required.
+
 ## ADR-036: Subscription-overlap guard must live inside the same BEGIN IMMEDIATE transaction as the INSERT (TOCTOU closure, TASK-063)
 - Date: 2026-09-19
 - Status: accepted

@@ -2,6 +2,28 @@
 
 > **Reading order for the next agent:** `AGENTS.md` → `.ai/project.md` → `.ai/current-state.md` → `.ai/tasks.md` → `.ai/decisions.md` (when relevant) → inspect the actual source. The repository files are the persistent memory; chat history is not part of the project.
 
+## TASK-070: آلية الاستحواذ التلقائي على السيرفر الفردي (Single Active Instance Auto-Takeover) وإلزامية بناء ملف EXE بعد كل تعديل (ADR-037)
+- Status: **done (2026-09-24). No DB migration.** All verified (550/550 tests across 48 files, typecheck clean). **GymSystem.exe built** (`dist-exe/GymSystem.exe` 94.4 MB).
+- **الهدف والدافع:** طلب المالك («خلي ان التعليمات بعد كل تعديل ف الاخر يتبني ملف Exe وخلي لما افتح ملف Exe وسيرفر مفتوح قديم ل Exe قديم ف يقفله ويفتح الجديد»).
+- **المكونات المنجزة:**
+  1. **وحدة إدارة السيرفر الفردي والاستحواذ (`server/single-instance.ts`):**
+     - عند تشغيل `GymSystem.exe`، يتم فحص المنفذ 8890 والعمليات المشغلة له أو لملفات `GymSystem.exe` الأخرى.
+     - إرسال طلب إغلاق ناعم `POST /api/system/shutdown` للنسخة القديمة.
+     - في حال عدم الاستجابة أو كون النسخة قديمة، يتم إنهاء شجرة العمليات القديمة قسرياً (`taskkill /F /T`) لفك أي قفل على قاعدة البيانات وتحرير المنفذ.
+     - انتظار تفريغ المنفذ بالكامل (Polling) قبل فتح قاعدة البيانات وبدء السيرفر الجديد.
+     - إعادة محاولة الاستماع تلقائياً في حال حدوث `EADDRINUSE` بدلاً من الخروج الصامت.
+  2. **مسار الإغلاق الناعم (`POST /api/system/shutdown`):**
+     - مسار آمن مقتصر حصراً على الـ Loopback interface، يقوم بتفريغ السجلات وقاعدة البيانات والخروج النظيف بكود 0.
+  3. **تحصين سكربت بناء الـ EXE (`scripts/build-exe.mjs`):**
+     - إضافة إغلاق تلقائي لأي نسخة `GymSystem.exe` قيد التشغيل قبل التجميع لمنع خطأ `EPERM`.
+     - دعم تجاوز `EBUSY` لملف `runtime/node.exe` في حال كانت بوابة الواتساب نشطة.
+  4. **تحديث تعليمات وسير عمل الذكاء الاصطناعي (`AGENTS.md`):**
+     - تحديث القاعدة رقم 16 في `AGENTS.md` لتلزم الوكيل ببناء `GymSystem.exe` تلقائياً عبر `npm run build:exe` فور إتمام المهام، مع بقاء الرفع على GitHub خاضعاً لموافقة المالك.
+     - إضافة خطوة `BUILD EXE` ضمن سير العمل المعتمد وشروط الاكتمال.
+  5. **الاختبارات:**
+     - إضافة ملف اختبار جديد `tests/single-instance.test.ts` (7 اختبارات).
+- **التحقق:** 550/550 اختبار ناجح (48 ملف اختبار)، typecheck الواجهة والسيرفر 0 أخطاء، تم بناء `dist-exe/GymSystem.exe` بنجاح واختباره.
+
 ## TASK-069: ترقية شاملة لمنظومة التفعيل ونظام التحكم والدعم الفني للمطور — Developer Action Tokens + إصلاح تطابق HWID + بطاقة الترخيص بالإعدادات + فحص التراخيص
 - Status: **done (2026-09-24). No DB migration.** All verified (543/543 tests, typechecks clean, RPC clean). **No EXE build, no push** (owner mandate). Pending local commit.
 - **الهدف والدافع:** طلب المالك فحص نظام التفعيل واقتراح وتطبيق التحسينات، مع توفير آليات تتيح له كمطور التحكم في النظام عن بُعد أوفلاين في حال تعثر العميل أو تلاعبه بالساعة أو نسيان حساب المالك («افحصلي نظام التفعيل... واقترحلي التطويرات... وعايز برضو طرق تخليني اتحكم انا ف السيستم كا مطور»).

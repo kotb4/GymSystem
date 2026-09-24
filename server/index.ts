@@ -40,6 +40,7 @@ import {
 import { ensureGateway } from "./gateway-spawn";
 import { startEngineInstall, engineStatus } from "./whatsapp-engine";
 import { canAdoptFirstRun, isLoopbackAddress } from "./first-run";
+import { ensureSingleActiveInstance } from "./single-instance";
 
 const PORT = Number(process.env.GYMSYSTEM_PORT ?? 8890);
 /** Secure default: loopback-only (ADR-023). GYMSYSTEM_HOST still allows LAN exposure. */
@@ -384,6 +385,23 @@ async function handleApi(ctx: Ctx): Promise<void> {
     const healthy = !isMaintenanceMode() && getDbContext().db != null;
     const status = healthy && !isMaintenanceMode() ? 200 : 503;
     return sendJson(res, status, { ok: healthy, maintenance: isMaintenanceMode() });
+  }
+
+  // Graceful shutdown: used by a newly launched instance to ask the previous
+  // instance to exit cleanly before taking over the port and database.
+  if (route === "POST /api/system/shutdown") {
+    if (!isLoopbackAddress(req.socket.remoteAddress)) {
+      return sendJson(res, 403, {
+        ok: false,
+        error: { name: "AppError", code: "FORBIDDEN", messageKey: "errors.forbidden", params: {} },
+      });
+    }
+    logLine("received graceful shutdown request via loopback — terminating old instance");
+    sendJson(res, 200, { ok: true, message: "shutting down" });
+    setTimeout(() => {
+      flushLogging(() => process.exit(0));
+    }, 150);
+    return;
   }
 
   if (route === "POST /api/auth/setup") {
@@ -771,7 +789,21 @@ function serveStatic(ctx: Ctx): void {
   res.end("not found");
 }
 
-export function startHttpServer(): void {
+export async function startHttpServer(): Promise<void> {
+  // If running as packaged executable, ensure any previous instance is
+  // terminated so the newly opened executable cleanly takes over the port & database.
+  if (isPackagedExe()) {
+    try {
+      await ensureSingleActiveInstance({
+        port: PORT,
+        exeName: "GymSystem.exe",
+        log: logLine,
+      });
+    } catch (err) {
+      logLine(`single instance check error: ${String(err)}`);
+    }
+  }
+
   openDatabase();
   autospawnWhatsappGateway();
   try { pruneExpiredSessions(getDbContext().db); } catch { /* first boot: table just created */ }
@@ -786,7 +818,7 @@ export function startHttpServer(): void {
   }, 60 * 60 * 1000).unref();
   // ADR-019: advance the monotonic last-active clock periodically so the
   // anti-rollback guard has a reference point even with no RPC traffic.
-    setInterval(() => {
+  setInterval(() => {
     try {
       refreshLicenseClock();
       logLine(`license clock: ${licenseStateName()}`);
@@ -821,25 +853,41 @@ export function startHttpServer(): void {
       }
     }
   });
-  server.listen(PORT, HOST, () => {
-    logLine(`GymSystem backend listening on http://${HOST}:${PORT}`);
-    const frontendSource =
-      fs.existsSync(path.join(DIST_DIR, "index.html")) ? `disk: ${DIST_DIR}` : "embedded bundle";
-    logLine(`serving frontend from ${frontendSource}`);
-    logLine(`authoritative database: ${getDbContext().dirs.dbFile}`);
-    if (isPackagedExe() && process.env.GYMSYSTEM_NO_OPEN !== "1") openAppWindow();
-  });
-  server.on("error", (error) => {
+
+  let listenRetries = 0;
+  const startListening = () => {
+    server.listen(PORT, HOST, () => {
+      logLine(`GymSystem backend listening on http://${HOST}:${PORT}`);
+      const frontendSource =
+        fs.existsSync(path.join(DIST_DIR, "index.html")) ? `disk: ${DIST_DIR}` : "embedded bundle";
+      logLine(`serving frontend from ${frontendSource}`);
+      logLine(`authoritative database: ${getDbContext().dirs.dbFile}`);
+      if (isPackagedExe() && process.env.GYMSYSTEM_NO_OPEN !== "1") openAppWindow();
+    });
+  };
+
+  server.on("error", async (error) => {
     const err = error as NodeJS.ErrnoException;
-    if (err.code === "EADDRINUSE" && isPackagedExe()) {
-      logLine(`port ${PORT} busy — another instance already runs; opening the window and exiting.`);
-      if (process.env.GYMSYSTEM_NO_OPEN !== "1") openAppWindow();
-      flushLogging(() => process.exit(0));
-      return;
+    if (err.code === "EADDRINUSE" && isPackagedExe() && listenRetries < 2) {
+      listenRetries++;
+      logLine(`port ${PORT} busy on listen attempt (${listenRetries}/2) — terminating holding process and retrying...`);
+      try {
+        await ensureSingleActiveInstance({
+          port: PORT,
+          exeName: "GymSystem.exe",
+          log: logLine,
+        });
+        setTimeout(startListening, 600);
+        return;
+      } catch (retryErr) {
+        logLine(`retry listen failed: ${String(retryErr)}`);
+      }
     }
     logLine(`http server error: ${String(error)}`);
     flushLogging(() => process.exit(1));
   });
+
+  startListening();
 }
 
 process.on("uncaughtException", (error) => {
@@ -853,4 +901,4 @@ process.on("unhandledRejection", (reason) => {
   flushLogging();
 });
 
-startHttpServer();
+void startHttpServer();
