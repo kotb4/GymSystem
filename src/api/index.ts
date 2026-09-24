@@ -59,6 +59,7 @@ import type {
   RedemptionResult,
 } from "@/core/services/loyalty.service";
 import type {
+  MemberMessageData,
   MessageRecipient,
   MessageSegment,
   MessageSendResult,
@@ -1308,12 +1309,18 @@ export const api = {
       rpc<MessageRecipient[]>("messages", "listRecipients", [{ segment }]),
     send: (input: { memberId: string; segment: MessageSegment; body: string }) =>
       rpc<MessageSendResult>("messages", "sendMessage", [input]),
-    sendSegment: (input: { segment: MessageSegment; body: string; limit?: number }) =>
+    sendSegment: (input: { segment: MessageSegment; body: string; limit?: number; bypassCooldown?: boolean }) =>
       rpc<SegmentSendSummary>("messages", "sendSegment", [input]),
     listHistory: (limit?: number) =>
       rpc<PublicMessageRow[]>("messages", "listMessageHistory", [{ limit: limit ?? 30 }]),
     getConfig: () =>
       rpc<MessagesConfig>("messages", "getMessagesConfig", []),
+    getMemberMessageData: (memberId: string) =>
+      rpc<MemberMessageData>("messages", "getMemberMessageData", [memberId]),
+    sendWelcomeMessage: (memberId: string) =>
+      rpc<MessageSendResult>("messages", "sendWelcomeMessage", [{ memberId }]),
+    sendPaymentMessage: (input: { memberId: string; amountPaid?: number; amountRemaining?: number; planName?: string; endDate?: string }) =>
+      rpc<MessageSendResult>("messages", "sendPaymentMessage", [input]),
   },
 };
 
@@ -1401,6 +1408,7 @@ export type {
   RedemptionResult,
 } from "@/core/services/loyalty.service";
 export type {
+  MemberMessageData,
   MessageRecipient,
   MessageSegment,
   MessageSendResult,

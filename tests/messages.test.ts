@@ -13,8 +13,12 @@ import {
   sendSegment,
   listMessageHistory,
   getMessagesConfig,
+  getMemberMessageData,
+  sendWelcomeMessage,
+  sendPaymentMessage,
   type MessageRecipient,
 } from "@/core/services/messages.service";
+import { normalizeEgyMobile, buildWhatsAppDirectUrl, fillMessagePlaceholders } from "@/core/whatsapp";
 import { errForbidden, errNotFound, errValidation } from "@/core/errors";
 import type { Db } from "@/db/engine";
 import type { ServiceActor } from "@/core/permissions";
@@ -356,5 +360,127 @@ describe("messages: config", () => {
     await expect(updateSetting(db, owner, "messages_expiry_days", "999")).rejects.toMatchObject({
       code: "VALIDATION",
     });
+  });
+});
+
+describe("messages: welcome, payment & smart placeholders", () => {
+  it("retrieves rich placeholders for a member via getMemberMessageData", async () => {
+    const { member } = await activeMember("أحمد فؤاد", { phone: "01011112222" });
+    const data = getMemberMessageData(db, owner, member.id);
+    expect(data.memberId).toBe(member.id);
+    expect(data.memberName).toBe("أحمد فؤاد");
+    expect(data.planName).toBe("أحمد فؤاد-باقة");
+    expect(data.gymName).toBe("Yassen Mohamed Kotb | 01288536381");
+    expect(data.startDate).toBe(TODAY);
+    expect(data.daysUntilExpiry).toBe(29);
+  });
+
+  it("sends a welcome message using the configured template", async () => {
+    const { member } = await activeMember("كابتن جديد", { phone: "01122334455" });
+    const res = await sendWelcomeMessage(db, owner, { memberId: member.id });
+    expect(res.status).toBe("sent");
+    const row = db.first<{ segment: string; body: string }>(
+      "SELECT segment, body FROM member_messages WHERE id = ?",
+      [res.messageId],
+    );
+    expect(row?.segment).toBe("welcome");
+    expect(row?.body).toContain("كابتن جديد");
+    expect(row?.body).toContain(member.memberCode);
+  });
+
+  it("sends a payment receipt message with custom amounts", async () => {
+    const { member } = await activeMember("عميل دفع", { phone: "01234567890" });
+    const res = await sendPaymentMessage(db, owner, {
+      memberId: member.id,
+      amountPaid: 750,
+      amountRemaining: 0,
+      planName: "VIP اشتراك",
+      endDate: "2026-10-19",
+    });
+    expect(res.status).toBe("sent");
+    const row = db.first<{ segment: string; body: string }>(
+      "SELECT segment, body FROM member_messages WHERE id = ?",
+      [res.messageId],
+    );
+    expect(row?.segment).toBe("payment");
+    expect(row?.body).toContain("750");
+    expect(row?.body).toContain("VIP اشتراك");
+    expect(row?.body).toContain("2026-10-19");
+  });
+
+  it("enforces cool-down protection in sendSegment", async () => {
+    const m1 = await activeMember("غائب 1", { phone: "01099991111" });
+    const m2 = await activeMember("غائب 2", { phone: "01099992222" });
+
+    // Mark both absent: record check-in 20 days ago
+    const past = `${addDaysKey(TODAY, -20)} 10:00:00`;
+    db.run("INSERT INTO attendance (id, member_id, checkin_at, created_by) VALUES (?, ?, ?, ?)", [
+      crypto.randomUUID(),
+      m1.member.id,
+      past,
+      owner.userId,
+    ]);
+    db.run("INSERT INTO attendance (id, member_id, checkin_at, created_by) VALUES (?, ?, ?, ?)", [
+      crypto.randomUUID(),
+      m2.member.id,
+      past,
+      owner.userId,
+    ]);
+
+    // Send first batch
+    const first = await sendSegment(db, owner, { segment: "absent", body: "رسالة 1" });
+    expect(first.sent).toBe(2);
+
+    // Send second batch immediately -> cool-down (7 days) should skip both
+    const second = await sendSegment(db, owner, { segment: "absent", body: "رسالة 2" });
+    expect(second.sent).toBe(0);
+    expect(second.skippedCooldown).toBe(2);
+
+    // With bypassCooldown = true -> sends regardless
+    const third = await sendSegment(db, owner, { segment: "absent", body: "رسالة 3", bypassCooldown: true });
+    expect(third.sent).toBe(2);
+  });
+});
+
+describe("messages: direct wa.me & placeholder engine", () => {
+  it("normalizes Egyptian mobile numbers correctly", () => {
+    expect(normalizeEgyMobile("01012345678")).toBe("201012345678");
+    expect(normalizeEgyMobile("+201123456789")).toBe("201123456789");
+    expect(normalizeEgyMobile("00201234567890")).toBe("201234567890");
+    expect(normalizeEgyMobile("015 1234 5678")).toBe("201512345678");
+    expect(normalizeEgyMobile("0223456789")).toBeNull(); // landline
+    expect(normalizeEgyMobile("invalid")).toBeNull();
+  });
+
+  it("builds wa.me direct links with properly encoded text", () => {
+    const url = buildWhatsAppDirectUrl("01012345678", "أهلاً بك يا كابتن!");
+    expect(url).toContain("https://wa.me/201012345678?text=");
+    expect(decodeURIComponent(url!)).toContain("أهلاً بك يا كابتن!");
+    expect(buildWhatsAppDirectUrl("01012345678")).toBe("https://wa.me/201012345678");
+    expect(buildWhatsAppDirectUrl("invalid")).toBeNull();
+  });
+
+  it("replaces all template placeholders seamlessly", () => {
+    const tmpl =
+      "مرحباً {اسم العميل} ({رقم العضوية}) في {اسم الجيم}. خطتك: {اسم الخطة}، صالحة حتى {تاريخ الانتهاء} ({الأيام المتبقية} يوم). تم دفع {المبلغ} والمتبقي {المبلغ المتبقي}. الخصم: {الخصم}.";
+    const res = fillMessagePlaceholders(tmpl, {
+      memberName: "علي حسن",
+      memberCode: "MEM-001",
+      gymName: "جيم الأبطال",
+      planName: "اشتراك سنوي",
+      endDate: "2027-01-01",
+      daysUntilExpiry: 365,
+      amountPaid: 3000,
+      amountRemaining: 500,
+      discount: "10%",
+    });
+    expect(res).toContain("علي حسن");
+    expect(res).toContain("MEM-001");
+    expect(res).toContain("جيم الأبطال");
+    expect(res).toContain("اشتراك سنوي");
+    expect(res).toContain("2027-01-01");
+    expect(res).toContain("365 يوم");
+    expect(res).toContain("تم دفع 3000 والمتبقي 500");
+    expect(res).toContain("10%");
   });
 });

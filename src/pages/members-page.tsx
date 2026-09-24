@@ -1,6 +1,6 @@
-﻿import { useEffect, useState } from "react";
+import { useEffect, useState } from "react";
 import { Link, useSearchParams } from "react-router-dom";
-import { ArchiveRestore, Pencil, Trash2, UserPlus, UsersRound } from "lucide-react";
+import { ArchiveRestore, MessageSquare, Pencil, Trash2, UserPlus, UsersRound } from "lucide-react";
 import { useAuth } from "@/contexts/auth-context";
 import { useT } from "@/i18n";
 import { appConfig } from "@/config/app.config";
@@ -27,6 +27,7 @@ import { ConfirmDialog } from "@/components/ui/confirm-dialog";
 import { useToast } from "@/components/ui/toast";
 import { describeError } from "@/utils/app-error";
 import { MemberFormModal } from "@/components/members/member-form-modal";
+import { QuickWhatsAppModal } from "@/components/messages/quick-whatsapp-modal";
 
 const STATUS_OPTIONS = ["all", "active", "inactive", "archived"] as const;
 
@@ -61,6 +62,7 @@ export function MembersPage() {
   const [confirmKind, setConfirmKind] = useState<"restore" | "purge" | "trash" | null>(null);
   const [confirmTarget, setConfirmTarget] = useState<TrashedMemberInfo | PublicMember | null>(null);
   const [busy, setBusy] = useState(false);
+  const [whatsAppMemberId, setWhatsAppMemberId] = useState<string | null>(null);
   const [reloadTick, setReloadTick] = useState(0);
   const reload = () => setReloadTick((v) => v + 1);
 
@@ -151,9 +153,22 @@ export function MembersPage() {
       key: "phone",
       header: t("common.phone"),
       render: (row) => (
-        <span dir="ltr" className="tabnum text-subtle">
-          {row.phone}
-        </span>
+        <div className="flex items-center gap-1.5" dir="ltr">
+          <span className="tabnum text-subtle">{row.phone}</span>
+          {row.phone !== "—" && (
+            <button
+              type="button"
+              onClick={(e) => {
+                e.stopPropagation();
+                setWhatsAppMemberId(row.id);
+              }}
+              className="inline-flex size-5 items-center justify-center rounded bg-emerald-500/10 text-emerald-500 hover:bg-emerald-500/20 transition-colors"
+              title={t("messages.quickWhatsAppTitle")}
+            >
+              <MessageSquare className="size-3" />
+            </button>
+          )}
+        </div>
       ),
     },
     {
@@ -459,6 +474,14 @@ export function MembersPage() {
         onSaved={reload}
         member={editTarget}
       />
+
+      {whatsAppMemberId && (
+        <QuickWhatsAppModal
+          open={Boolean(whatsAppMemberId)}
+          onClose={() => setWhatsAppMemberId(null)}
+          memberId={whatsAppMemberId}
+        />
+      )}
     </div>
   );
 }

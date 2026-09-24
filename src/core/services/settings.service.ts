@@ -1,4 +1,4 @@
-﻿import { errValidation } from "@/core/errors";
+import { errValidation } from "@/core/errors";
 import { requirePermission, type ServiceActor } from "@/core/permissions";
 import { recordAudit } from "./audit.service";
 import type { Db, Row } from "@/db/engine";
@@ -36,7 +36,15 @@ export const SETTING_KEYS = {
   allowNegativeStock: "allow_negative_stock",
   messagesAbsentDays: "messages_absent_days",
   messagesBirthdayDays: "messages_birthday_days",
+  messagesBirthdayTemplate: "messages_birthday_template",
+  messagesAbsentTemplate: "messages_absent_template",
   messagesExpiryDays: "messages_expiry_days",
+  messagesExpiryTemplate: "messages_expiry_template",
+  messagesWelcomeTemplate: "messages_welcome_template",
+  messagesPaymentTemplate: "messages_payment_template",
+  messagesPacingMinSeconds: "messages_pacing_min_seconds",
+  messagesPacingMaxSeconds: "messages_pacing_max_seconds",
+  messagesCooldownDays: "messages_cooldown_days",
 } as const;
 
 export type SettingKey = (string & {}) | (typeof SETTING_KEYS)[keyof typeof SETTING_KEYS];
@@ -194,7 +202,15 @@ const SPECS: Record<string, KeySpec> = {
   },
   [SETTING_KEYS.messagesAbsentDays]: { validate: (v) => String(intInRange(v, 1, 365)) },
   [SETTING_KEYS.messagesBirthdayDays]: { validate: (v) => String(intInRange(v, 1, 365)) },
+  [SETTING_KEYS.messagesBirthdayTemplate]: { validate: (v) => String(v).slice(0, 3000) },
+  [SETTING_KEYS.messagesAbsentTemplate]: { validate: (v) => String(v).slice(0, 3000) },
+  [SETTING_KEYS.messagesExpiryTemplate]: { validate: (v) => String(v).slice(0, 3000) },
   [SETTING_KEYS.messagesExpiryDays]: { validate: (v) => String(intInRange(v, 1, 365)) },
+  [SETTING_KEYS.messagesWelcomeTemplate]: { validate: (v) => String(v).slice(0, 3000) },
+  [SETTING_KEYS.messagesPaymentTemplate]: { validate: (v) => String(v).slice(0, 3000) },
+  [SETTING_KEYS.messagesPacingMinSeconds]: { validate: (v) => String(intInRange(v, 2, 60)) },
+  [SETTING_KEYS.messagesPacingMaxSeconds]: { validate: (v) => String(intInRange(v, 3, 120)) },
+  [SETTING_KEYS.messagesCooldownDays]: { validate: (v) => String(intInRange(v, 0, 90)) },
 };
 
 const EDITABLE_KEYS = new Set<string>(Object.keys(SPECS));
@@ -403,7 +419,105 @@ export function getMessagesBirthdayDays(db: Db): number {
   return toInt(readSetting(db, SETTING_KEYS.messagesBirthdayDays), 7, 1, 365);
 }
 
+/** Customizable free-text template used to compose `birthday` outreach messages. */
+export const DEFAULT_BIRTHDAY_TEMPLATE =
+  "كل سنة وانت طيب يا {اسم العميل} بمناسبة عيد ميلادك. عشان نحتفل معاك بنقدملك خصم {الخصم} على اشتراكك الجديد. مستنيينك تنورنا. رقم عضويتك: {رقم العضوية}";
+
+/** Customizable free-text template used to compose `absent` outreach messages. */
+export const DEFAULT_ABSENT_TEMPLATE =
+  "وحشتنا يا {اسم العميل}، من فترة ماشفناكش في النادي. عايزينك ترجع تكمل معانا وبنقدملك خصم {الخصم} على اشتراكك الجديد. رقم عضويتك: {رقم العضوية}";
+
+/** Customizable free-text template used to compose `expiry` outreach messages. */
+export const DEFAULT_EXPIRY_TEMPLATE =
+  "يا {اسم العميل}، اشتراكك قرب يخلص. عشان متقطعش التدريب بنقدملك تجديد بخصم {الخصم} على اشتراكك الجديد. رقم عضويتك: {رقم العضوية}";
+
+export function getMessagesBirthdayTemplate(db: Db): string {
+  return readSetting(db, SETTING_KEYS.messagesBirthdayTemplate) ?? DEFAULT_BIRTHDAY_TEMPLATE;
+}
+
+/** Persist a customized default `birthday` outreach template (requires settings.edit). */
+export function saveMessagesBirthdayTemplate(
+  db: Db,
+  actor: ServiceActor,
+  template: string,
+): void {
+  updateSetting(db, actor, SETTING_KEYS.messagesBirthdayTemplate, String(template).slice(0, 3000));
+}
+
+/** Read the customized `absent` outreach template (or the Arabic default). */
+export function getMessagesAbsentTemplate(db: Db): string {
+  return readSetting(db, SETTING_KEYS.messagesAbsentTemplate) ?? DEFAULT_ABSENT_TEMPLATE;
+}
+
+/** Persist a customized default `absent` outreach template (requires settings.edit). */
+export function saveMessagesAbsentTemplate(
+  db: Db,
+  actor: ServiceActor,
+  template: string,
+): void {
+  updateSetting(db, actor, SETTING_KEYS.messagesAbsentTemplate, String(template).slice(0, 3000));
+}
+
+/** Read the customized `expiry` outreach template (or the Arabic default). */
+export function getMessagesExpiryTemplate(db: Db): string {
+  return readSetting(db, SETTING_KEYS.messagesExpiryTemplate) ?? DEFAULT_EXPIRY_TEMPLATE;
+}
+
+/** Persist a customized default `expiry` outreach template (requires settings.edit). */
+export function saveMessagesExpiryTemplate(
+  db: Db,
+  actor: ServiceActor,
+  template: string,
+): void {
+  updateSetting(db, actor, SETTING_KEYS.messagesExpiryTemplate, String(template).slice(0, 3000));
+}
+
 /** Subscription-end window (upcoming N days) for the `expiry` outreach segment. */
 export function getMessagesExpiryDays(db: Db): number {
   return toInt(readSetting(db, SETTING_KEYS.messagesExpiryDays), 7, 1, 365);
 }
+
+/** Customizable free-text template used for new member welcome messages. */
+export const DEFAULT_WELCOME_TEMPLATE =
+  "أهلاً بك يا {اسم العميل} في {اسم الجيم}! يسعدنا انضمامك إلينا. رقم عضويتك هو: {رقم العضوية}. نتمنى لك رحلة رياضية موفقة.";
+
+/** Customizable free-text template used for payment confirmation receipts. */
+export const DEFAULT_PAYMENT_TEMPLATE =
+  "أهلاً يا {اسم العميل}، تم استلام مبلغ {المبلغ} ج بنجاح. باقتك: {اسم الخطة}، صالحة حتى {تاريخ الانتهاء}. شكراً لاختيارك {اسم الجيم}.";
+
+export function getMessagesWelcomeTemplate(db: Db): string {
+  return readSetting(db, SETTING_KEYS.messagesWelcomeTemplate) ?? DEFAULT_WELCOME_TEMPLATE;
+}
+
+export function saveMessagesWelcomeTemplate(
+  db: Db,
+  actor: ServiceActor,
+  template: string,
+): void {
+  updateSetting(db, actor, SETTING_KEYS.messagesWelcomeTemplate, String(template).slice(0, 3000));
+}
+
+export function getMessagesPaymentTemplate(db: Db): string {
+  return readSetting(db, SETTING_KEYS.messagesPaymentTemplate) ?? DEFAULT_PAYMENT_TEMPLATE;
+}
+
+export function saveMessagesPaymentTemplate(
+  db: Db,
+  actor: ServiceActor,
+  template: string,
+): void {
+  updateSetting(db, actor, SETTING_KEYS.messagesPaymentTemplate, String(template).slice(0, 3000));
+}
+
+export function getMessagesPacingMinSeconds(db: Db): number {
+  return toInt(readSetting(db, SETTING_KEYS.messagesPacingMinSeconds), 8, 2, 60);
+}
+
+export function getMessagesPacingMaxSeconds(db: Db): number {
+  return toInt(readSetting(db, SETTING_KEYS.messagesPacingMaxSeconds), 15, 3, 120);
+}
+
+export function getMessagesCooldownDays(db: Db): number {
+  return toInt(readSetting(db, SETTING_KEYS.messagesCooldownDays), 7, 0, 90);
+}
+

@@ -931,6 +931,53 @@ CREATE INDEX IF NOT EXISTS idx_backups_created ON backups_log(created_at);`,
         db.run("INSERT OR IGNORE INTO role_permissions (role_id, permission_code) VALUES ('reception', 'messages.view')");
       },
     },
+    {
+      // ---- v35: expanded message segments & anti-ban settings ----
+      version: 35,
+      statements: [],
+      fkOff: true,
+      callback: (db: Db) => {
+        db.exec(
+          "CREATE TABLE member_messages_v35 (\n" +
+            "  id TEXT PRIMARY KEY,\n" +
+            "  member_id TEXT NOT NULL REFERENCES members(id),\n" +
+            "  segment TEXT NOT NULL CHECK (segment IN ('absent', 'birthday', 'expiry', 'welcome', 'payment', 'custom')),\n" +
+            "  member_code TEXT NOT NULL,\n" +
+            "  member_name TEXT NOT NULL,\n" +
+            "  phone TEXT,\n" +
+            "  body TEXT NOT NULL,\n" +
+            "  status TEXT NOT NULL DEFAULT 'pending' CHECK (status IN ('pending', 'sent', 'failed', 'skipped_no_phone', 'skipped_cooldown', 'not_configured')),\n" +
+            "  error TEXT,\n" +
+            "  dedupe_key TEXT NOT NULL UNIQUE,\n" +
+            "  sent_at TEXT,\n" +
+            "  created_by TEXT REFERENCES users(id),\n" +
+            "  created_at TEXT NOT NULL\n" +
+            ")",
+        );
+        db.exec("INSERT INTO member_messages_v35 SELECT * FROM member_messages");
+        db.exec("DROP TABLE member_messages");
+        db.exec("ALTER TABLE member_messages_v35 RENAME TO member_messages");
+        db.exec("CREATE INDEX IF NOT EXISTS idx_member_messages_member ON member_messages(member_id)");
+        db.exec("CREATE INDEX IF NOT EXISTS idx_member_messages_status ON member_messages(status)");
+
+        const defaults: Array<[string, string]> = [
+          [
+            "messages_welcome_template",
+            "أهلاً بك يا {اسم العميل} في {اسم الجيم}! يسعدنا انضمامك إلينا. رقم عضويتك هو: {رقم العضوية}. نتمنى لك رحلة رياضية موفقة.",
+          ],
+          [
+            "messages_payment_template",
+            "أهلاً يا {اسم العميل}، تم استلام مبلغ {المبلغ} ج بنجاح. باقتك: {اسم الخطة}، صالحة حتى {تاريخ الانتهاء}. شكراً لاختيارك {اسم الجيم}.",
+          ],
+          ["messages_pacing_min_seconds", "8"],
+          ["messages_pacing_max_seconds", "15"],
+          ["messages_cooldown_days", "7"],
+        ];
+        for (const [key, value] of defaults) {
+          db.run("INSERT OR IGNORE INTO settings (key, value) VALUES (?, ?)", [key, value]);
+        }
+      },
+    },
   ];
 }
 

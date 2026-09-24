@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useState } from "react";
-import { MessageSquare, Send, Settings2 } from "lucide-react";
+import { ExternalLink, MessageSquare, Send, Settings2 } from "lucide-react";
 import { useAuth } from "@/contexts/auth-context";
 import { useT } from "@/i18n";
 import { useToast } from "@/components/ui/toast";
@@ -19,6 +19,20 @@ import { EmptyState } from "@/components/ui/empty-state";
 import { ConfirmDialog } from "@/components/ui/confirm-dialog";
 import { Tabs } from "@/components/ui/tabs";
 import { Input } from "@/components/ui/input";
+import {
+  DEFAULT_BIRTHDAY_TEMPLATE,
+  DEFAULT_ABSENT_TEMPLATE,
+  DEFAULT_EXPIRY_TEMPLATE,
+  DEFAULT_WELCOME_TEMPLATE,
+  DEFAULT_PAYMENT_TEMPLATE,
+} from "@/core/services/settings.service";
+import { buildWhatsAppDirectUrl } from "@/core/whatsapp";
+
+const BirthdayTemplateDefault = DEFAULT_BIRTHDAY_TEMPLATE;
+const AbsentTemplateDefault = DEFAULT_ABSENT_TEMPLATE;
+const ExpiryTemplateDefault = DEFAULT_EXPIRY_TEMPLATE;
+const WelcomeTemplateDefault = DEFAULT_WELCOME_TEMPLATE;
+const PaymentTemplateDefault = DEFAULT_PAYMENT_TEMPLATE;
 
 const SEGMENTS: MessageSegment[] = ["absent", "birthday", "expiry"];
 
@@ -26,12 +40,18 @@ const TAB_KEY: Record<MessageSegment, string> = {
   absent: "messages.tabAbsent",
   birthday: "messages.tabBirthday",
   expiry: "messages.tabExpiry",
+  welcome: "messages.tabWelcome",
+  payment: "messages.tabPayment",
+  custom: "messages.tabCustom",
 };
 
 const EMPTY_KEY: Record<MessageSegment, string> = {
   absent: "messages.emptyAbsent",
   birthday: "messages.emptyBirthday",
   expiry: "messages.emptyExpiry",
+  welcome: "messages.emptyAbsent",
+  payment: "messages.emptyAbsent",
+  custom: "messages.emptyAbsent",
 };
 
 function statusBadge(status: PublicMessageRow["status"]): BadgeVariant {
@@ -83,7 +103,17 @@ export function MessagesPage() {
 
   const [absentDays, setAbsentDays] = useState("14");
   const [birthdayDays, setBirthdayDays] = useState("7");
+  const [birthdayTemplate, setBirthdayTemplate] = useState(() => BirthdayTemplateDefault);
+  const [absentTemplate, setAbsentTemplate] = useState(() => AbsentTemplateDefault);
+  const [expiryTemplate, setExpiryTemplate] = useState(() => ExpiryTemplateDefault);
   const [expiryDays, setExpiryDays] = useState("7");
+  const [welcomeTemplate, setWelcomeTemplate] = useState(() => WelcomeTemplateDefault);
+  const [paymentTemplate, setPaymentTemplate] = useState(() => PaymentTemplateDefault);
+  const [pacingMin, setPacingMin] = useState("8");
+  const [pacingMax, setPacingMax] = useState("15");
+  const [cooldownDays, setCooldownDays] = useState("7");
+  const [composeDiscount, setComposeDiscount] = useState("");
+  const [composeTemplate, setComposeTemplate] = useState<string | null>(null);
   const [savingConfig, setSavingConfig] = useState(false);
 
   const load = useCallback(async () => {
@@ -92,7 +122,15 @@ export function MessagesPage() {
       const cfg = await api.messages.getConfig();
       setAbsentDays(String(cfg.absentDays));
       setBirthdayDays(String(cfg.birthdayDays));
+      setBirthdayTemplate(cfg.birthdayTemplate ?? BirthdayTemplateDefault);
+      setAbsentTemplate(cfg.absentTemplate ?? AbsentTemplateDefault);
+      setExpiryTemplate(cfg.expiryTemplate ?? ExpiryTemplateDefault);
       setExpiryDays(String(cfg.expiryDays));
+      setWelcomeTemplate(cfg.welcomeTemplate ?? WelcomeTemplateDefault);
+      setPaymentTemplate(cfg.paymentTemplate ?? PaymentTemplateDefault);
+      setPacingMin(String(cfg.pacingMinSeconds ?? 8));
+      setPacingMax(String(cfg.pacingMaxSeconds ?? 15));
+      setCooldownDays(String(cfg.cooldownDays ?? 7));
     } catch {
       // config is best-effort; defaults are shown regardless
     } finally {
@@ -125,9 +163,37 @@ export function MessagesPage() {
   const tabs = SEGMENTS.map((s) => ({ value: s, label: t(TAB_KEY[s]) }));
   const visible = rows;
 
+  const fillComposeBody = (tmpl: string, target: MessageRecipient, discount: string) =>
+    tmpl
+      .split("{اسم العميل}")
+      .join(target.memberName ?? "")
+      .split("{رقم العضوية}")
+      .join(target.memberCode ?? "")
+      .split("{الخصم}")
+      .join(discount);
+
+  const onComposeDiscountChange = (value: string) => {
+    setComposeDiscount(value);
+    if (composeTemplate && composeTarget) {
+      setBody(fillComposeBody(composeTemplate, composeTarget, value));
+    }
+  };
+
   const openCompose = (target: MessageRecipient) => {
     setComposeTarget(target);
-    setBody("");
+    const tmpl =
+      target.segment === "birthday"
+        ? birthdayTemplate
+        : target.segment === "absent"
+          ? absentTemplate
+          : expiryTemplate;
+
+    setComposeTemplate(tmpl ?? null);
+    if (tmpl) {
+      setBody(fillComposeBody(tmpl, target, composeDiscount));
+    } else {
+      setBody("");
+    }
   };
 
   const handleSend = async () => {
@@ -170,11 +236,13 @@ export function MessagesPage() {
     setBatchSending(true);
     try {
       const summary = await api.messages.sendSegment({ segment, body });
-      toast("success", 
+      toast(
+        "success",
         t("messages.msgBatchSent", {
           sent: summary.sent,
           failed: summary.failed,
           noPhone: summary.skippedNoPhone,
+          cooldown: summary.skippedCooldown ?? 0,
           notConfig: summary.notConfigured,
         }),
       );
@@ -194,8 +262,16 @@ export function MessagesPage() {
     try {
       await Promise.all([
         api.settings.update("messages_absent_days", absentDays.trim()),
+        api.settings.update("messages_absent_template", absentTemplate.trim()),
         api.settings.update("messages_birthday_days", birthdayDays.trim()),
+        api.settings.update("messages_birthday_template", birthdayTemplate.trim()),
         api.settings.update("messages_expiry_days", expiryDays.trim()),
+        api.settings.update("messages_expiry_template", expiryTemplate.trim()),
+        api.settings.update("messages_welcome_template", welcomeTemplate.trim()),
+        api.settings.update("messages_payment_template", paymentTemplate.trim()),
+        api.settings.update("messages_pacing_min_seconds", pacingMin.trim()),
+        api.settings.update("messages_pacing_max_seconds", pacingMax.trim()),
+        api.settings.update("messages_cooldown_days", cooldownDays.trim()),
       ]);
       toast("success", t("messages.configSaved"));
       await loadRows(segment);
@@ -324,6 +400,16 @@ export function MessagesPage() {
                 max={365}
                 dir="ltr"
               />
+              <label className="mt-4 block text-[13px] font-semibold text-subtle">
+                {t("messages.configAbsentTemplate")}
+              </label>
+              <textarea
+                value={absentTemplate}
+                onChange={(e) => setAbsentTemplate(e.target.value)}
+                placeholder={t("messages.configAbsentTemplatePlaceholder")}
+                rows={3}
+                className="mt-1.5 w-full rounded-xl border bg-panel px-3.5 py-3 text-sm text-ink placeholder:text-faint outline-none transition-colors duration-150 focus:border-neon/60 focus:ring-2 focus:ring-neon/15"
+              />
               <Input
                 label={t("messages.configBirthdayDays")}
                 value={birthdayDays}
@@ -332,6 +418,16 @@ export function MessagesPage() {
                 min={1}
                 max={365}
                 dir="ltr"
+              />
+              <label className="mt-4 block text-[13px] font-semibold text-subtle">
+                {t("messages.configBirthdayTemplate")}
+              </label>
+              <textarea
+                value={birthdayTemplate}
+                onChange={(e) => setBirthdayTemplate(e.target.value)}
+                placeholder={t("messages.configBirthdayTemplatePlaceholder")}
+                rows={3}
+                className="mt-1.5 w-full rounded-xl border bg-panel px-3.5 py-3 text-sm text-ink placeholder:text-faint outline-none transition-colors duration-150 focus:border-neon/60 focus:ring-2 focus:ring-neon/15"
               />
               <Input
                 label={t("messages.configExpiryDays")}
@@ -342,6 +438,65 @@ export function MessagesPage() {
                 max={365}
                 dir="ltr"
               />
+              <label className="mt-4 block text-[13px] font-semibold text-subtle">
+                {t("messages.configExpiryTemplate")}
+              </label>
+              <textarea
+                value={expiryTemplate}
+                onChange={(e) => setExpiryTemplate(e.target.value)}
+                placeholder={t("messages.configExpiryTemplatePlaceholder")}
+                rows={3}
+                className="mt-1.5 w-full rounded-xl border bg-panel px-3.5 py-3 text-sm text-ink placeholder:text-faint outline-none transition-colors duration-150 focus:border-neon/60 focus:ring-2 focus:ring-neon/15"
+              />
+              <label className="mt-4 block text-[13px] font-semibold text-subtle">
+                {t("messages.configWelcomeTemplate")}
+              </label>
+              <textarea
+                value={welcomeTemplate}
+                onChange={(e) => setWelcomeTemplate(e.target.value)}
+                placeholder={t("messages.configWelcomeTemplatePlaceholder")}
+                rows={3}
+                className="mt-1.5 w-full rounded-xl border bg-panel px-3.5 py-3 text-sm text-ink placeholder:text-faint outline-none transition-colors duration-150 focus:border-neon/60 focus:ring-2 focus:ring-neon/15"
+              />
+              <label className="mt-4 block text-[13px] font-semibold text-subtle">
+                {t("messages.configPaymentTemplate")}
+              </label>
+              <textarea
+                value={paymentTemplate}
+                onChange={(e) => setPaymentTemplate(e.target.value)}
+                placeholder={t("messages.configPaymentTemplatePlaceholder")}
+                rows={3}
+                className="mt-1.5 w-full rounded-xl border bg-panel px-3.5 py-3 text-sm text-ink placeholder:text-faint outline-none transition-colors duration-150 focus:border-neon/60 focus:ring-2 focus:ring-neon/15"
+              />
+              <div className="mt-4 grid gap-4 sm:grid-cols-3">
+                <Input
+                  label={t("messages.configPacingMin")}
+                  value={pacingMin}
+                  onChange={(e) => setPacingMin(e.target.value)}
+                  type="number"
+                  min={2}
+                  max={60}
+                  dir="ltr"
+                />
+                <Input
+                  label={t("messages.configPacingMax")}
+                  value={pacingMax}
+                  onChange={(e) => setPacingMax(e.target.value)}
+                  type="number"
+                  min={3}
+                  max={120}
+                  dir="ltr"
+                />
+                <Input
+                  label={t("messages.configCooldownDays")}
+                  value={cooldownDays}
+                  onChange={(e) => setCooldownDays(e.target.value)}
+                  type="number"
+                  min={0}
+                  max={90}
+                  dir="ltr"
+                />
+              </div>
             </div>
             <div className="mt-4 flex items-center gap-2.5">
               <Button onClick={handleSaveConfig} loading={savingConfig} icon={<Settings2 className="size-4" />}>
@@ -406,6 +561,14 @@ export function MessagesPage() {
           <div className="space-y-1.5">
             <p className="text-sm font-semibold text-ink">{composeTarget.memberName}</p>
             <p dir="ltr" className="tabnum text-xs text-subtle">{composeTarget.phone ?? "—"}</p>
+            <Input
+              label={t("messages.composeDiscountLabel")}
+              value={composeDiscount}
+              onChange={(e) => onComposeDiscountChange(e.target.value)}
+              placeholder={t("messages.composeDiscountPlaceholder")}
+              dir="ltr"
+              className="tabnum mt-0.5"
+            />
             <label className="mt-4 block text-[13px] font-semibold text-subtle">
               {t("messages.composeBodyLabel")}
             </label>
@@ -418,11 +581,26 @@ export function MessagesPage() {
             />
           </div>
         )}
-        <div className="mt-6 flex items-center gap-2.5">
-          <Button onClick={handleSend} loading={sending} disabled={sending}>
-            <Send className="size-4" />
-            {t("messages.btnSend")}
-          </Button>
+        <div className="mt-6 flex flex-wrap items-center justify-between gap-2.5">
+          <div className="flex items-center gap-2">
+            <Button onClick={handleSend} loading={sending} disabled={sending}>
+              <Send className="size-4" />
+              {t("messages.btnSend")}
+            </Button>
+            <Button
+              type="button"
+              variant="secondary"
+              onClick={() => {
+                if (!composeTarget?.phone) return;
+                const url = buildWhatsAppDirectUrl(composeTarget.phone, body);
+                if (url) window.open(url, "_blank", "noopener,noreferrer");
+              }}
+              disabled={!composeTarget?.phone || sending}
+              icon={<ExternalLink className="size-4" />}
+            >
+              {t("messages.btnOpenDirect")}
+            </Button>
+          </div>
           <Button variant="secondary" onClick={() => setComposeTarget(null)} disabled={sending}>
             {t("common.cancel")}
           </Button>

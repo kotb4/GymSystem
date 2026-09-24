@@ -5,6 +5,7 @@ import {
   ArrowRight,
   Camera,
   Image as ImageIcon,
+  MessageSquare,
   Pencil,
   Undo2,
   X,
@@ -24,6 +25,7 @@ import { Button } from "@/components/ui/button";
 import { Card } from "@/components/ui/card";
 import { ConfirmDialog } from "@/components/ui/confirm-dialog";
 import { CameraCapture } from "@/components/ui/camera-capture";
+import { QuickWhatsAppModal } from "@/components/messages/quick-whatsapp-modal";
 
 interface MemberHeaderProps {
   member: PublicMember;
@@ -51,6 +53,7 @@ export function MemberHeader({ member, onReload, onEdit }: MemberHeaderProps) {
   const [busy, setBusy] = useState(false);
   const [photoBusy, setPhotoBusy] = useState(false);
   const [cameraOpen, setCameraOpen] = useState(false);
+  const [whatsAppOpen, setWhatsAppOpen] = useState(false);
   const fileInputRef = useRef<HTMLInputElement>(null);
 
   const statusMeta = memberStatusMeta(t, member.status);
@@ -177,7 +180,22 @@ export function MemberHeader({ member, onReload, onEdit }: MemberHeaderProps) {
             {member.memberCode}
           </p>
           <dl className="mt-4 grid gap-x-8 gap-y-2.5 text-[13px] sm:grid-cols-2 xl:grid-cols-3">
-            <InfoRow label={t("common.phone")} value={member.phone ?? "—"} ltr />
+            <div className="flex min-w-0 items-baseline gap-2">
+              <dt className="shrink-0 text-xs font-semibold text-faint">{t("common.phone")}</dt>
+              <dd dir="ltr" className="min-w-0 truncate font-semibold tabnum flex items-center gap-1.5">
+                <span>{member.phone ?? "—"}</span>
+                {member.phone && (
+                  <button
+                    type="button"
+                    onClick={() => setWhatsAppOpen(true)}
+                    className="inline-flex size-5 items-center justify-center rounded bg-emerald-500/10 text-emerald-500 hover:bg-emerald-500/20 transition-colors"
+                    title={t("messages.quickWhatsAppTitle")}
+                  >
+                    <MessageSquare className="size-3" />
+                  </button>
+                )}
+              </dd>
+            </div>
             <InfoRow label={t("common.email")} value={member.email ?? "—"} ltr />
             <InfoRow
               label={t("members.gender")}
@@ -259,6 +277,11 @@ export function MemberHeader({ member, onReload, onEdit }: MemberHeaderProps) {
         onClose={() => setCameraOpen(false)}
         onCapture={onCameraCapture}
         captureBusy={photoBusy}
+      />
+      <QuickWhatsAppModal
+        open={whatsAppOpen}
+        onClose={() => setWhatsAppOpen(false)}
+        memberId={member.id}
       />
       <button
         type="button"

@@ -2,6 +2,18 @@
 
 > **Reading order for the next agent:** `AGENTS.md` → `.ai/project.md` → `.ai/current-state.md` → `.ai/tasks.md` → `.ai/decisions.md` (when relevant) → inspect the actual source. The repository files are the persistent memory; chat history is not part of the project.
 
+## TASK-068: ترقية شاملة لمنظومة الواتساب والرسائل — Migration v35 + مسار بديل مباشر wa.me + محرك مكافحة الحظر + قوالب الترحيب والدفع + إرسال فوري من بروفايل العضو
+- Status: **done (2026-09-24). DB migration v35.** All verified (538/538 tests, typecheck clean). **No EXE build, no push** (owner mandate). Pending local commit.
+- **الهدف والدافع:** طلب المالك مراجعة شاملة وتنفيذ ترقية كاملة لمنظومة الرسائل والواتساب («خلينا الاول ف تظبيط موضوع الواتس والرسائل ف السيستم كلو... اعمل كلو»).
+- **المكونات المنجزة:**
+  1. **Migration v35 (`src/db/migrations.ts`):** إعادة بناء قيود `member_messages` لدعم الشرائح الجديدة (`welcome`, `payment`, `custom`) وحالة `skipped_cooldown`. إضافة إعدادات افتراضية في جدول `settings` لقوالب الترحيب وإيصالات السداد، التباعد بين الرسائل (8-15 ثانية)، وفترة التهدئة (7 أيام). وتحديث فحوصات الهجرة 34 -> 35 في ملفات الاختبار.
+  2. **وحدة الواتساب (`src/core/whatsapp.ts`):** تطبيع أرقام الهواتف المصرية تلقائياً، توليد روابط الإرسال المباشر `https://wa.me/20...` التي تفتح واتساب ويب/تطبيق واتساب بدون الحاجة لتثبيت محرك أو تشغيل سيرفر وسيط، وتعويض المتغيرات الذكية ({اسم العميل}, {رقم العضوية}, {اسم الجيم}, {اسم الخطة}, {تاريخ الانتهاء}, {المبلغ}, {المبلغ المتبقي}, {عدد أيام الغياب}, {الحصص المتبقية}).
+  3. **الخدمات وقواعد البيانات (`messages.service.ts` / `settings.service.ts`):** إضافة `getMemberMessageData` لجلب بيانات العضو واشتراكه وآخر مدفوعاته تلقائياً؛ دوال `sendWelcomeMessage` و`sendPaymentMessage`؛ محرك تباعد عشوائي ذكي (Jitter Pacing) يمنع تصنيف الرقم كـ Bot، ونظام حظر التكرار (Cooldown Days) الذي يمنع إزعاج العميل برسائل متكررة عبر وسم الحالة بـ `skipped_cooldown`.
+  4. **واجهة الإرسال السريع (`src/components/messages/quick-whatsapp-modal.tsx`):** مودال خفيف وذكي يتيح اختيار القالب والمعاينة الحية مع خيارين: الإرسال الآلي عبر بوابة النظام، أو الفتح المباشر في واتساب (`wa.me`) مع نسخ/تجهيز الرسالة.
+  5. **ربط الواجهة:** زر واتساب مباشر بجانب رقم الهاتف في صفحة الأعضاء (`members-page.tsx`) وبروفايل العضو (`member-profile/header.tsx`).
+  6. **صفحة الرسائل (`messages-page.tsx`):** إضافة قوالب الترحيب والسداد وإعدادات الأمان ضد الحظر، مع زر الإرسال المباشر wa.me في مودال الإرسال.
+- **التحقق:** 538/538 اختبار ناجح (47 ملف اختبار)، `npm run typecheck` و`typecheck:server` ناجحان بنسبة 0 أخطاء، فحص اتساق RPC سليم تماماً.
+
 ## TASK-063: Subscriptions TOCTOU — overlap check moved INSIDE the BEGIN IMMEDIATE create transaction (TOCTOU)
 - Status: done (2026-09-19). **No DB migration.** Source-fix only + app-doc update. **No commit, no EXE build, no push** (owner mandate).
 - **Vulnerability closed:** `createSubscription` sanity-checked `findOverlap` OUTSIDE the `db.transaction(...)` that performs the INSERT. Because HTTP-backed writer requests interleave at `await db.transaction(...)` boundaries, TWO concurrent creates for the same member could BOTH pass the overlap check (no row yet) and then BOTH run their inserts → two overlapping `active` subscriptions for one member. The guard now lives INSIDE the same `BEGIN IMMEDIATE` transaction as the INSERT (`src/core/services/subscriptions.service.ts`, ~line 227 — every `Db.transaction` opens with `BEGIN IMMEDIATE` via `src/db/engine.ts`, so the overlap check + INSERT serialize as one atomic write). Error semantics unchanged: loser still rejects `errConflict("errors.subscriptionOverlap", {suggestedStart, endDate})`; no schema/RPC/i18n/permission change.

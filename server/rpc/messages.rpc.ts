@@ -7,4 +7,7 @@ export const messages = defineService({
   sendSegment: a(messagesService.sendSegment as Fn),
   listMessageHistory: a(messagesService.listMessageHistory as Fn),
   getMessagesConfig: a(messagesService.getMessagesConfig as Fn),
+  getMemberMessageData: a(messagesService.getMemberMessageData as Fn),
+  sendWelcomeMessage: a(messagesService.sendWelcomeMessage as Fn),
+  sendPaymentMessage: a(messagesService.sendPaymentMessage as Fn),
 });

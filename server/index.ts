@@ -72,8 +72,34 @@ function isPackagedExe(): boolean {
   }
 }
 
+/** Wait (bounded) until the HTTP server actually responds, so the app-mode
+ *  window opens on the real page instead of about:blank. */
+function waitReady(url: string, tries = 20): Promise<void> {
+  return new Promise((resolve, reject) => {
+    const attempt = (n: number) => {
+      if (n <= 0) return reject(new Error(`server not ready after ${tries} tries`));
+      const req = http.get(url, (res) => {
+        res.resume();
+        resolve();
+      });
+      req.setTimeout(400, () => req.destroy());
+      req.on("error", () => {
+        if (n % 4 === 0) logLine(`app window: server not ready yet (${tries - n} left)`);
+        setTimeout(() => attempt(n - 1), 150);
+      });
+    };
+    attempt(tries);
+  });
+}
+
 /** Open the app in a standalone Edge window (App Mode); falls back to the default browser. */
-function openAppWindow(url: string = `http://${HOST}:${PORT}/`): void {
+async function openAppWindow(url: string = `http://${HOST}:${PORT}/`): Promise<void> {
+  try {
+    await waitReady(url);
+  } catch (error) {
+    logLine(`app window: not opening browser — ${String(error)}`);
+    return;
+  }
   logLine(`opening app window: ${url}`);
   let child = spawn("msedge", [`--app=${url}`], { detached: true, stdio: "ignore", windowsHide: true });
   child.on("error", () => {

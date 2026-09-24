@@ -7,8 +7,16 @@ import { getMemberRowById, type MemberRow } from "./members.service";
 import { assertDepartmentAccess, departmentScopeCondition } from "./department";
 import {
   getMessagesAbsentDays,
+  getMessagesAbsentTemplate,
   getMessagesBirthdayDays,
+  getMessagesBirthdayTemplate,
   getMessagesExpiryDays,
+  getMessagesExpiryTemplate,
+  getMessagesWelcomeTemplate,
+  getMessagesPaymentTemplate,
+  getMessagesPacingMinSeconds,
+  getMessagesPacingMaxSeconds,
+  getMessagesCooldownDays,
   readSetting,
   SETTING_KEYS,
 } from "./settings.service";
@@ -17,11 +25,19 @@ import {
   whatsappTransport,
   type CardDeliveryStatus,
 } from "./card-delivery.service";
+import { fillMessagePlaceholders } from "@/core/whatsapp";
 
-export type MessageSegment = "absent" | "birthday" | "expiry";
-export type MessageStatus = CardDeliveryStatus;
+export type MessageSegment = "absent" | "birthday" | "expiry" | "welcome" | "payment" | "custom";
+export type MessageStatus = CardDeliveryStatus | "skipped_cooldown";
 
-export const MESSAGE_SEGMENTS: readonly MessageSegment[] = ["absent", "birthday", "expiry"];
+export const MESSAGE_SEGMENTS: readonly MessageSegment[] = [
+  "absent",
+  "birthday",
+  "expiry",
+  "welcome",
+  "payment",
+  "custom",
+];
 
 export interface MessageRecipient {
   memberId: string;
@@ -67,6 +83,7 @@ export interface SegmentSendSummary {
   sent: number;
   failed: number;
   skippedNoPhone: number;
+  skippedCooldown: number;
   notConfigured: number;
 }
 
@@ -74,9 +91,25 @@ export interface MessagesConfig {
   absentDays: number;
   birthdayDays: number;
   expiryDays: number;
+  /** Free-text template used to compose `birthday` outreach (`{اسم العميل}` / `{الخصم}` / `{رقم العضوية}` blocks). */
+  birthdayTemplate: string;
+  /** Free-text template used to compose `absent` outreach (`{اسم العميل}` / `{الخصم}` / `{رقم العضوية}` blocks). */
+  absentTemplate: string;
+  /** Free-text template used to compose `expiry` outreach (`{اسم العميل}` / `{الخصم}` / `{رقم العضوية}` blocks). */
+  expiryTemplate: string;
+  /** Free-text template used for new member welcome messages. */
+  welcomeTemplate: string;
+  /** Free-text template used for payment confirmation receipts. */
+  paymentTemplate: string;
+  /** Minimum safe delay between segment sends in seconds. */
+  pacingMinSeconds: number;
+  /** Maximum safe delay between segment sends in seconds. */
+  pacingMaxSeconds: number;
+  /** Cool-down window in days: skip segment outreach to members who already received a message. */
+  cooldownDays: number;
 }
 
-const SEGMENT_RE = /^(absent|birthday|expiry)$/;
+const SEGMENT_RE = /^(absent|birthday|expiry|welcome|payment|custom)$/;
 
 function assertSegment(segment: string): void {
   if (!SEGMENT_RE.test(segment)) throw errValidation("errors.messageSegmentInvalid");
@@ -365,7 +398,7 @@ export async function sendMessage(
 export async function sendSegment(
   db: Db,
   actor: ServiceActor,
-  input: { segment: MessageSegment; body: string; limit?: number },
+  input: { segment: MessageSegment; body: string; limit?: number; bypassCooldown?: boolean },
 ): Promise<SegmentSendSummary> {
   requirePermission(actor, "messages.send");
   assertSegment(input.segment);
@@ -376,15 +409,33 @@ export async function sendSegment(
   const { send, provider } = resolveTransport(db);
   const mock = envFlag("GYM_CRM_MOCK");
 
+  const pacingMin = getMessagesPacingMinSeconds(db);
+  const pacingMax = getMessagesPacingMaxSeconds(db);
+  const cooldownDays = getMessagesCooldownDays(db);
+
   let sent = 0;
   let failed = 0;
   let skippedNoPhone = 0;
+  let skippedCooldown = 0;
   let notConfigured = 0;
 
   for (const target of targets) {
     const member = getMemberRowById(db, target.memberId);
     if (!member || member.deleted_at) continue;
     assertDepartmentAccess(actor, member.department);
+
+    if (!input.bypassCooldown && cooldownDays > 0) {
+      const cutoff = `${addDaysKey(todayKey(), -cooldownDays)} 00:00:00`;
+      const recent = db.scalar(
+        "SELECT 1 FROM member_messages WHERE member_id = ? AND status = 'sent' AND created_at >= ? LIMIT 1",
+        [member.id, cutoff],
+      );
+      if (recent) {
+        insertOutbox(db, actor, member, input.segment, body, "skipped_cooldown");
+        skippedCooldown++;
+        continue;
+      }
+    }
 
     if (!send) {
       insertOutbox(db, actor, member, input.segment, body, "not_configured");
@@ -418,11 +469,13 @@ export async function sendSegment(
       failed++;
     }
     if (!mock) {
-      await new Promise((resolve) => setTimeout(resolve, 2000 + Math.floor(Math.random() * 3001)));
+      const span = Math.max(0, pacingMax - pacingMin);
+      const delayMs = Math.floor((pacingMin + Math.random() * span) * 1000);
+      await new Promise((resolve) => setTimeout(resolve, delayMs));
     }
   }
 
-  return { sent, failed, skippedNoPhone, notConfigured };
+  return { sent, failed, skippedNoPhone, skippedCooldown, notConfigured };
 }
 
 export function listMessageHistory(
@@ -444,5 +497,138 @@ export function getMessagesConfig(db: Db, actor: ServiceActor): MessagesConfig {
     absentDays: getMessagesAbsentDays(db),
     birthdayDays: getMessagesBirthdayDays(db),
     expiryDays: getMessagesExpiryDays(db),
+    birthdayTemplate: getMessagesBirthdayTemplate(db),
+    absentTemplate: getMessagesAbsentTemplate(db),
+    expiryTemplate: getMessagesExpiryTemplate(db),
+    welcomeTemplate: getMessagesWelcomeTemplate(db),
+    paymentTemplate: getMessagesPaymentTemplate(db),
+    pacingMinSeconds: getMessagesPacingMinSeconds(db),
+    pacingMaxSeconds: getMessagesPacingMaxSeconds(db),
+    cooldownDays: getMessagesCooldownDays(db),
   };
+}
+
+export interface MemberMessageData {
+  memberId: string;
+  memberCode: string;
+  memberName: string;
+  phone: string | null;
+  gymName: string;
+  planName: string | null;
+  startDate: string | null;
+  endDate: string | null;
+  daysUntilExpiry: number | null;
+  remainingSessions: number | null;
+  daysSinceLastVisit: number | null;
+  latestPaymentPaid: number | null;
+  latestPaymentRemaining: number | null;
+}
+
+export function getMemberMessageData(
+  db: Db,
+  actor: ServiceActor,
+  memberId: string,
+): MemberMessageData {
+  requirePermission(actor, "messages.view");
+  const member = getMemberRowById(db, memberId);
+  if (!member || member.deleted_at) throw errNotFound("errors.memberNotFound");
+  assertDepartmentAccess(actor, member.department);
+
+  const today = todayKey();
+  const gymName = readSetting(db, SETTING_KEYS.gymName) || "Gym";
+
+  const sub = db.first<{
+    plan_name: string;
+    start_date: string;
+    end_date: string;
+    sessions_total: number | null;
+    sessions_used: number | null;
+  }>(
+    "SELECT p.name AS plan_name, s.start_date, s.end_date, s.sessions_total, s.sessions_used\n" +
+      "FROM member_subscriptions s\n" +
+      "JOIN membership_plans p ON p.id = s.plan_id\n" +
+      "WHERE s.member_id = ? AND s.status = 'active' AND s.end_date >= ?\n" +
+      "ORDER BY s.end_date ASC LIMIT 1",
+    [memberId, today],
+  );
+
+  let remainingSessions: number | null = null;
+  if (sub && sub.sessions_total != null) {
+    remainingSessions = Math.max(0, sub.sessions_total - (sub.sessions_used ?? 0));
+  }
+
+  const lastVisit = db.scalar(
+    "SELECT MAX(checkin_at) FROM attendance WHERE member_id = ? AND deleted_at IS NULL",
+    [memberId],
+  );
+  let daysSinceLastVisit: number | null = null;
+  if (lastVisit) {
+    const lastVisitKey = String(lastVisit).slice(0, 10);
+    daysSinceLastVisit = Math.max(0, diffDaysKeys(lastVisitKey, today));
+  }
+
+  const payment = db.first<{ paid_amount_minor: number; remaining_amount_minor: number }>(
+    "SELECT paid_amount_minor, remaining_amount_minor FROM payments WHERE member_id = ? AND status != 'voided' ORDER BY paid_at DESC LIMIT 1",
+    [memberId],
+  );
+
+  const daysUntilExpiry = sub ? Math.max(0, diffDaysKeys(today, sub.end_date)) : null;
+
+  return {
+    memberId: member.id,
+    memberCode: member.member_code,
+    memberName: member.full_name,
+    phone: member.phone,
+    gymName,
+    planName: sub ? sub.plan_name : null,
+    startDate: sub ? sub.start_date : null,
+    endDate: sub ? sub.end_date : null,
+    daysUntilExpiry,
+    remainingSessions,
+    daysSinceLastVisit,
+    latestPaymentPaid: payment ? payment.paid_amount_minor / 100 : null,
+    latestPaymentRemaining: payment ? payment.remaining_amount_minor / 100 : null,
+  };
+}
+
+export async function sendWelcomeMessage(
+  db: Db,
+  actor: ServiceActor,
+  input: { memberId: string },
+): Promise<MessageSendResult> {
+  requirePermission(actor, "messages.send");
+  const data = getMemberMessageData(db, actor, input.memberId);
+  const tmpl = getMessagesWelcomeTemplate(db);
+  const body = fillMessagePlaceholders(tmpl, {
+    memberName: data.memberName,
+    memberCode: data.memberCode,
+    gymName: data.gymName,
+    planName: data.planName,
+    startDate: data.startDate,
+    endDate: data.endDate,
+    daysUntilExpiry: data.daysUntilExpiry,
+    remainingSessions: data.remainingSessions,
+  });
+  return sendMessage(db, actor, { memberId: input.memberId, segment: "welcome", body });
+}
+
+export async function sendPaymentMessage(
+  db: Db,
+  actor: ServiceActor,
+  input: { memberId: string; amountPaid?: number; amountRemaining?: number; planName?: string; endDate?: string },
+): Promise<MessageSendResult> {
+  requirePermission(actor, "messages.send");
+  const data = getMemberMessageData(db, actor, input.memberId);
+  const tmpl = getMessagesPaymentTemplate(db);
+  const body = fillMessagePlaceholders(tmpl, {
+    memberName: data.memberName,
+    memberCode: data.memberCode,
+    gymName: data.gymName,
+    planName: input.planName ?? data.planName,
+    startDate: data.startDate,
+    endDate: input.endDate ?? data.endDate,
+    amountPaid: input.amountPaid ?? data.latestPaymentPaid ?? 0,
+    amountRemaining: input.amountRemaining ?? data.latestPaymentRemaining ?? 0,
+  });
+  return sendMessage(db, actor, { memberId: input.memberId, segment: "payment", body });
 }

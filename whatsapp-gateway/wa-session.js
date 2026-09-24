@@ -144,11 +144,6 @@ async function ensureBrowser() {
     fs.mkdirSync(_cfg.sessionDir, { recursive: true });
     const wpp = loadWpp();
     const executablePath = resolveBrowserPath();
-    if (!executablePath) {
-      log.error('no Edge/Chrome browser found on this machine');
-      throw new Error('no compatible browser installed (Microsoft Edge required)');
-    }
-
     const sessionDir = _cfg.sessionDir;
     const profileDir = join(sessionDir, 'wpp-profile');
     // Cold-start hardening: a gateway killed mid-launch (app force-quit,
@@ -163,10 +158,12 @@ async function ensureBrowser() {
     // puppeteerOptions.userDataDir — wppconnect otherwise defaults to
     // cwd/folderNameToken/session which would scatter state under the repo.
     const puppeteerOptions = {
-      executablePath,
       userDataDir: profileDir,
       args: ['--no-sandbox', '--disable-blink-features=AutomationControlled'],
     };
+    if (executablePath) {
+      puppeteerOptions.executablePath = executablePath;
+    }
 
     log.info(`launching browser (headless=${_cfg.headless})`);
     const options = {
