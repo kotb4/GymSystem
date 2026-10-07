@@ -25,3 +25,4 @@ _*.mjs
 *.tmp
 # Playwright CLI output (may contain credentials)
 .playwright-cli/
+*.pdf
