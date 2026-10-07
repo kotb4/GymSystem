@@ -1,5 +1,5 @@
 import { useEffect, useState, type FormEvent } from "react";
-import { ArrowDownCircle, ArrowUpCircle, Clock, LockKeyhole, Trash2, Wallet } from "lucide-react";
+import { ArrowDownCircle, ArrowUpCircle, LockKeyhole, Trash2, Wallet } from "lucide-react";
 import { useFocusRow } from "@/hooks/use-focus-row";
 import { useAuth } from "@/contexts/auth-context";
 import { useT } from "@/i18n";
@@ -22,7 +22,6 @@ import { DataTable, type Column } from "@/components/ui/table";
 import { EmptyState } from "@/components/ui/empty-state";
 import { Pagination } from "@/components/ui/pagination";
 import { ConfirmDialog } from "@/components/ui/confirm-dialog";
-import { StaffShiftsModal } from "@/components/cash/staff-shifts-modal";
 
 export function CashSessionsPanel() {
   const t = useT();
@@ -43,7 +42,6 @@ export function CashSessionsPanel() {
   const [reloadTick, setReloadTick] = useState(0);
   const [confirmAbort, setConfirmAbort] = useState(false);
   const [deleteSessionTarget, setDeleteSessionTarget] = useState<Row | null>(null);
-  const [shiftsModalOpen, setShiftsModalOpen] = useState(false);
   const reload = () => setReloadTick((v) => v + 1);
 
   const canView = hasPermission("payments.view");
@@ -160,6 +158,7 @@ export function CashSessionsPanel() {
     openedAt: string;
     closedAt: string | null;
     openedByName: string;
+    closedByName: string | null;
     openingBalanceMinor: number;
     expectedClosingMinor: number | null;
     countedClosingMinor: number | null;
@@ -173,6 +172,7 @@ export function CashSessionsPanel() {
     openedAt: s.openedAt,
     closedAt: s.closedAt,
     openedByName: s.openedByName,
+    closedByName: s.closedByName,
     openingBalanceMinor: s.openingBalanceMinor,
     expectedClosingMinor: s.expectedClosingMinor,
     countedClosingMinor: s.countedClosingMinor,
@@ -206,7 +206,22 @@ export function CashSessionsPanel() {
           </Badge>
         ),
     },
-    { key: "by", header: t("cashPage.colBy"), render: (row) => <span className="text-faint">{row.openedByName}</span> },
+    {
+      key: "by",
+      header: "الموظف المسؤول",
+      render: (row) => (
+        <div className="flex flex-col text-xs">
+          <span className="font-semibold text-foreground flex items-center gap-1">
+            <span className="text-[10px] text-faint">فتح:</span> {row.openedByName}
+          </span>
+          {row.closedByName && row.closedByName !== row.openedByName ? (
+            <span className="text-faint flex items-center gap-1 mt-0.5">
+              <span className="text-[10px] text-amber">سلّم:</span> {row.closedByName}
+            </span>
+          ) : null}
+        </div>
+      ),
+    },
     {
       key: "expected",
       header: t("cashPage.colExpected"),
@@ -273,14 +288,8 @@ export function CashSessionsPanel() {
       <div className="flex items-center justify-between">
         <div>
           <h2 className="text-xl font-black text-foreground">الخزينة النقدية والورديات</h2>
-          <p className="text-xs text-subtle mt-0.5">متابعة النقدية، تسليم الدرج، وإدارة ورديات الموظفين</p>
+          <p className="text-xs text-subtle mt-0.5">متابعة حركة النقدية، تسليم الدرج، وجرد العجز والزيادة بين الموظفين</p>
         </div>
-        {hasPermission("shifts.view") && (
-          <Button variant="secondary" onClick={() => setShiftsModalOpen(true)}>
-            <Clock className="size-4" />
-            <span>ورديات الموظفين (تسليم الدرج)</span>
-          </Button>
-        )}
       </div>
 
       {openTotals ? (
@@ -445,11 +454,6 @@ export function CashSessionsPanel() {
         tone="danger"
         loading={busy}
         onConfirm={() => void onDeleteSession()}
-      />
-
-      <StaffShiftsModal
-        open={shiftsModalOpen}
-        onClose={() => setShiftsModalOpen(false)}
       />
     </div>
   );
