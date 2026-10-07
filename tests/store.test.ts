@@ -13,6 +13,7 @@ import {
   listStockMovements,
   createSale,
   getSale,
+  listSales,
   voidStoreSale,
   repayStoreDebt,
   returnStoreSale,
@@ -264,7 +265,7 @@ describe("returns", () => {
       reason: "استبدال",
     });
 
-    expect(ret.returnNo).toMatch(/^RTN-/);
+    expect(ret.returnNo).toMatch(/^(?:[A-Z0-9]{1,6}-)?SRT-\d{4}-\d{6}$/);
     expect(ret.totalMinor).toBe(1 * 10000);
     expect(ret.items.length).toBe(1);
     expect(ret.items[0].productId).toBe(p.id);
@@ -437,4 +438,53 @@ describe("store reports", () => {
     expect(() => getStockValue(db, reception)).toThrow();
     expect(() => listLowStockProducts(db, reception, {})).toThrow();
   });
+
+  it("allows returning a settled credit sale once fully repaid, and rejects unsettled credit return", async () => {
+    const m = await member();
+    const p = await seedProduct({ stockQty: 10, priceMinor: 5000 });
+    const sale = await createSale(db, owner, {
+      items: [{ productId: p.id, qty: 2 }],
+      methodCode: "cash",
+      isCredit: true,
+      memberId: m.id,
+    });
+
+    const item = getSale(db, owner, sale.id).items[0];
+
+    // Unsettled credit sale return must be rejected
+    await expect(
+      returnStoreSale(db, owner, {
+        saleId: sale.id,
+        lines: [{ saleItemId: item.id, qty: 1 }],
+      }),
+    ).rejects.toThrow();
+
+    // Now repay the full debt
+    const debtRow = db.first<{ id: string }>("SELECT id FROM store_debts WHERE sale_id = ?", [sale.id]);
+    await repayStoreDebt(db, owner, {
+      debtId: debtRow!.id,
+      amountMinor: 10000,
+      methodCode: "cash",
+    });
+
+    // Verify debt is now settled
+    const updatedDebt = db.first<{ status: string }>("SELECT status FROM store_debts WHERE id = ?", [debtRow!.id]);
+    expect(updatedDebt?.status).toBe("settled");
+
+    // Returning the settled credit sale should now succeed!
+    const returnRes = await returnStoreSale(db, owner, {
+      saleId: sale.id,
+      lines: [{ saleItemId: item.id, qty: 1 }],
+    });
+    expect(returnRes.totalMinor).toBe(5000);
+    expect(returnRes.returnNo).toBeDefined();
+
+    // Verify member sales filtering works
+    const memberSales = listSales(db, owner, { memberId: m.id });
+    expect(memberSales.items.some((s) => s.id === sale.id)).toBe(true);
+    const found = memberSales.items.find((s) => s.id === sale.id);
+    expect(found?.isCredit).toBe(true);
+    expect(found?.debtStatus).toBe("settled");
+  });
 });
+

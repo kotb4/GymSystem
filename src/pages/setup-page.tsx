@@ -21,6 +21,7 @@ export function SetupPage() {
 
   const [gymName, setGymName] = useState("");
   const [ownerFullName, setOwnerFullName] = useState("");
+  const [ownerPhone, setOwnerPhone] = useState("");
   const [username, setUsername] = useState("");
   const [password, setPassword] = useState("");
   const [submitting, setSubmitting] = useState(false);
@@ -77,8 +78,18 @@ export function SetupPage() {
       setError(t("errors.fullNameRequired"));
       return;
     }
+    if (!ownerPhone.trim()) {
+      setError(t("setup.phoneRequired"));
+      return;
+    }
     setSubmitting(true);
-    const result = await setup({ gymName, ownerFullName, username, password });
+    const result = await setup({
+      gymName,
+      ownerFullName,
+      username,
+      password,
+      phone: ownerPhone.trim(),
+    });
     setSubmitting(false);
     if (result.ok) {
       toast("success", t("toast.loggedIn"));
@@ -148,6 +159,14 @@ export function SetupPage() {
               placeholder={t("setup.ownerNamePh")}
               value={ownerFullName}
               onChange={(e) => setOwnerFullName(e.target.value)}
+              disabled={submitting}
+            />
+            <Input
+              label={t("setup.ownerPhone")}
+              placeholder={t("setup.ownerPhonePh")}
+              dir="ltr"
+              value={ownerPhone}
+              onChange={(e) => setOwnerPhone(e.target.value)}
               disabled={submitting}
             />
             <div className="space-y-1.5">

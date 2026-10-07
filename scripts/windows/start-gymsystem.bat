@@ -6,12 +6,18 @@ rem  %LOCALAPPDATA%\GymSystem) and opens the app window.
 rem  No internet required. Data survives restarts.
 rem ============================================================
 setlocal
-cd /d "%~dp0.."
+cd /d "%~dp0..\.."
 
 set GYMSYSTEM_PORT=8890
 
+if exist "dist-exe\GymSystem.exe" (
+  cd dist-exe
+  start "" "GymSystem.exe"
+  exit /b 0
+)
+
 rem start backend minimized; it serves the UI on http://127.0.0.1:8890
-start "Backend" /min node dist-server\index.cjs
+start "GymSystem - Primary (Port 8890)" /min node dist-server\index.cjs
 
 rem wait for the local API to come up (max ~15s)
 set /a tries=0
@@ -26,6 +32,6 @@ if errorlevel 1 (
   exit /b 1
 )
 
-rem open the app window (Edge app mode = standalone window, no browser chrome)
-start "" msedge --app=http://127.0.0.1:%GYMSYSTEM_PORT%/ || start "" http://127.0.0.1:%GYMSYSTEM_PORT%/
+rem open the app in default browser
+start "" http://127.0.0.1:%GYMSYSTEM_PORT%/
 exit /b 0

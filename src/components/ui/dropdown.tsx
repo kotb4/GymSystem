@@ -45,7 +45,7 @@ export function Dropdown({ trigger, children, align = "end", widthClass = "min-w
           role="menu"
           onClick={() => setOpen(false)}
           className={cn(
-            "absolute top-[calc(100%+8px)] animate-pop rounded-xl border border-line-strong bg-raised p-1.5 shadow-pop",
+            "absolute top-[calc(100%+8px)] max-w-[calc(100vw-1.5rem)] animate-pop rounded-xl border border-line-strong bg-raised p-1.5 shadow-pop",
             align === "start" ? "start-0" : "end-0",
             widthClass,
             contentClassName

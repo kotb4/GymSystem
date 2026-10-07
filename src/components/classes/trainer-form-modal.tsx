@@ -23,6 +23,7 @@ export function TrainerFormModal(props: {
   const [phone, setPhone] = useState("");
   const [email, setEmail] = useState("");
   const [specialization, setSpecialization] = useState("");
+  const [rankTitle, setRankTitle] = useState("");
   const [joinedDate, setJoinedDate] = useState("");
   const [notes, setNotes] = useState("");
   const [submitting, setSubmitting] = useState(false);
@@ -35,6 +36,7 @@ export function TrainerFormModal(props: {
     setPhone(props.target?.phone ?? "");
     setEmail(props.target?.email ?? "");
     setSpecialization(props.target?.specialization ?? "");
+    setRankTitle(props.target?.rankTitle ?? "");
     setJoinedDate(props.target?.joinedDate ?? todayKey());
     setNotes(props.target?.notes ?? "");
   }, [props.open, props.target]);
@@ -49,6 +51,7 @@ export function TrainerFormModal(props: {
         phone: phone || null,
         email: email || null,
         specialization: specialization || null,
+        rankTitle: rankTitle || null,
         joinedDate,
         notes: notes || null,
       };
@@ -130,6 +133,13 @@ export function TrainerFormModal(props: {
             disabled={submitting}
           />
         </div>
+        <Input
+          label={t("trainers.rankTitle")}
+          placeholder={t("trainers.rankTitlePlaceholder")}
+          value={rankTitle}
+          onChange={(e) => setRankTitle(e.target.value)}
+          disabled={submitting}
+        />
         <Input
           label={t("members.notes")}
           value={notes}

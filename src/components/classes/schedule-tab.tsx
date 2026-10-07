@@ -140,7 +140,14 @@ export function ScheduleTab() {
                         {s.status === "cancelled" && <Badge variant="neutral">{t("cls.status_cancelled")}</Badge>}
                         {s.status === "done" && <Badge variant="success">{t("cls.status_done")}</Badge>}
                       </span>
-                      <span className="block truncate text-[12px] font-bold">{s.className}</span>
+                      <div className="flex items-center justify-between gap-1">
+                        <span className="block truncate text-[12px] font-bold">{s.className}</span>
+                        {s.discipline && s.discipline !== "general" && (
+                          <span className="text-[9px] font-medium text-warning bg-warning/10 px-1 py-0.5 rounded">
+                            {t(`cls.disciplines.${s.discipline}`)}
+                          </span>
+                        )}
+                      </div>
                       {s.trainerName && <span className="block truncate text-[10px] text-faint">{s.trainerName}</span>}
                       {s.status === "scheduled" && (
                         <span className="mt-1 inline-flex">

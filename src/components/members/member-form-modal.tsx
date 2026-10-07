@@ -1,4 +1,5 @@
-﻿import { useEffect, useState, type FormEvent } from "react";
+import { useEffect, useRef, useState, type FormEvent } from "react";
+import { Camera, Image as ImageIcon, X } from "lucide-react";
 import { useAuth } from "@/contexts/auth-context";
 import { useT } from "@/i18n";
 import { useToast } from "@/components/ui/toast";
@@ -8,6 +9,9 @@ import { Modal } from "@/components/ui/modal";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Select } from "@/components/ui/select";
+import { Avatar } from "@/components/ui/avatar";
+import { CameraCapture } from "@/components/ui/camera-capture";
+import { compressMemberPhoto } from "@/utils/image-compressor";
 
 interface MemberFormModalProps {
   open: boolean;
@@ -32,6 +36,11 @@ export function MemberFormModal({ open, onClose, onSaved, member }: MemberFormMo
   const [emergencyContactPhone, setEmergencyContactPhone] = useState("");
   const [department, setDepartment] = useState("general");
   const [notes, setNotes] = useState("");
+  const [photoFile, setPhotoFile] = useState<File | null>(null);
+  const [photoPreview, setPhotoPreview] = useState<string | null>(null);
+  const [photoRemoved, setPhotoRemoved] = useState(false);
+  const [cameraOpen, setCameraOpen] = useState(false);
+  const fileInputRef = useRef<HTMLInputElement>(null);
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
@@ -49,6 +58,10 @@ export function MemberFormModal({ open, onClose, onSaved, member }: MemberFormMo
     setEmergencyContactPhone(member?.emergencyContactPhone ?? "");
     setDepartment(member?.department ?? "general");
     setNotes(member?.notes ?? "");
+    setPhotoFile(null);
+    setPhotoRemoved(false);
+    setCameraOpen(false);
+    setPhotoPreview(member?.photoFileId ? api.files.url(member.photoFileId) : null);
     setError(null);
   }, [open, member]);
 
@@ -75,8 +88,25 @@ export function MemberFormModal({ open, onClose, onSaved, member }: MemberFormMo
       const saved = member
         ? await api.members.update(member.id, input)
         : await api.members.create(input);
+
+      let finalMember = saved;
+      if (photoFile) {
+        try {
+          const { id: fileId } = await api.files.upload("member_photo", photoFile);
+          finalMember = await api.members.setMemberPhoto(saved.id, fileId);
+        } catch (uploadErr) {
+          console.error("Photo upload error:", uploadErr);
+        }
+      } else if (photoRemoved && member?.photoFileId) {
+        try {
+          finalMember = await api.members.removeMemberPhoto(saved.id);
+        } catch (removeErr) {
+          console.error("Photo remove error:", removeErr);
+        }
+      }
+
       toast("success", t("toast.saved"));
-      onSaved(saved);
+      onSaved(finalMember);
       onClose();
     } catch (err) {
       setError(describeError(err, t));
@@ -102,7 +132,80 @@ export function MemberFormModal({ open, onClose, onSaved, member }: MemberFormMo
         </>
       }
     >
-      <form id="member-form" onSubmit={onSubmit} noValidate className="space-y-3.5">
+      <form id="member-form" onSubmit={onSubmit} noValidate className="space-y-4">
+        {/* Photo capture & upload row */}
+        <div className="flex items-center gap-3.5 rounded-2xl border border-line bg-surface/60 p-3.5">
+          <div className="relative size-16 shrink-0 overflow-hidden rounded-2xl border border-line/60 bg-surface shadow-inner">
+            {photoPreview ? (
+              <img
+                src={photoPreview}
+                alt={fullName || "member"}
+                className="h-full w-full object-cover"
+              />
+            ) : (
+              <Avatar name={fullName || "عضو"} size="md" className="h-full w-full rounded-2xl text-base" />
+            )}
+          </div>
+          <div className="min-w-0 flex-1 space-y-1">
+            <span className="block text-xs font-bold text-subtle">{t("members.formPhoto")}</span>
+            <div className="flex flex-wrap items-center gap-2">
+              <Button
+                type="button"
+                size="sm"
+                variant="secondary"
+                onClick={() => setCameraOpen(true)}
+                disabled={submitting}
+              >
+                <Camera className="size-3.5" />
+                {t("members.formPhotoCamera")}
+              </Button>
+              <Button
+                type="button"
+                size="sm"
+                variant="ghost"
+                onClick={() => fileInputRef.current?.click()}
+                disabled={submitting}
+              >
+                <ImageIcon className="size-3.5" />
+                {t("members.photoUpload")}
+              </Button>
+              {photoPreview && (
+                <Button
+                  type="button"
+                  size="sm"
+                  variant="ghost"
+                  onClick={() => {
+                    setPhotoFile(null);
+                    setPhotoPreview(null);
+                    setPhotoRemoved(true);
+                    if (fileInputRef.current) fileInputRef.current.value = "";
+                  }}
+                  disabled={submitting}
+                  className="text-red hover:bg-red/10"
+                >
+                  <X className="size-3.5" />
+                  {t("members.photoRemove")}
+                </Button>
+              )}
+            </div>
+          </div>
+          <input
+            ref={fileInputRef}
+            type="file"
+            accept="image/jpeg,image/png,image/webp"
+            className="hidden"
+            onChange={async (e) => {
+              const f = e.target.files?.[0];
+              if (f) {
+                const compressed = await compressMemberPhoto(f, { maxDimension: 512, quality: 0.82 });
+                setPhotoFile(compressed);
+                setPhotoPreview(URL.createObjectURL(compressed));
+                setPhotoRemoved(false);
+              }
+            }}
+          />
+        </div>
+
         <div className="grid gap-3.5 sm:grid-cols-2">
           <Input
             label={t("members.formName")}
@@ -211,6 +314,19 @@ export function MemberFormModal({ open, onClose, onSaved, member }: MemberFormMo
           </p>
         )}
       </form>
+
+      {cameraOpen && (
+        <CameraCapture
+          open={cameraOpen}
+          onClose={() => setCameraOpen(false)}
+          onCapture={(file) => {
+            setPhotoFile(file);
+            setPhotoPreview(URL.createObjectURL(file));
+            setPhotoRemoved(false);
+            setCameraOpen(false);
+          }}
+        />
+      )}
     </Modal>
   );
 }

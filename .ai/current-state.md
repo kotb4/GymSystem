@@ -1,347 +1,520 @@
 # Current Development State
 
-> **WhatsApp Gateway Hardening (Chromium lockfile + Orphaned Edge Cleanup): DONE, all-verified.**
-> - **سبب خطأ «البوابة تعمل لكن تعذّر تشغيل متصفحها الداخلي»**: كانت مكتبة Puppeteer في ويندوز تعثر على ملف `lockfile` الذي يتركه متصفح Edge عند أي إغلاق مفاجئ، فتقوم بإلقاء خطأ `The browser is already running...`؛ كما أن عمليات Edge السابقة كانت تبقى عالقة في الخلفية بنظام Process Singleton مما يمنع إطلاق جلسة جديدة.
-> - **الحل المطبق (`whatsapp-gateway/wa-session.js`)**:
->   1. إضافة `lockfile` إلى مصفوفة `PROFILE_LOCK_FILES`.
->   2. إضافة دالة `killOrphanedBrowserProcesses` لإنهاء أي عمليات Edge يتيمة متعلقة بالبوابة عند الإقلاع البارد عندما لا يكون هناك اتصال نشط (`_client === null`).
->   3. تحديث اختبارات `tests/gateway-locks.test.ts` واجتيازها 4/4.
->   4. إعادة تجميع الحزمة التنفيذية `npm run build:exe` بنجاح واختبار توليد الـ QR والربط بنجاح 100%.
+> **Last Updated:** 2026-10-07  
+> **Status:** All unit & stress tests passing (696/696 tests across 67 suites). TypeScript clean (client + server, 0 errors). Full RPC consistency passed. i18n coverage 100% passed. Production executable (`dist-exe/GymSystem.exe`) freshly compiled. Date simulation strictly quarantined in Developer console. Demo sandbox quarantined in `demo-standalone/`.
 
-> **TASK-070 — آلية الاستحواذ التلقائي على السيرفر الفردي (Single Active Instance Auto-Takeover) وإلزامية بناء ملف EXE بعد كل تعديل (ADR-037): DONE, all-verified.**
-> - **الاستحواذ التلقائي على السيرفر الفردي (`server/single-instance.ts`)**: عند تشغيل `GymSystem.exe`، يقوم بفحص المنفذ 8890 والعمليات المشغلة له أو لملفات `GymSystem.exe` القديمة. يتم إرسال طلب إغلاق ناعم `POST /api/system/shutdown` للنسخة القديمة. في حال عدم الاستجابة أو كون النسخة قديمة، يتم إنهاء شجرة العمليات القديمة قسرياً (`taskkill /F /T`) لفك أي قفل على قاعدة البيانات وتحرير المنفذ. ويتم انتظار تفريغ المنفذ بالكامل (Polling) قبل فتح قاعدة البيانات وبدء السيرفر الجديد. وفي حال حدوث `EADDRINUSE` على `server.listen`، يعيد محاولة الاستحواذ بدلاً من الخروج.
-> - **مسار الإغلاق الناعم (`POST /api/system/shutdown`)**: مسار آمن مقتصر على Loopback interface فقط، يقوم بتفريغ السجلات وقاعدة البيانات والخروج النظيف بكود 0.
-> - **تحصين سكربت التجميع (`scripts/build-exe.mjs`)**: إغلاق أي مثيل لـ `GymSystem.exe` قبل البدء لمنع قفل الملفات (`EPERM`)، وتجاوز خطأ `EBUSY` لملف `runtime/node.exe` في حال تشغيل بوابة الواتساب.
-> - **تحديث قواعد المطور والمشروع (`AGENTS.md`)**: تحديث القاعدة رقم 16 لتلزم الوكيل ببناء `GymSystem.exe` تلقائياً عبر `npm run build:exe` فور إتمام أي تعديلات أو مهام، مع إبقاء الرفع على GitHub خاضعاً لموافقة المالك.
-> - **الاختبارات والبناء**: ملف اختبار جديد `tests/single-instance.test.ts` (7 اختبارات). إجمالي الاختبارات: **550/550 اختبار ناجح (48 ملف اختبار)**، فحص Typecheck 0 أخطاء. تم بناء ملف `dist-exe/GymSystem.exe` بنجاح (94.4 MB).
+---
 
-> **TASK-069 — ترقية شاملة لمنظومة التفعيل ونظام التحكم والدعم الفني للمطور (Developer Emergency Actions & License Suite): DONE, all-verified.**
-> - **إصلاح مطابقة الـ HWID**: إزالة `os.hostname()` من `license-tool.mjs` ليتطابق مع السيرفر `computeHwId` بنسبة 100%.
-> - **نظام تحكم المطور للطوارئ (Developer Action Tokens)**: تشفير وتوقيع رقمي Ed25519 لأكواد دعم فني تعمل أوفلاين دون إنترنت:
->   1. تصفير تلاعب توقيت وساعة النظام (`reset_clock`) وفك حظر `tampered` فوراً.
->   2. استعادة وتعيين كلمة مرور حساب المالك (`reset_owner`) وتصفير عداد الإغلاق الأمني `failed_attempts`.
->   3. تمديد تشغيل طوارئ مؤقت (`emergency_grace`) لعدد أيام محددة (افتراضياً 7 أيام).
->   4. إلغاء الترخيص والقفل الإجباري (`force_deactivate`).
-> - **حماية السيرفر والـ REST Endpoints**: تأمين `license.deactivate` لمنع أي تعطيل غير مصرح به، وقفل مسارات الـ REST (`/api/system/restore` / `/api/backups/create` / `/api/files`) عند انتهاء الترخيص.
-> - **واجهة التطبيق والـ UX**: إضافة بطاقة ترخيص كاملة في صفحة الإعدادات (`LicenseSettingsCard`) تتيح معاينة الـ HWID والتجديد المسبق والدعم الفني؛ زر تواصل مباشر عبر واتساب (`01288536381`) في شاشات التفعيل مع نسخ HWID؛ دعم السحب والإفلات لملفات `.lic`؛ وتعديل ظهور بانر التنبيه ليظهر فقط عند تبقي <= 30 يوماً.
-> - **تحديث الأداة الرسومية (`license-tool-gui.ps1`) وأداة الـ CLI (`license-tool.mjs`)**: أزرار مدد جاهزة (7 أيام، 30، 90، 180، 365، مدى الحياة)، أداة فحص التراخيص (`inspect`)، ومولد أكواد الدعم الفني للمطور (`action`).
-> - **التحقق والاختبارات**: 543/543 اختبار ناجح في Vitest (47 ملف اختبار، إضافة 5 اختبارات جديدة)، فحص اتساق RPC بنسبة 282/0، وفحص Typecheck للواجهة والسيرفر بنسبة 0 أخطاء.
+## 1. Quick Agent Orientation
 
-> **TASK-068 — ترقية شاملة لمنظومة الواتساب والرسائل (Migration v35 + wa.me Fallback + Anti-Ban Pacing & Cooldown + Quick Modal + Welcome & Payment): DONE, all-verified.**
-> - **Migration v35 (src/db/migrations.ts)**: توسيع قيود جدول member_messages لتشمل شرائح 'welcome', 'payment', 'custom' وحالة 'skipped_cooldown'. إضافة إعدادات التباعد العشوائي messages_pacing_min_seconds (8s)، messages_pacing_max_seconds (15s)، وفترة التهدئة messages_cooldown_days (7 أيام)، وقوالب الترحيب وإيصالات السداد الافتراضية.
-> - **وحدات الواتساب الأساسية (src/core/whatsapp.ts)**: تطبيع رقم الموبايل المصري normalizeEgyMobile، رابط إرسال مباشر buildWhatsAppDirectUrl عبر wa.me مجاني 100% وبدون متطلبات تقنية، واستبدال المتغيرات الذكية fillMessagePlaceholders لجميع الحقول ({اسم العميل}, {رقم العضوية}, {اسم الجيم}, {اسم الخطة}, {تاريخ الانتهاء}, {المبلغ}, إلخ).
-> - **الخدمات الخلفية وRPC (messages.service.ts / settings.service.ts / messages.rpc.ts)**: دوال getMemberMessageData، sendWelcomeMessage، sendPaymentMessage، حماية ذكية ضد حظر الأرقام (Anti-Ban Jitter) وتخطي الإرسال المتكرر لنفس العضو خلال فترة التهدئة (skipped_cooldown).
-> - **الواجهة والمودالات (QuickWhatsAppModal)**: مودال إرسال سريع بميزتي الإرسال عبر محرك النظام أو فتح واتساب المباشر (wa.me) مدمج في بروفايل العضو (member-profile/header.tsx) وقائمة الأعضاء (members-page.tsx) مع زر مباشر بجانب كل رقم موبايل.
-> - **صفحة الرسائل (messages-page.tsx)**: إضافة إعدادات قوالب الترحيب وإيصال الدفع وإعدادات الحماية من الحظر، مع زر الإرسال المباشر wa.me في مودال الإرسال اليدوي.
-> - **التحقق والاختبارات**: 538/538 اختبار ناجح في Vitest (47 ملف اختبار)، تدقيق RPC بنسبة 281/0، وفحص Typecheck للواجهة والسيرفر بدون أي أخطاء.
-> - **قواعد الأمان**: لا بناء لـ EXE ولا Setup installer ولا رفع GitHub push إلا بموافقة صريحة من المالك.
+If you are a new AI agent continuing this project, **read this first**:
+- **Application:** Offline-first gym management application for Windows, fully Arabic (RTL-first).
+- **Backend:** Node.js ≥24 with native `node:sqlite` (synchronous, WAL mode). Listens on `0.0.0.0:8890`. Single process owns the SQLite database.
+- **Frontend:** React 19 + TypeScript + Tailwind CSS v4, built with Vite to `dist/`, served statically by the Node backend.
+- **Single Source of Truth:** `%LOCALAPPDATA%\GymSystem\Database\gym.db`. No business data in browser localStorage/IndexedDB.
+- **Current Database Version:** Migration `v49` (`src/db/migrations.ts`). Append-only, never alter existing migrations.
+- **Current Business Services:** 48 services in `src/core/services/` (backend-only). Frontend calls via `api.*` (`POST /api/rpc`).
+- **Owner Mandate (Rule 16):** Always run `npm run build:exe` after completing tasks to produce the updated `dist-exe/GymSystem.exe`.
 
-> **TASK-067 — حقل «الخصم» قابل للكتابة في مودال إرسال الرسائل + إعادة بناء EXE: DONE.** بتفويض المالك الصريح («ايوا اعمل وبعدين جدد Exe»). على القرص (git diff = المصدر):
-> - `src/pages/messages-page.tsx`: `composeDiscount` state (95) + `composeTemplate` state (96) لالتقاط القالب الحيّ، و`fillComposeBody(tmpl, target, discount)` (141) تعوّض `{اسم العميل}`/`{رقم العضوية}`/`{الخصم}` معاً، وبعدها `openCompose` (135+) يحفظ القالب الخام ويبني الجسم عبر `fillComposeBody`، مع `onComposeDiscountChange` (150) مسمّاة تُعاد بناء الجسم عند كل تغيير لصندوق الخصم في المودال (`Input` بجانب الحقل، dir=ltr).
-> - `src/i18n/ar.ts`: مفتاحا `messages.composeDiscountLabel` / `messages.composeDiscountPlaceholder` (مطابقان لموجودَي القرص ولا خرقان لنظام i18n؛ اختبار التغطية راضٍ).
-> - **فسخ تلقائي:** قبل هذا، `{الخصم}` كان نصاً حرفياً يبقى في الجسم ويستبدله المستخدم بيده؛ الآن حقل الإدخال يحشره تلقائياً في الرسالة (مع بقاء الأشكال الثلاثة decade default بسلام).
-> - **فشل EXE EBUSY (تعلّم مهم لمن يأتي بعدي):** البناء يفشل بـ `copyfile … node.exe → dist-exe\runtime\node.exe: EBUSY` إذا كان مثيلُ GySystem قيد التشغيل **أو** أيّ عملية عالقة تمسّ مجلد `dist-exe` (مثل بوابة WhatsApp المضمّنة المنفصلة). الحل: إيقاف العملية الممسكة أولاً، ثم البناء. تحقّق دائماً بمرتين (git diff ثم إعادة تشغيل `npm run typecheck`).
-> - **اترك البقايا للجيل التالي إن رغب:** `/ai/current-state.md` >60kB قديماً ومتضخماً؛ والـ i18n `messages-page.tsx` نصُّ إصداره الأولي (templates defaults) ما يزال Years dormidorack في `messages.service.ts`.
-> 
-> **اتبع وراء:** الرجوع إلى `docs/ai/current-state.md` (تفاصيل أعمال رسائل 062-066 والفصل السابق). التوثيق الطويل (docs/ai/…) يبقى المرجع للبنية؛ هذا الملف للـ handoff فقط.
-> 	
-> **المالك — قاعدة إلزامية (لا تَخلف عنها أبداً):** لا تُبنِ/تُحدّثية EXE أو Setup installer (`npm run build:exe` / `build:installer`) ولا ترفع أيّ شيء على GitHub (`git push`) **إلا بعد موافقة صريحة بالرسالة.** التزام محلي (commit) عادي؛ الرفع للـ GitHub والبناء ممنوعان بلا إذن. (بند 2026-09-07 وتحديثه 2026-09-21 بخصوص مثيل الواجهة/رقم العضوية الدائم.) — تم تنفيذه الآن بموافقة صريحة معطاة لهذه المهمة تحديداً.
+---
 
-> **⚠️ ملك (owner) — قاعدة إلزامية من المالك:** **لا تُبنِ/تُحدّث `GymSystem.exe` / Setup installer (`npm run build:exe` / `build:installer`) ولا ترفع أي شيء على GitHub (`git push`) إلا بعد موافقة صريحة من المالك بالرسالة.** الالتزام المحلي (commit) عادي؛ الرفع للـ GitHub والبناء الـ EXE ممنوعان بدون إذن صريح. (مضافة 2026-09-07 بناءً على طلب المالك.)
+## 2. Recent Completed Milestones (TASK-094 .. TASK-142)
 
-> **TASK-066 — «القالب الافتراضي» لجميع مقاطع الرسائل (absent/birthday/expiry): DONE, all-verified.** What was builder-proven on disk (git diff = source of truth; editing/read tools lied repeatedly about this repo this session — ALWAYS re-verify via git):
-> - **`settings.service.ts`**: `SETTING_KEYS.messages{Absent,Birthday,Expiry}Template` (40-42) + validators (`slice` 3000) + `DEFAULT_{ABSENT,BIRTHDAY,EXPIRY}_TEMPLATE` Arabic consts + getters/savers (`getMessagesAbsentTemplate`/`saveMessagesAbsentTemplate`/… for all three) — previously only `birthday` existed.
-> - **`messages.service.ts`**: `MessagesConfig` gained `absentTemplate` + `expiryTemplate` beside `birthdayTemplate`; `getMessagesConfig` returns all three (defaults when unset).
-> - **`messages-page.tsx`**: state/load/save/textarea cards for all three templates; `openCompose` now pre-fills the compose body from the segment's template with `{اسم العميل}`/`{رقم العضوية}` substitution (was birthday-only).
-> - **`ar.ts`**: i18n keys `messages.config{Absent,Birthday,Expiry}Template(+Placeholder)` present.
-> - **Verification (this turn, real):** client+server typecheck clean; `npx vitest run tests/messages.test.ts tests/i18n-coverage.test.ts` 20/20; full **`npm test` 531/531 (47 files)**; `npm run build` clean.
-> - **Next:** owner to QA the absent/expiry template cards on the Messages page (Settings → الشرائح); then the saved defaults follow into compose pre-fill. **No EXE, no installer, no push (owner mandate).** Pending local commit.
+### TASK-142: بيئة العرض التجريبي المؤقتة والمعزولة لكل زائر (Ephemeral Multi-Visitor Demo Sandbox) (Done)
+- **المطلب الأساسي:**
+  - بناء وإعداد نظام ديمو سحابي عام للعملاء لا يحتفظ بالبيانات، بحيث يدخل كل عميل أو زائر في بيئة معزولة تماماً وخاصة به (Sandbox)، ولا يرى أي بيانات كتبها زائر آخر.
+  - بمجرد مغادرة العميل أو خمول الجلسة (30 دقيقة)، يتم تصفير وحذف بيئة العرض ومسح قاعدة البيانات المؤقتة من القرص تلقائياً (Auto-Reaper).
+  - توفير زر تسجيل دخول تجريبي فوري بنقرة واحدة في شاشة تسجيل الدخول (`LoginPage`).
+  - تجهيز ملفات النشر السحابي المجاني (`Dockerfile`, `render.yaml`, `.dockerignore`) مع دليل تشغيل كامل.
+- **التنفيذ بالتفصيل:**
+  1. **مدير بيئات الديمو (`server/sandbox-manager.ts`):**
+     - دالة `createSandbox()` تنشئ قاعدة بيانات SQLite مؤقتة في مجلد فريد بنظام التشغيل، تطبق عليها الميجريشنز بالكامل v1..v49، تنشئ حساب مالك تجريبي فوري، وتزرع بيانات النادي الواقعية (أعضاء، اشتراكات، مبيعات، حضور).
+     - معالجة خمول الجلسات عبر `reapExpiredSandboxes()` كل 60 ثانية لحذف الساندبوكسات الخاملة أو التي تجاوزت ساعتين ومسح ملفاتها بالكامل.
+  2. **ربط وتوجيه السيرفر (`server/index.ts` & `server/rpc/registry.ts`):**
+     - إضافة نقطة النهاية `POST /api/demo/start` لإنشاء الساندبوكس وتعيين كوكي الجلسة وإرجاع التوكن.
+     - استخراج توكن الجلسة وتوجيه استعلامات الـ RPC والمصادقة (`getActiveDbForRequest`, `currentActor`, `invokeRpc`) مباشرة إلى قاعدة الساندبوكس الخاصة بالزائر، مما يضمن العزل المطلق بين الزوار المتزامنين.
+  3. **الواجهة الأمامية (`src/pages/login-page.tsx` & `src/contexts/auth-context.tsx`):**
+     - إضافة زر "تجربة النظام الآن (نسخة تجريبية فورية معزولة)" بأيقونة Sparkles مميزة وتصميم متناسق.
+     - ربط الزر بدالة `startDemo()` للدخول المباشر إلى لوحة التحكم فور نقرة واحدة.
+  4. **ملفات النشر السحابي المجاني:**
+     - إنشاء `Dockerfile` خفيف وسريع يعتمد على Node 24 Alpine متعدد المراحل.
+     - إنشاء `render.yaml` لرفع النظام مجاناً بنقرة واحدة على Render.com.
+  5. **التحقق:**
+     - كتابة جناح اختبارات مخصص `tests/demo-sandbox.test.ts` واجتياز كافة الاختبارات الـ 4 بنجاح.
+     - اجتياز جميع اختبارات المشروع الـ 700 عبر 68 جناحاً بنسبة 100%.
+     - بناء وتحديث الملف التنفيذي `dist-exe/GymSystem.exe`.
 
-- **Last updated:** 2026-09-23 — **TASK-064 follow-up «عيد الميلاد: القالب لا يمتلئ في مودال الإرسال» (root-cause FIX + EXE rebuild).** Root cause (proven on git, single source of truth): `openCompose` in `src/pages/messages-page.tsx` always did `setBody("")`, so the saved birthday template never entered the compose modal and the app forced manual typing («اكتب ماسيدج منفصله»). **Fix applied to the working tree** (verified via `git diff`): when the compose target segment is `birthday`, the modal body is pre-filled from the config template with the actual `{اسم العميل}`→memberName and `{رقم العضوية}`→memberCode substitutions (target carries memberName/memberCode). Non-birthday segments still start empty. **NEW EXE rebuilt WITH this fix** at 2026-09-23 02:21 (94,314,496 B, 7 embedded dist assets) — the earlier 01:32 EXE was built BEFORE the fix, which is exactly why the behavior persisted. **Note about about:blank:** git grep across the whole tree finds NO `about:blank` literal, no empty `window.open`, no `start ""` anywhere in src+server+scripts — that blank window is NOT from this app's code; it comes from the external WhatsApp engine (wppconnect, installed from the WhatsApp settings UI, `%LOCALAPPDATA%\GymSystem\WhatsAppEngine\install.log`). No commit, no push (owner mandate).
-- **Last updated:** 2026-09-19 — **TASK-063 (TOCTOU in `createSubscription`) — source-fix only, no migration, done.** Overlap check + CONFLICT guard moved INSIDE the `BEGIN IMMEDIATE` transaction that performs the INSERT (`src/core/services/subscriptions.service.ts`), so a concurrent create for the same member can no longer pass the check and then race the insert (two overlapping `active` subscriptions). Error semantics unchanged. Verified: typecheck:server clean, targeted members subscription suite green, full `npm test` **529/529 (47 files)**. A faithful cross-connection TOCTOU regression harness (two file-backed connections) recorded as the follow-up — see `.ai/tasks.md` TASK-063 + ADR-036. **No commit yet, no EXE, no push** (owner mandate).
-- **Last updated:** 2026-09-19 — **TASK-061 «نظام الرسائل» (Messages module) — DONE & fully verified.** New DB migration **v34** (`member_messages` outbox: `segment` ∈ absent/birthday/expiry, status ∈ pending|sent|failed|skipped_no_phone|not_configured, `dedupe_key` UNIQUE, `body` CHECK 1..1000) + seeded settings `messages_absent_days=14` / `messages_birthday_days=7` / `messages_expiry_days=7` + permissions `messages.view` (owner/manager/reception) and `messages.send` (owner/manager only). New `src/core/services/messages.service.ts` (`listRecipients`/`getMessagesConfig` = view; `sendMessage`/`sendSegment`/`listMessageHistory` = send) computes the three segments over active members with a live subscription, department-scoped; SQL pre-filters are coarse and the exact window lives in `matchesSegment` (never-visited = maximally absent). Send reuses the existing gateway transport from `card-delivery.service.ts` (mock under `GYM_CRM_MOCK=1`; batch pacing 2–5 s); one audited outbox row per attempt. New `/messages` page (`src/pages/messages-page.tsx`) with segment tabs, recipient table, compose modal, batch send, history and thresholds, gated by `messages.view`; RPC `server/rpc/messages.rpc.ts` registered; full Arabic i18n. A real department-scope param-binding bug was found & fixed in `computeRecipients` (`.ai/tasks.md` TASK-061). Verification: typecheck client+server clean, **`npm test` 524/524 (46 files)** (new `tests/messages.test.ts` = 17), `npm run build` clean, rpc-consistency **278 entries / 0 missing**, i18n coverage green; migration asserts 33→34 bumped in `foundation.smoke`/`part4-backup`/`restore-authz`. **No commit, no EXE build, no push (owner mandate).** Not exercised live on the gym PC (needs a paired gateway + real numbers); compose modal has an empty body/placeholder only (no template pre-fill). Full record: `.ai/tasks.md` TASK-061, ADR-034. **UPDATE 2026-09-19: owner approved the push — committed TASK-060 `aaff187`, TASK-061 `7e9cccd`, docs `b05c86f`; `git push origin main` succeeded (`41b8070..b05c86f`). EXE build still not approved/performed.**
-- **Last updated:** 2026-09-18 — TASK-060 (owner-selected Path 2): **gateway cold-start hardening done.** Repository-only change in `whatsapp-gateway/wa-session.js`: a gateway killed mid-launch leaves Chromium singleton/devtools litter (`DevToolsActivePort`/`SingletonLock`/`SingletonSocket`/`SingletonCookie`) in the wpp profile that forces "The browser is already running for …/wpp-profile" on every later cold start (this exact bug cost two outage cycles on this machine). Now: `clearStaleLocks()` runs before EVERY cold launch (guarded by a live-browser process check — never deletes a live browser's locks), and on a lock-class launch error the gateway force-cleans and retries `wpp.create` exactly once. New `tests/gateway-locks.test.ts` (4). Verification: full `npm test` **507/507 (45 files)**, typecheck ×2 clean, `node --check` clean, and a **live cold-start integration proof** on isolated port 8893 (planted a real stale `DevToolsActivePort` in a throwaway profile → gateway log shows `removed stale browser lock` → browser launched → `/pair 200`; probe cleaned, nothing left running). Ports 8890/8891 (owner's running `GymSystem.exe` PID 3504 + its gateway PID 9860) untouched. **No DB migration. No commit, no EXE build, no push** (owner mandate) — the packaged `dist-exe/` gateway picks up this fix on a future approval-gated `build:exe`. Full record: `.ai/tasks.md` TASK-060. See TASK-059 record below.
-- **Last updated:** 2026-09-18 — TASK-059 handoff: **owner-approved EXE rebuild shipped, still no push.** See `.ai/tasks.md` TASK-059 record (root cause: owner relaunched the desktop app → stale pre-fix EXE gateway respawned on 8891 → QR sends 502 again; fixed by rebuilding `GymSystem.exe` with the repo's fixed wppconnect gateway embedded: 40 s cold-launch pairing wait + 45 s send timeout). Verified: `npm run build` clean → `npm run build:exe` clean (new `dist-exe/GymSystem.exe`, 89.9 MB); built `dist-exe/gateway/wa-send.js` contains `waitForPairing(client, 40000)`; engine v1.0.0 installed at `%LOCALAPPDATA%\GySystem\WhatsAppEngine`; paired session profile present (no QR re-scan needed); ports 8890/8891 now FREE (owner should relaunch the new EXE which autospawns the fixed gateway). **No installer build (not approved), no commit, no EXE re-verify beyond health, no push.** ACTIVE + prior records below.
-- **Last updated (superseded):** 2026-09-18 — purge-cascade audit follow-up (done): verified `purgeProduct` (refuses on any sale/return line → `errors.store.productSold`; deletes `stock_movements`→`products` in a txn), `purgeEmployee` (salaries + their financial_ledger refs deleted before `employees`, in a txn), `purgeSubscription` (NULLs class_bookings/attendance refs first to preserve history per ADR-008, then payments→refunds→ledger→freezes→subscription). **The FK-cascade gap that broke member purge was unique to `members`** (only it is referenced by the newer `card_deliveries`/referrals/leads/trials/loyalty tables); no code change needed. **No commit, no EXE, no push (owner mandate).** Repository + gateway both healthy (`/api/ping` ok; gateway 8891 `paired:true`).
-- **TASK-058 follow-up — «فشل إرسال 1 رسالة — أعد المحاولة من صفحة الكروت» (done, this session):** the Cards-page WhatsApp card-QR send was failing again behind the previous purge fix. **Root cause: the LIVE WhatsApp gateway on 8891 was a stale pre-TASK-054 process** — the packaged `dist-exe\gateway` Playwright/DOM-scraping build was still paired on 8891 (process from the running desktop EXE flow), NOT the repo's wppconnect gateway. The stale build's DOM-scrape send path could not reliably re-navigate WhatsApp Web after cold launches → gateway returned `502 HTTP gateway error, errcode 502` after every ~17–22 s browser relaunch → `card_deliveries` rows flip to `failed` → toast «فشل إرسال 1 رسالة». (Timeline proof in the live gateway log: a fresh repo-gateway window at 01:11–01:17Z was correctly paired via owner's QR scan at 01:11:59 and sent 2 QR messages OK at 01:13:22 + 01:16:59; then at 01:32:48 an OLD gateway repelled onto 8891 and all sends broke again.)
-- **Fix (two code changes + one runtime swap):**
-  1. **`whatsapp-gateway/wa-send.js`:** cold-launch pairing wait raised 20 s → **40 s** (fresh browser launches routinely exceed 20 s before `inChat`; bumping eliminates the false «not paired» 502).
-  2. **`src/core/services/card-delivery.service.ts` (`whatsappTransport`):** the HTTP send timeout was a hard 10 s — too tight for a cold gateway launch → the server aborted a send that the gateway was still completing, marking the card row `failed` even though the message later delivered. Raised to **45 s** and, on non-OK responses, now surfaces the gateway's own `{error}` detail (`HTTP <status> — <detail>`) instead of a bare `HTTP 502`.
-  3. **Live swap (no EXE build, no commit yet):** killed stale dist-exe gateway (PID 6956) + its Edge processes; started the **repo gateway** (`node whatsapp-gateway/index.js`, new PID) on 8891 → `/health` now `engineReady:true, browserReady:true, paired:true` with the **same already-paired session** (no re-scan needed — the owner's 01:11:59 QR scan persists in `wpp-profile`). Backend restarted too (new PID on real DB, `/api/ping` ok).
-- **Verification:** typecheck server × 2 clean; `npm test` **503/503 (44 files)**; syntax-checked all three gateway JS files; build clean. **No DB migration. No commit, no EXE build, no push (owner mandate).** Owner should now retry from the Cards page: أعد المحاولة من صفحة الكروت — the gateway is warm+paired so the first send should succeed; you do NOT need to re-scan the QR.
-- **Known limitation (still owner-decision):** the packaged desktop flow (`GymSystem.exe` at `dist-exe\`) still bundles the OLD root-causing gateway (and old frontend). While the DEV flow (npm start / dev.bat, which is what's running now) uses the fixed repo gateway, a future `npm run build:exe` + `build:installer` (owner approval required per mandate) would be needed to make the EXE use the new wppconnect gateway.
-- **Current objective (TASK-058, done — member purge «حدث خطأ غير متوقع» fixed):** the owner hit «حدث خطأ غير متوقع» when purging a trashed member from the trash. Root cause: `purgeMember` FK-cascade gaps — `card_deliveries.card_id REFERENCES cards(id)` made `DELETE FROM cards` (which ran BEFORE the card_deliveries delete) fail the instant a member had any queued/sent card-QR row, and newer `REFERENCES members(id)` tables (referrals/referral_rewards, loyalty_transactions/loyalty_credit_transactions, leads.converted_member_id, trials.member_id/converted_member_id) were never in the cascade at all → FK error → transaction rollback → `errors.unexpected`. **Fix in `src/core/services/members.service.ts`:** card_deliveries delete moved before cards; added referral/referral_rewards deletes, leads/trials member-ref NULLs, loyalty deletes — all FK-safe before `DELETE FROM members`. New coverage test in `tests/members.subscriptions.test.ts`. **Verification: targeted 25/25; `npm test` 503/503 (44 files); typecheck ×2 clean; build clean. No DB migration. No commit yet. No EXE build, no push (owner mandate).** Live backend restarted with the fix: old PID 10816 killed, new `node dist-server/index.cjs` (PID 14040) on the real DB — `/api/ping` ok, boot log clean, gateway 8891 left running. Owner should retest: المحذوفات → «حذف نهائي» on a member who had a card QR sent. Suggested (not done): audit subscription/store/employee/cash purge cascades against the same newer tables.
-- **Prior (TASK-057, done — in-process WhatsApp module removed):** Settings no longer shows a QR; WhatsApp card = enable switch + gateway URL + single «ربط الجهاز بالواتساب» (opens pairing modal) + «تثبيت محرك الواتساب». Deleted `server/whatsapp/*`, `server/rpc/whatsapp.rpc.ts`, `src/api/whatsapp.ts`, 2 test files; edited `server/index.ts`, `server/rpc/registry.ts`, `src/api/index.ts` (gateway health/pair kept), `src/core/permissions.ts` (perms `whatsapp.view`/`manage` removed), `src/i18n/ar.ts`, `settings/whatsapp-settings-card.tsx`. TASK-057 + TASK-058 + TASK-056 (card resend) are all uncommitted.
-- **Previous objective (TASK-054 follow-up — user bug «حدث خطأ غير متوقع» when pressing «تثبيت محرك الواتساب»):** **ROOT CAUSE FOUND & FIXED (stale running backend, not code).** The user's running app was an OLD build (Sep-7 EXE, `server.log` 2026-09-16T12:49Z "serving frontend from embedded bundle"): its backend has NO `/api/system/gateway/install-engine` route → unknown route falls to `server/index.ts:637-640` returning `404 {messageKey:"errors.unexpected"}` → frontend `describeError` renders «حدث خطأ غير متوقع». The engine-install code itself WORKS: verified live twice on fresh temp data dirs + current `dist-server` — `POST /api/system/gateway/install-engine` installed `@wppconnect-team/wppconnect@2.3.3` (251 packages, `installed:true`, `lastError:null`); route exists in current bundle (`rg install-engine dist-server/index.cjs` = 1) and returns **401** (session-gated, not 404) on the freshly-started server. Also confirmed: login body is `{input:{username,password}}`; `%LOCALAPPDATA%\GymSystem` has no `WhatsAppEngine\` dir yet (route never ran on the live machine); EXE's `runtime\` has `node.exe` but **NO `npm`** (packaged mode resolves npm from `runtime\node.exe runtime\npm\bin\npm-cli.js` — old EXEs lack it). **FIX APPLIED HERE:** all stale node processes killed; fresh `node dist-server/index.cjs` started (PID from Start-Process) on **real data dir** `C:\Users\KOTB\AppData\Local\GymSystem` (no seed env) at 2026-09-18T01:06Z — logs show `license state: active`, DB ready, listening 8890, `serving frontend from disk: D:\Systems\Gym\dist`, `/api/ping` → 200 `{ok:true}`, install-engine unauth → 401. The owner should now re-test pressing «تثبيت محرك الواتساب» in Settings — engine will install to `%LOCALAPPDATA%\GymSystem\WhatsAppEngine` (first install ~1 min, button shows progress, `engine-status` polls). **REMAINING (owner decision):** the DESKTOP/EXE flow still runs the old Sep-7 EXE (no install route, no runtime\npm, old embedded frontend) — to use TASK-054 in the packaged app we need owner approval to rebuild (`npm run build:exe` + `npm run build:installer`) per the standing mandate; dev flow (`npm run dev` / `dev:server` / `dev.bat` / `npm start`) already works with the current build. **No code change needed for the fix (validation only); no DB migration; NO commit made this session.**
-- **Previous objective (TASK-054, done — wppconnect overhaul):** replaced `whatsapp-web.js` + playwright with `@wppconnect-team/wppconnect@2.3.3` across the entire stack. Gateway has zero npm deps (engine loaded at runtime from data dir via `createRequire`). In-process module (`server/whatsapp/*`) now uses the same engine. New `server/whatsapp-engine.ts` provides in-app engine install (`POST /api/system/gateway/install-engine` + status poll). Also restored missing `POST /api/system/ensure-whatsapp-gateway` route + `autospawnWhatsappGateway()` at boot. **No DB migration. No EXE build, no push (owner mandate).** Verification: typecheck ×2, 513/513 tests, build clean, rpc-consistency 280/0 missing.
-- **Previous objective (TASK-053, done — the send path was orphaned; fixed):** the Cards-page QR send failed because `card-delivery.service.ts` needs `whatsapp_enabled=1` + `whatsapp_api_url` (gateway on 8891) and the ONLY UI that wrote them was deleted in `4f3ba15` (TASK-051) — contradicting ADR-029/030, which document that toggle/«تشغيل البوابة الآن»/pairing modal as product behaviour. **Fix:** `src/components/settings/whatsapp-settings-card.tsx` now has a **gateway section** next to the in-process session block (enable switch → writes `whatsapp_enabled` + default URL then calls `api.system.ensureWhatsAppGateway()`; `ltr` URL field + Save; «تشغيل البوابة الآن»; «ربط الجهاز بالواتساب» → the previously orphaned `WhatsAppPairModal`), all gated by the same permission each endpoint needs; +1 i18n key (`settings.whatsappGatewayTitle`). **Security fix in the same pass:** `server/rpc/whatsapp.rpc.ts` enforced NO permission (any logged-in role could connect/logout the gym's WhatsApp and send member QRs) — now actor-aware with `whatsapp.view` on `status`/`getQr` and `whatsapp.manage` on connect/reconnect/logout/sendMembershipQr/hasAutoSent (matches the catalogue: MANAGER both, RECEPTION view-only, TRAINER none). **Test reliability:** `tests/license.test.ts` had a 1 ms boundary race (`Date.now()+1` → 5 s) and boot/restore suites need >5 s under parallel load → `testTimeout: 20000` in `vite.config.ts`. New `tests/whatsapp-rpc-authz.test.ts` (5). **Verification:** typecheck ×2 exit 0; `npm test` **513/513 (46 files)**; `npm run build` exit 0; `check-rpc-consistency.cjs` 280/0 missing; UTF-8/U+FFFD scan 0. **No DB migration. No EXE build, no push (owner mandate).** **Next (owner, manual):** `npm run dev:server` → Settings → واتساب → enable «تفعيل الإرسال عبر واتساب» (writes the default URL + starts the gateway) → pair the device → send a member QR from the Cards page. I did NOT run a live smoke on purpose: boot calls `getWhatsAppService().init()` which launches the WhatsApp Web browser session (would open a window on your desktop), and `e2e-smoke.ps1` force-kills all node processes.
-- **Previous objective (TASK-052, done — three rounds, live-proven): WhatsApp in-process module upgraded to whatsapp-web.js 1.34.7; QR screen reached.** Round 1 (commit `94e8cce`): false `AUTH_FAILURE` fixed, i18n keys → full flattened paths, card shows lastError detail, tests isolated. Round 2 (commit `98b91bb`): bundle externals (`external: ["whatsapp-web.js"]`), ESM-namespace normalization (`mod?.default ?? mod`), `--remote-allow-origins=*` (puppeteer-13 + Chromium-111+ CDP), **modern UA override in BOTH the launch arg and the `userAgent` client option** (the 2022 default `Chrome/101` makes today's WhatsApp Web never finish loading), persist() guarded. Round 3 (this commit): **upgraded whatsapp-web.js 1.23.0 → 1.34.7** (owner pointed at the active wwebjs org repo) → puppeteer 13.7.0 → 24.38.0; the manifest-regex persist crash is **fixed upstream** → monkey-patch + d.ts deep declaration removed; kept the UA override (1.34.7's default is STILL Chrome/101), remote-allow-origins, Edge resolution, ERROR semantics, externals. **Live proof on the new stack: the REAL `WhatsAppClient.connect()` reached `QR_REQUIRED` (QR 6822 chars) via esbuild bundle + Edge headless.** Verification: typecheck ×2, targeted 9/9, `npm test` **508/508 (45 files)**, `npm run build` clean. Files: `package.json`/`package-lock.json`, `server/whatsapp/client.ts`, `server/whatsapp/whatsapp-web.d.ts` (+ round-2 files). **Known:** scanning → READY needs a human (bot-detection ceiling stands, same as TASK-050); SEA/packaged EXE cannot require externals → in-process module is repo/dev-only, the gateway stays the packaged-mode path; WhatsApp must be reachable at connect time; stale `Config/WhatsAppWebCache` dir is unused leftover.
-- **Previous objective (TASK-051, done): WhatsApp settings card — i18n + encoding repair.** User reported «فيه مشكلة في نظام الواتس». Three defects found & fixed: (1) `whatsapp-settings-card.tsx` used non-existent dotted keys (`whatsapp.statusLabel/connectButton/reconnectButton/logoutButton/refreshQr/...`) while `ar.ts` stores them in the nested `whatsapp:` section with different names (`status/connect/reconnect/logout/qrRefresh/ready/...`) — the settings UI rendered raw key strings and `tests/i18n-coverage.test.ts` failed. Component aligned to the existing dictionary keys; only 3 genuinely-missing keys added (`whatsapp.reconnectSuccess/logoutSuccess/qrImageAlt`); 4 dead flat keys removed from the wrong section. (2) A previous PowerShell `Set-Content` edit had mangled encoding: 24 U+FFFD chars in `settings-page.tsx` (three `placeholder="••••••••"`) and 3 in `server/index.ts` (em-dashes) — restored; **lesson: never edit repo files with `Set-Content`, use the editor tool.** (3) Scratch tmp files removed. **No DB migration. No EXE build, no push (owner mandate).** Verification: i18n coverage 3/3; full `npm test` 506/506 (45 files); typecheck ×2 clean; `npm run build` clean; rpc-consistency 280/0-missing. TASK-051 was committed as `4f3ba15` (local only).
-- **Previous objective (TASK-050 v3, verified working):** unsaved-number send — the `web.whatsapp.com/send?phone=...` deep link lands on a "WhatsApp Business" interstitial for unsaved numbers, and the search box can't find unsaved contacts. Rewrote `openChat` with a 2-phase strategy (deep-link + dismiss interstitial, fall back to "New Chat" button flow). Also fixed `wa-send.js` referencing undefined `input` (should be `composer`). **Live-verified: sent a real test message to 01207773457 → `{"ok":true}`** (gateway log: `sent to 201207773457`, `POST /send -> 200`). Deployed to running gateway + `dist-exe\gateway\` — **no EXE build, no push** (owner mandate). User should retry card sends from the cards page. Ceiling stands: WA Web renames happen; durable options (Meta Cloud API / print+wa.me) remain deferred.
-- **Previous objective (TASK-050 v2):** first quick-fix chains were proven wrong against the live DOM — WhatsApp Web 2026 has **no `[contenteditable]` at all**: search = `input[type="text"][data-tab="3"]`, composer = `div[data-tab="10"][aria-placeholder]`, file-input exists. Rewrote gateway chains from a live profile probe (search/composer/typing via Ctrl+A+type) + added pair-retry so cold start doesn't false-fail «not paired». Probe-verified (search=1, composer=1, file=1). Committed `c2addb1` — **no EXE build, no push** (owner mandate).
-- **What changed (TASK-046):**
-  - **`server/gateway-spawn.ts` (new):** shared idempotent spawner — `resolveGatewayLaunch(packaged)` (packaged → `{appDir}\runtime\node.exe` + `{appDir}\gateway\index.js`; dev → `process.execPath` + repo gateway), `isLoopbackUrl()` (http/https on 127.0.0.1/localhost/::1 only — **SSRF guard** for the user-editable URL), `probeGateway(url, timeoutMs)`, `ensureGateway(url, {packaged, log?, probe?, spawnFn?, pollMs?, startTimeoutMs?})` → `{running, alreadyRunning, error?: invalid_url|not_found|start_timeout}`. Detached spawn, `stdio:ignore`, `windowsHide:true`, `unref()`; probe/spawnFn injectable for tests.
-  - **`server/index.ts`:** `autospawnWhatsappGateway()` refactored onto `ensureGateway` (probe-then-spawn, logs `already running|autostarted|failed`); new `POST /api/system/ensure-whatsapp-gateway` route (after the `/api/rpc` block) — `requirePermission(actor, "settings.edit")`, writes default URL via `writeSettingInternalIfMissing`, `GYM_CRM_MOCK=1` → `{ok:true, mock:true}`, else `ensureGateway` → ALWAYS logs the outcome (`whatsapp gateway ensure: already running | started | failed: <err>`) → success `{ok:true, result}`; failure throws per-cause `errValidation` (`errors.whatsappGatewayNotFound` / `errors.whatsappGatewayInvalidUrl` / `errors.whatsappGatewayTimeout`) rendered by the existing `errorBody`.
-  - **Frontend:** `src/api/index.ts` `api.system.ensureWhatsAppGateway()` (postJson, type = the UNWRAPPED result `{running, alreadyRunning, mock?}` — `request()` unwraps `{ok, result}` and throws translatable AppErrors); `settings-page.tsx` WhatsApp card — «تشغيل البوابة الآن» button (spinner while starting, success via `res.running`, failures via `describeError`) + auto-start when the enable toggle is flipped (`onEnabled`); `whatsapp-pair-modal.tsx` — down-state offers the start button instead of the restart message. i18n: `whatsappGatewayDown` reworded («البوابة غير مشغلة — اضغط «تشغيل البوابة» للبدء») + `whatsappStartButton`/`whatsappStarting`/`whatsappRunning` (+3 `errors.whatsappGateway*` keys; misleading `settings.whatsappStartFailed` removed).
-  - **Installer now builds:** `scripts/build-installer.mjs` (new) auto-locates ISCC (`ISCC_PATH` → `%LOCALAPPDATA%\Programs\Inno Setup 6\ISCC.exe` → ProgramFiles(x86) → `iscc`), `package.json` `build:installer` → `node scripts/build-installer.mjs`; verified compile.
-- **Verification (TASK-046):** `npm run typecheck` + `typecheck:server` clean; `node scripts/check-rpc-consistency.cjs` clean; full `npm test` **499/499 (44 files)** on the final clean run (44th file = new `tests/gateway-spawn.test.ts` ×7; two earlier parallel-suite runs flaked on pre-existing time-boundary tests `license.test.ts` boundary + `restore-authz` first-run — both pass solo + together, unrelated to this change); `npm run build` clean; `npm run build:exe` → 94,266,368-byte EXE; `npm run build:installer` → 46.8 MB Setup. Live ensure-route contract probe (follow-up session, temp DB + port 8893): success `{ok:true, result:{running:true, alreadyRunning:true}}` + log line; bad URL → 400 `errors.whatsappGatewayInvalidUrl`; dead loopback → 12.2 s → `errors.whatsappGatewayTimeout` (all three logged).
-- **Clean-install smoke (real Setup.exe, temp dir):** silent install → correct layout (`GymSystem.exe` + `runtime\node.exe` + `gateway\` + `unins000`); booted installed exe from **empty cwd** with fresh `GYMSYSTEM_DATA_DIR` → `/api/ping` ok, `/` 200 (embedded dist); **ensure route**: 401 without session, then owner setup + login → `{ok:true, running:true, alreadyRunning:false}` and gateway `/health` `{ok:true, service:"whatsapp-gateway"}` on 8891; second ensure call → `alreadyRunning:true` (idempotent); enabled `whatsapp_enabled` via RPC, **killed app + gateway, relaunched → `whatsapp gateway autostarted` logged, `/health` ok** (autospawn works without restart); double-launch guard → second instance exits 0 in 593 ms, 1 process remains; uninstall → app dir removed, data dir + DB preserved, HKCU uninstall key removed. Temp dir cleaned.
-- **Files changed (TASK-046 + follow-up fix):** created `server/gateway-spawn.ts`, `scripts/build-installer.mjs`, `tests/gateway-spawn.test.ts`, `dist-exe\GymSystem-Setup-0.1.0.exe` (built, gitignored); modified `server/index.ts`, `server/gateway-spawn.ts` (timeout default), `src/api/index.ts`, `src/pages/settings-page.tsx`, `src/components/settings/whatsapp-pair-modal.tsx`, `src/i18n/ar.ts`, `package.json`, `scripts/installer.iss` (comment), `AGENTS.md`, `docs/ai/roadmap.md`, `.ai/{tasks,decisions,current-state}.md`. No DB migration (none needed).
-- **Commits (TASK-046):** code committed+pushed as `8932013` (feat(gateway): start WhatsApp gateway on demand + build verified Setup.exe, ADR-030) + `92b987a` (docs(ai) record). The follow-up fix (feedback contract + per-cause errors + 12 s timeout + ADR-030 body + roadmap sync) committed+pushed as `44810b3`.
-- **Previous objective (delivered immediately before):** **TASK-045 — single-file desktop EXE + Setup installer + integrated WhatsApp gateway (ADR-029)** — shipped and pushed (`4652a4d` + `c25f307`); full record in `.ai/tasks.md`. TASK-046 closes its remaining blocker (ISCC found) and its UX gap (gateway now starts without restart).
-- **What changed (TASK-044):**
-  - **DB migration v33 (non-destructive):** `cards.kind` (physical/virtual, backfilled by member-code match) + `card_deliveries` (dedupe `card:<cardId>:v1`, status pending|sent|failed|skipped_no_phone|not_configured, member/card/barcode/name/phone snapshots, image_hash, error, sent_at, created_by) + indexes; backfill 1 virtual card per member; `cards.send` grant added to owner/manager/reception; `crm.send`/`crm.templates` permission + grants deleted. Migration count 32→33 (asserts bumped in `foundation.smoke`, `part4-backup`, `restore-authz`).
-  - **Service:** `ensureVirtualCard` in `createMember`+reception; `card-delivery.service.ts` (queue with department scope + idempotent dedupe, batched send with QR render via `qrcode`, 2–5 s pacing skipped in `GYM_CRM_MOCK=1`, 10 s HTTP timeout, sent/failed/skipped_no_phone/not_configured); `cards.service` kind filter + `memberPhone` join. RPCs: `cards.queueCardDelivery/sendPendingCardDeliveries/listCardDeliveries/countPendingCardDeliveries`.
-  - **Gateway:** new `whatsapp-gateway/` (own package.json + playwright): `http://127.0.0.1:8891` with `/health`, `/pair` (QR page + API), `/send {phone,message,media}`; persistent wa-profile under `%LOCALAPPDATA%\GymSystem\WhatAppGateway`; msedge channel default, graceful `{ok:false}` never throws; `numbers.js` EG-mobile-only normalization (tested). Setup: `scripts/setup-whatsapp-gateway.ps1` / `npm run setup-whatsapp-gateway`; start: `scripts/windows/start-whatsapp-gateway.bat`.
-  - **Frontend:** `card-qr-delivery-modal.tsx` shared component (QR image + download + send-now with toasts) wired into member-profile Cards card + `/cards` page; `/cards` got a kind filter + «إرسال المعلقة (N)» batch button; Settings general tab got a WhatsApp card (`whatsapp_enabled` + URL validator); `permissions-tab.tsx` الرسائل group removed, `cards.send` added to الكروت; CRM service/rpc/audit-actions deleted, `CommsTab` + dashboard `pendingCrmMessages` removed, `/crm` page = leads/trials only, `crm.send`/`crm.templates` permission + i18n removed.
-  - **i18n (ar.ts):** `cards.delivery*`/`deliveryStatus.*`/`qr*`/`send*`/`kindFilter*`, `perms.cards.send`, `settings.whatsapp{Title,Enabled,ApiUrl,ApiUrlHint,On,Off}`, `crmPage` rewording. i18n coverage 3/3.
-- **Verification (TASK-044):** new tests `cards-virtual.test.ts` (6), `card-delivery.test.ts` (8), `whatsapp-numbers.test.ts` (4); rewritten `tests/reception.test.ts`; `tests/backup-restore-integration.test.ts` given explicit **30000** ms timeout (was flaking ~500 ms over the 5 s default; passes 2778 ms). Full `npm test` **492/492 (43 files)**; `npm run typecheck` + `npm run typecheck:server` clean; `node scripts/check-rpc-consistency.cjs` clean (273 entries, no missing client calls); `npm run build` clean (dist + dist-server); `npm run e2e` ALL CHECKS PASSED (schema v33); `scripts/e2e-audit.ps1` updated (old CRM checks → card-delivery flow) **67/67 ALL CHECKS PASSED**.
-- **Files changed (TASK-044):** migration v33; created `src/core/services/card-delivery.service.ts`, `src/core/qr.ts`, `src/components/cards/card-qr-delivery-modal.tsx`, `whatsapp-gateway/{index,http,wa-session,wa-send,numbers,config,log,standalone-bin.mjs,package.json}.js`, `scripts/setup-whatsapp-gateway.ps1`, `scripts/windows/start-whatsapp-gateway.bat`, `tests/{cards-virtual,card-delivery,whatsapp-numbers}.test.ts`; deleted crm service/rpc/tests + `src/pages/member-profile/components/contacts/comms-tab.tsx`; modified cards/members/reception services, `server/rpc/cards.rpc.ts`, `src/api/index.ts`, `src/i18n/ar.ts`, `src/pages/{cards-page,settings-page}.tsx`, `src/pages/member-profile/tabs/membership-tab.tsx`, routes/nav-routes/permissions-tab/dashboard + dashboard.service + audit-actions + permissions.ts, `scripts/e2e-audit.ps1`, `tests/reception.test.ts` (+3 migration asserts).
-- **Commits (TASK-044):** per convention — main commit (code + tasks.md + decisions.md ADR-028) then `docs(ai)` commit (current-state hash), push `origin/main`.
-- **Previous objective (delivered immediately before):** **TASK-043 — performance hardening** (measured 1k/10k, pagination for report lists, index-friendly per-day counts, streamed restore/download; no migration; full record above in `.ai/tasks.md`). LEAST RECENT delivered before that: TASK-042 (backup encryption + scheduler + retention, ADR-026).
-- **Next step (queued):** none active — TASK-044 delivered. Pending candidates (`discovered-followup`): (a) verify WhatsApp sending with a real WhatsApp account + gateway pairing on the gym PC (needs humana-in-the-loop, not automated); (b) decide whether physical-card QR printing is wanted later (QR content already = barcode; delivery modal works for any assigned card); (c) optionally add a `listTrashedMembers` LIMIT guard (TASK-043 leftover); (d) monitor the `backup-restore-integration` 30 s timeout for regressions.
+### TASK-141: إعادة تصميم وتطوير القائمة الجانبية وإبراز التوقيع بالكامل (Sidebar UI Overhaul & Signature Display) (Done)
+- **المطلب الأساسي:**
+  - إزالة أيقونة/لوجو الدامبل من ترويسة القائمة الجانبية.
+  - إظهار التوقيع والاسم كاملاً (`Yassen Mohamed Kotb | 01288536381`) دون أي اقتطاع أو إخفاء (بدون `truncate`) مع تنسيق خطي فخم ومريح.
+  - كتابة السطر التوضيحي بالإنجليزية: `Gym Management System`.
+  - دعم طي وفتح المجموعات (Accordion groups) مع حفظ التفضيلات محلياً.
+- **التنفيذ بالتفصيل (`src/components/layout/sidebar.tsx`):**
+  - ترويسة القائمة (Desktop و Mobile): إزالة أيقونة الدامبل، وتوسيع مساحة العنوان ليعرض التوقيع كاملاً بخط عريض وأنيق مع سطر الوصف بالإنجليزية (`Gym Management System`).
+- **التحقق:**
+  - TypeScript: خالٍ تماماً من الأخطاء (0 errors).
+  - بناء الملف التنفيذي `dist-exe/GymSystem.exe` بنجاح كامل.
 
-## What was most recently completed (handoff context)
-  - **Encrypted v2 `.gymbak2`:** `server/backup-crypto.ts` + `server/dpapi.ts` — AES-256-GCM container wrapping the ENTIRE v1 composite, scrypt-derived master key (salt + KDF params in the header so the password alone restores on another machine), key DPAPI-wrapped at `Config/backup-key.json` (`GYMSYSTEM_SECRET_STORE=file` seam for tests). Wrong password AND tampered ciphertext both fail opaquely (`errors.backupWrongPassword`); truncated → `backupInvalidFile`/`backupArchiveCorrupt`; no key → `backupKeyRequired`. Post-create verification decrypts and integrity-probes (`formatVersion:2`, `encrypted:true`). `clearBackupEncryption` removes the key → plain v1.
-  - **Auto scheduler:** `server/backup-scheduler.ts` — 60 s unref'd singleton interval, single-flight, idempotent start/stop, `SYSTEM_ACTOR` (`userId:"scheduler"`) written FK-null, `startBackupScheduler()` called at boot in `server/index.ts`. Frontend boot hook removed; the server is the sole scheduler. Guards: maintenance/hard-lock/no-owner/auto-disabled/interval-0. Fixed a UTC-`Z` timestamp bug that made `hoursSince` NaN → always-due.
-  - **Retention & location:** settings via migration v31 (`backup_auto_enabled`=1, `backup_location`='', `backup_retention_policy`={7,8,24}, `backup_encryption_enabled`=0, `backup_password_set`=0); `KeySpec.allowEmpty` added so clearing the location value works; `isoWeekKey`/`selectBackupsToKeep`/`pruneBackupsByPolicy` (per-day/ISO-week/month + safety cap) in `src/core/services/backup.service.ts`. Migration v32 rebuilds `backups_log` widening the `kind` CHECK with `pre_purge` (creates-if-missing for minimal upgrade fixtures, e.g. `tests/migration-upgrade.test.ts`).
-  - **Restore with password:** `POST /api/system/restore` reads `X-Backup-Password`; `importDatabaseBytes` decrypts v2 first (key ring auto-unlock without a password). Pre-purge snapshot before member purge (`members-page.tsx`, best-effort).
-  - **UI:** `BackupSettingsCard` in `settings-page.tsx` — auto-backup toggle, location + retention policy drafts, encryption set/clear password forms via `api.backup.{securityStatus,setPassword,clearEncryption}`. i18n `settings.backup.*` + `errors.backup.*` + `health.kind_pre_purge`.
-  - **Filename collision fix:** `buildBackupFileName` now ms-precision (`gympro-backup-YYYYMMDD-HHmmssSSS.gymbak`) — a same-second collision could silently overwrite a snapshot (found via a load-timing flake in the full suite).
-- **Verification (TASK-042):** new `tests/backup-encryption.test.ts` (4, incl. wrong-password/mutation/truncation + clear-reverts), `tests/backup-retention.test.ts` (8), `tests/backup-scheduler.test.ts` (5); migration-version asserts 30→32 in `foundation.smoke`/`restore-authz`/`part4-backup`; full `npm test` **481/481 (40 files)**; `npm run typecheck:server` + `npm run typecheck` clean; `node scripts/check-rpc-consistency.cjs` clean (276 entries; info-only listing includes `backup.getSecurityStatus`/`settings.getBackupConfig` — statically undetected but present); `npm run build` clean; `npm run e2e` PASS (scheduler auto-backup fires on boot).
-- **Files changed (TASK-042):** created `server/dpapi.ts`, `server/backup-crypto.ts`, `server/backup-key.ts`, `server/backup-scheduler.ts`, `tests/backup-encryption.test.ts`, `tests/backup-retention.test.ts`, `tests/backup-scheduler.test.ts`; modified `src/core/services/backup.service.ts` (kinds/pre_purge/encrypted/tiered prune/isoWeekKey), `src/core/services/settings.service.ts` (SETTING_KEYS/SPECS/allowEmpty/BackupConfig/readBackupRuntimeConfig), `src/core/audit-actions.ts`, `src/db/migrations.ts` (v31+v32), `server/backups.ts` (resolveSnapshotDir honoring backup_location, encrypt/verify/restore flow, `_setSnapshotDirOverrideForTest`), `server/rpc/backup.rpc.ts` (+getSecurityStatus/setPassword/clearEncryption/createPrePurgeSnapshot), `server/index.ts` (scheduler boot + X-Backup-Password), `server/license/session.ts` (READONLY_ALLOWLIST + backup.getSecurityStatus), `src/api/client.ts` (postRaw headers), `src/api/index.ts` (backupApi/settingsApi), `src/pages/settings-page.tsx` (BackupSettingsCard), `src/pages/members-page.tsx` (pre-purge snapshot), `src/hooks/use-boot-maintenance.ts` (plans sweep only), `src/i18n/ar.ts`; tests updated `part4-backup` (migration 31→32 + ms filename), `foundation.smoke`, `restore-authz`.
-- **Commits (TASK-042):** main `89c2ab2` feat(backup) + `docs(ai)` `ebf7321`, pushed `04bfca4..ebf7321`. LEAST RECENT delivered before that: TASK-041 (`0c9011f` + `04bfca4`).
-- **Moving to TASK-043 immediately after (user directive «بعد ما تخلص خش في دي»):** the evidence-based performance hardening pass above. The scheduler is live and writes `auto` snapshots — accounted for when benchmarking backup paths.
-- **What changed (TASK-041):**
-  - **Purge guard:** `purgeProduct` (permission `store.purge`) previously DELETED `store_sale_items`/`store_return_items` + `stock_movements` + product — purging any sold product silently erased receipt history. It now refuses with `CONFLICT errors.store.productSold ({count})` whenever the product appears in either items table; archive (`is_active=0`) is the retirement path, unsold products still purge, and the sale/return line-deletion code (now unreachable) was removed.
-  - **DB (migration v30):** adds `product_sku_snapshot TEXT` (NULL for legacy rows) to `store_sale_items` and `store_return_items`; idempotent `PRAGMA table_info` + `ALTER TABLE ADD COLUMN`; follows the migration convention (non-destructive). `createSale`/`returnStoreSale` snapshot the current SKU; `StoreSaleItem`/`StoreReturnItemRow` + `getSale`/`getStoreReturn` expose `productSku: string | null`. Migrations 29 → 30.
-  - **Audit accuracy:** `createProductCategory` → `PRODUCT_CATEGORY_CREATED` (was mislabelled `EXPENSE_CATEGORY_CREATED`) with entity_type `product_category`; `setProductCategoryActive` → now audits `PRODUCT_CATEGORY_TOGGLED` + existence check (`errors.store.categoryNotFound`); `purgeMember` → `MEMBER_PURGED` entity_id now = memberId (was null). No store-audit i18n labels added (convention).
-  - **Finance (verified, no code):** payments/refunds/voids keep append-only ledger + reversals (`payment_refunds`/refundId, `reversal_payment`); original `payments` rows untouched — regression tests only.
-  - **i18n:** reused orphan `errors.store.productSold ({count})` for the purge refusal; added `errors.store.categoryNotFound`; updated `purgeProductConfirm`.
-  - **Tests:** new `tests/store-history.test.ts` (10) + rewritten `tests/purge-others.test.ts`; migration asserts 29→30 in `foundation.smoke`, `part4-backup`, `restore-authz`. Full suite **464/464 (37 files)**.
-- **Verification (TASK-041):** `npx vitest run tests/store-history.test.ts tests/purge-others.test.ts tests/store.test.ts tests/foundation.smoke.test.ts` all pass; `npm run typecheck:server` + `npm run typecheck` clean; i18n-coverage 3/3; full `npm test` **464/464 (37 files)**; `node scripts/check-rpc-consistency.cjs` clean (272 entries); `npm run build` clean.
-- **Commits (TASK-041):** pending per convention — main commit (code + tasks.md + decisions.md) then `docs(ai)` commit (current-state hash), push to `origin/main`. LEAST RECENT code commit on origin: **`d8f621d` (TASK-040)**.
-- **Previous objective (delivered this session):** **TASK-040 — backup/restore file-archive hardening: real verification + safe fail-fast restore + E2E round trip (ADR-024).** Commits **`d8f621d`** (origin main, `fb7c06a..d8f621d`).
-- **What changed (TASK-040):**
-  - **Root causes fixed** in `server/backups.ts`: (1) the trailer reader looked at a fixed `bytes.length - 24` but the writer emits `[sqlite][magic 16B][size 8B][archive]`, so the magic sits at `bytes.length - 8 - archiveLength - 16` → every trailer-bearing `.gymbak` was treated as legacy and file assets were silently dropped on restore; (2) the 8-byte size was written via `value >>> (8*i)` which wraps modulo 32 in JS for `i>=4` → stored value was `L + (L<<32)` (both halves equal L). Debug hexdump confirmed `[magic][02 00 00 00][02 00 00 00][00 00]`.
-  - **Reader:** magic via `Buffer.lastIndexOf`; full 64-bit LE read without bitwise wrap; recovers L when high half is 0 (new writer) or equals low half (old-writer artifact); exact-EOF validation gates every accepted trailer. **Writer:** size now two `writeUInt32LE` halves. Format/layout unchanged → backward compatible.
-  - **Verification:** `verifyBackupSnapshot(bytes)` → `ok | missing_files | corrupt` (sealed-copy integrity probe + manifest sha256 + file-presence), pure, no live-state mutation. `createServerBackup` returns `formatVersion:1`, `fileAssetsIncluded/Expected/Count/Missing`, `fullyVerified`, records `verified`.
-  - **Restore:** fail-fast validation (trailer → integrity probe → manifest verify → files-present) before any mutation; corrupt/truncated ⇒ `VALIDATION errors.backupArchiveCorrupt`; DB-references-missing-files ⇒ `errors.backupFilesIncomplete` (silent-drop legacy behavior removed). Success path: protective snapshot of current DB+Files → stage extracted tree → swap **Files** first (`.restore-old-<ts>`, failure aborts with DB untouched) → then adopt DB. `isSafeRelativePath` exported from `server/files.service.ts` gates every entry name.
-  - **Tests:** new `tests/backup-restore-integration.test.ts` (4) — round trip (member + `FF D8 FF E0` JPEG photo + PDF via `saveRawBytes` + photo link mirroring `setMemberPhoto`; backup → verify → wipe data dir incl. Files → fresh install (owner set up) → restore → member/photo/registry bytes identical, format/verify fields asserted), legacy owner-only backup restores (`fileAssetsIncluded:false`), truncated + end-flip + content-flip + sqlite-only-with-file-refs all rejected leaving DB untouched, verified layout math `sqliteOffset + 16 + 8 + archiveSize === length`. Also `verifyBackupSnapshot` classify + `isSafeRelativePath` table tests.
-- **Verification (TASK-040):** integration tests **4/4**; targeted backup/restore/i18n (`backup-authz`, `restore-authz`, `part4-backup`, `i18n-coverage`) **21/21**; `npm run typecheck` + `typecheck:server` clean; `node scripts/check-rpc-consistency.cjs` clean (272 entries); `npm run build` clean; full `npm test` **454/454 (36 files)** (known `restore-authz` boot flake did not appear this run).
-- **Previous objective (delivered earlier this session):** **TASK-039 — loopback-only default bind + race-safe setup + one-time legacy import (ADR-023).** Commits `fb7c06a` (origin main, `41a255b..fb7c06a`).
-- **Previous objective (delivered earlier this session):** **TASK-038 — remove the license grace period: lock EXACTLY at `expiresAt` with a TOTAL lockdown (ADR-022).**
-- **What changed (TASK-038):**
-  - `server/license/policy.ts`: deleted `GRACE_DAYS`, `graceDeadline()`, `graceDaysRemaining()`, the `"grace"` state; `expiryState()` = `now >= expiresAt` ⇒ `"expired"` else `"active"` (locks on the exact boundary). `CLOCK_ROLLBACK_GRACE_MS` untouched.
-  - `server/license/session.ts`: `graceDaysRemaining` removed from `LicensePublicStatus` (`daysRemaining` = active-only countdown); new `FULL_LOCK_ALLOWLIST` (license.status/activate/deactivate + auth.needsSetup) applied ONLY when `"expired"` → **total lockdown, even pure reads are 423/LOCKED**; `tampered`/`invalid` keep `READONLY_ALLOWLIST`. `rpcBlockReason` expired reason `"expired_readonly"` → `"expired"`.
-  - `server/rpc/license.rpc.ts`: `activate`/`deactivate` converted `a()` → `p()` (plain/unauthenticated) so the activation screen works WITHOUT a login during the lockdown (still requires a valid HWID-matched Ed25519 `.lic`).
-  - Frontend: `src/api/index.ts` (`graceDaysRemaining` removed), `app-layout.tsx` (`graceMsg` dropped → `hardMsg ?? activeMsg`), `license-page.tsx` (grace branch removed), `src/routes/index.tsx` (locked branch renders ONLY `LicensePage` — login/setup removed from the locked routes), `src/i18n/ar.ts` (`states.grace`/`bannerGrace`/`statusGraceDesc` removed; `bannerExpired`/`statusReadonlyDesc`/`errors.license.blocked` reworded to «مقفل»).
-  - Tests `tests/license.test.ts`: grace tests → exact-boundary expiry (+ a "just before stays active" boundary test; 28 tests vs 27); gate test asserts expired blocks READS too; marker test asserts `"expired"` + reads blocked; `GRACE_DAYS` math → plain `DAY` math.
-  - Docs: ADR-022 added (supersedes ADR-019 §5/§7 wording; ADR-021 §2 updated), `migrations.ts` v29 comment updated. **No schema change (v29 untouched), no permission/audit changes.**
-  - Verification (TASK-038): `npx vitest run tests/license.test.ts` **28/28**; typecheck ×2 clean; RPC consistency clean (272 entries); full `npm test` **444 total** (parallel run 442/444 — only the 2 known load-timing boot flakes `backup-authz`/`restore-authz`, which pass solo **9/9**); `npm run build` clean; `npm run sync:docs` clean.
-- **Previous objective (delivered earlier this session):** **TASK-036 — the three approved follow-ups «اعمل كلو»**: **F1** license anti-rollback marker (TASK-031 Phase-3 hardening, ADR-021), **F2** standalone Referrals page (`/referrals`), **F3** purge photo-byte cleanup (audit F-05, now CLOSED with a regression test).
-- **What changed (TASK-036):**
-  - **DB (migration v29)** `license_activation` (hwid PK, activated_at, issued_at, expires_at INTEGER NOT NULL, gym TEXT, tier TEXT, last_active INTEGER, created_at, updated_at) — `CREATE TABLE IF NOT EXISTS`, no destructive statements. Marker written only from VERIFIED license payloads (activation + every boot); when `.lic`/`license.json` are deleted the session falls back to a state synthesized from the marker (grant period + clock-rollback guard preserved), so deleting license files can no longer revert to untracked `unlicensed` full-write. Explicit in-app deactivation clears the marker. `server/license/session.ts` gained DB param (`initLicenseSession(dataDir, database?)`, `_resetLicenseSession(nextDir?, database?)`, `_overrideHwIdForTest(hwid)` seam, read/upsert/update/delete marker helpers); `server/context.ts` passes `db`.
-  - **F2 UI:** new `src/pages/referrals-page.tsx` (stats cards ×5, referrals DataTable with convert/cancel, top referrers, rewards, settings card, create/convert modals using `MemberPickerModal`) + route `path="referrals"` (gated `referrals.view`) + `NAV_ROUTES` (`/referrals`, `nav.referrals`, group `comms`) + sidebar `Share2` icon + i18n `nav.referrals` + 4 new `referral.*` keys. All referral RPCs pre-existed (TASK-016); zero backend changes.
-  - **F3 verification (no code):** purge already unlinks photo bytes post-commit in `server/rpc/members.rpc.ts` (ADR-018/F-05). Added regression test: `setFilesRoot(tmp)` + `saveRawBytes` (real JPEG magic bytes `FF D8 FF E0`) → trash + purge via the RPC handler → assert `files` row gone, live path gone, `.trash` has the bytes.
-  - **Tests:** migration asserts 28→29 in `foundation.smoke` (+`license_activation`=0), `restore-authz`, `part4-backup` (legacy-adopt re-run stays green); `tests/license.test.ts` +4 marker tests → **27/27**. Full suite **443/443 (34 files)** (was 438). ADR-021 recorded; stale ADR-001 F-05 note updated to CLOSED.
-  - Verification (TASK-036): `npm run typecheck` + `typecheck:server` clean; `node scripts/check-rpc-consistency.cjs` clean (272 entries, no gaps); `npm test` **443/443**; `npm run build` clean (dist + dist-server; only Vite's cosmetic chunk-size note).
-- **Previous objective (delivered earlier this session):** **TASK-035 — Classes hub (الحصص والمدربون)**: rework the التدريب section so the Classes page manages gym group classes (MMA/Karate...) via one hub with 4 tabs — الحصص / الجدول الأسبوعي / المدربون / خطط التدريب — plus **weekly recurring sessions (توريع أسبوعي)** with a **weekly timetable**. Done exactly per the user's answered questions: merge trainers into the classes hub, add recurring sessions + week grid, keep full trainer data.
-- **What changed (TASK-035):**
-  - **DB (migration v28)** `class_recurrences` (id, class_id→classes, days_of_week TEXT comma sep 0..6 [Sunday=0], start_date, start_time, duration_min≥5, capacity NULL|>0, is_active, created_by →users, created_at, updated_at) + `idx_class_recurrences_class`. Follows the v6+ `CREATE TABLE IF NOT EXISTS` convention so the legacy-adopt re-run path stays green. No destructive statements.
-  - **Backend**: `classes.service.ts` gained a recurrence module: `ClassRecurrenceInput/ClassRecurrence/RecurrenceResult`, `createClassRecurrence` (validates days/date/time/capacity; adds days, clamps weeks 1..12; materializes real `class_sessions` inside one transaction; audit `CLASS_RECURRENCE_CREATED`), `listClassRecurrences` (activeOnly filter; `nextScheduledDate` = MIN future scheduled session), `generateRecurrenceWeeks` (extends by continuing AFTER the last generated session — `dayAfterLastSession` — dupe-skip guard identical to `createClassSession`; audit `CLASS_RECURRENCE_EXTENDED`), `deactivateClassRecurrence` (is_active=0, existing sessions kept; audit `CLASS_RECURRENCE_STOPPED`). Permissions: create/extend/stop = `classes.manage`, list = `classes.view`. `audit-actions.ts` +3 codes. 4 new RPCs in `server/rpc/classes.rpc.ts`.
-  - **Frontend**: new `src/components/classes/` — `classes-tab.tsx` (class catalog cards + per-class recurrence cards with توريع/قادم/إيقاف + class/session/recurrence modals), `schedule-tab.tsx` (Saturday-first week grid, prev/next/today, class filter, capacity badges, opens `session-details-modal.tsx`), `trainers-tab.tsx` + `trainer-form-modal.tsx` (moved from `pages/trainers-page.tsx`), `plans-tab.tsx` (training plans management carried over intact), `recurrence-form-modal.tsx` (day chips سبت..جمعة in [6,0,1,2,3,4,5] order, start date/time, duration, optional capacity, weeks; `recurrenceToast` shows created/skipped). `session-details-modal.tsx` extracted (bookings table + member picker + complete/cancel/uncancel confirm dialogs; **fixed** a casing bug `bookingNo_Show`→`bookingNo_show` and the wrong empty-bookings key `members.noSubs`→`cls.emptyBookings`).
-  - **Hub & nav**: `pages/classes-page.tsx` is now a 4-tab hub (tabs gated: classes/schedule by `classes.view`, trainers/plans by `trainers.view`; trainer role sees only the first two). Deleted `pages/trainers-page.tsx`; removed the `/trainers` route + nav entry; `/classes` route + nav entry now any-of `["classes.view","trainers.view"]`; sidebar icon `/classes`→Dumbbell (ListChecks import removed); `nav.classes` = "الحصص والمدربون". `nav.trainers` key kept (still used by plans tab + member profile). i18n: `cls` keys for tabs/schedule/recurrence (+`emptyBookings`) and `errors.classRecurrence{NotFound,Inactive,NoDays}`.
-  - **Tests**: `tests/classes.test.ts` +7 recurrence tests (materialization counts for Mon+Thu×2 weeks=4, capacity fallback vs override, dupe-skip, extend-advances, stop-keeps, input/permission validation). Migration-version asserts bumped 27→28 in `foundation.smoke`, `restore-authz`, `part4-backup`. Full suite now **438/438 (34 files)**. During testing found+fixed 3 real bugs: `mapRecurrence` hardcoded `nextScheduledDate:null`, extend regenerated the same window (now advances past the last session), and startTime allowed `30:00` (strict `HH:MM` hours 0-23/minutes 0-59 now).
-  - Verification (TASK-035): `npm run typecheck` + `typecheck:server` clean; `node scripts/check-rpc-consistency.cjs` clean (272 entries, no missing client calls); `npm test` **438/438** (one run had a single `restore-authz` load-timing flake that passes in isolation + on rerun); `npm run build` clean; `npm run sync:docs` → AGENTS.md (34→36 services, migrations v1..v28), docs/ai/architecture.md + database.md. i18n coverage 3/3 (included in suite).
-- **Previous objective (delivered earlier this session):** **TASK-034 — License Tool GUI v7 (batch issuer)** — committed+pushed `2666400`. See the TASK-034 record below.
-- **Earlier this session:** **TASK-031 offline licensing** committed+pushed (`4270511`), CLI ergonomics across `35d7ef0`+`17f225d`, **TASK-032** license folder + days-remaining banner, **TASK-033** WinForms GUI, **TASK-034** GUI v7 batch issuer — full records below.
-- **TASK-038 committed/pushed:** **`c324aa6`** (origin main, `aa82d16..c324aa6`).
-- **TASK-036 committed/pushed:** **`d833437`** (origin main, `2409078..d833437`).
-- **TASK-035 committed/pushed:** **`cf16e5f`** (origin main, `2666400..cf16e5f`).
-- **Last agent/tool:** opencode (this session)
+### TASK-141: إعادة تصميم وتطوير القائمة الجانبية (Sidebar UI Overhaul & Collapsible Groups) (Done)
+- **المطلب الأساسي:**
+  - تحسين مظهر وشكل القائمة الجانبية بعد عدم إعجاب المستخدم بالتصميم القديم.
+  - تطبيق تحسينات بصرية فخمة ومريحة للعين مع لمسات نيون وتدرجات متناسقة.
+  - إمكانية طي وفتح مجموعات القائمة (Accordion / Collapsible Groups) لتقليل الزحمة مع حفظ التفضيل وحساب المجموعات النشطة تلقائياً.
+- **التنفيذ بالتفصيل (`src/components/layout/sidebar.tsx`):**
+  - **الترويسة واللوجو:** خلفية زجاجية متدرجة مع أيقونة نيون متوهجة ولمسة حيوية.
+  - **طي وفتح المجموعات (Accordion):** رأس كل قسم أصبح قابلاً للضغط مع سهم متحرك وعداد لعناصر القسم، وفتح المجموعة النشطة تلقائياً، مع حفظ حالة الطي في `localStorage`.
+  - **عناصر القائمة والتنقل:** خطوط متناسقة، مسافات مريحة، خلفية متدرجة عند التحديد (Active Gradient with Neon Glow)، شريط جانبي مضيء (Accent Bar)، وتأثيرات Hover خفيفة وأنيقة.
+  - **بطاقة المستخدم السفلية:** شارة مظهر حديثة مع حالة الاتصال (Live indicator) وإبراز دور المستخدم وحساب المطور.
+- **التحقق:**
+  - TypeScript: لا يوجد أي أخطاء (0 errors).
+  - اختبارات i18n والتغطية: ناجحة بالكامل.
+  - بناء الملف التنفيذي `dist-exe/GymSystem.exe` بنجاح كامل.
 
-- **TASK-030** — **done this session** (loyalty rewards execution fix, pending user report/commit). See `.ai/tasks.md`.
-- **TASK-029** — **done this session** (anti-passback race fix, pending user report/commit). See `.ai/tasks.md`.
-- **TASK-028** — **done this session** (class capacity race fix, pending user report/commit). See `.ai/tasks.md`.
-- **TASK-027** — **done this session** (same-day freeze phantom-day fix, pending user report/commit). See `.ai/tasks.md`.
-- **TASK-026** — **done this session** (freeze allowance bypass fix, pending user report/commit). See `.ai/tasks.md`.
-- **TASK-025** — **done this session** (new reports tab). Committed **`48dbb6d`** and pushed to `origin/main`. See Phase 16 below for full detail.
+### TASK-140: التفعيل والتعطيل الحقيقي والفوري لموديولات النظام (Feature Flags Real-Time Enforcement) (Done)
+- **المطلب الأساسي:**
+  - عند قفل أو تعطيل أي موديول/ميزة من لوحة تحكم المطور (Feature Flags)، يجب أن تتوقف الميزة فعلياً وتختفي من كل مكان في النظام (القائمة الجانبية، القائمة السفلية للجوال، التوجيه والروابط المباشرة، بروفايل العضو، وحماية السيرفر عبر RPC).
+- **التنفيذ بالتفصيل:**
+  1. **الباك إند وواجهة السيرفر (`server/rpc/registry.ts`, `server/index.ts`, `src/core/services/settings.service.ts`):**
+     - إضافة دالة `readPublicFeatureFlags(db)` لتوفير خريطة الميزات العامة من الإعدادات.
+     - تزويد نقطة النهاية `/api/auth/me` بحقل `featureFlags` ليتم إرساله للواجهة فور تسجيل الدخول والبدء.
+     - في `server/rpc/registry.ts` (`invokeRpc`): إنشاء جدول مطابقة بين الخدمات والـ Feature Flags الخاصة بها (`SERVICE_FEATURE_FLAG_MAP`)، ورفض أي طلب RPC للموديول المعطل برمية `errForbidden()` فوراً، مع استثناء حساب المطور (`isDeveloperActor`) للسماح له بالاختبار والتشخيص.
+  2. **سياق المصادقة بالواجهة (`src/contexts/auth-context.tsx`):**
+     - حفظ حالة `featureFlags` في الـ AuthContext وتوفير دالة `isFeatureEnabled(flag)` ودالة `refreshFeatureFlags()`.
+     - تمكين المطور من فك القيود تلقائياً (`isDeveloper === true` يعيد `true`).
+  3. **القوائم الجانبية والتنقل (`src/components/layout/sidebar.tsx`, `src/routes/nav-routes.ts`):**
+     - ربط كل مسار في `NAV_ROUTES` برمز الميزة الخاص به `featureFlag`.
+     - تصفية القائمة الجانبية (Desktop)، والقائمة الجانبية للموبايل (`MobileDrawer`)، والشريط السفلي للموبايل (`MobileBottomNav`) بحيث تختفي أي ميزة تم تعطيلها فورياً.
+  4. **حماية التوجيه بالمتصفح (`src/routes/index.tsx`):**
+     - تحديث مكوّن `<RequirePermission>` ليدعم التحقق من `featureFlag`. إذا كانت الميزة معطلة، يتم عرض شاشة الحظر `<ForbiddenView />` فوراً لمنع الدخول المباشر عبر الرابط.
+  5. **بروفايل العضو (`src/pages/member-profile/index.tsx`, `header.tsx`, `quick-actions.tsx`):**
+     - تصفية تبويبات البروفايل (الاشتراكات، الحضور، الحصص والتدريب الشخصي، قياسات InBody، الإحالات، الولاء، المدفوعات) وإخفائها إذا كانت ميزتها معطلة.
+     - تصفية الإجراءات السريعة (Quick Actions) وأزرار الترويسة (Header Actions) المتعلقة بالاشتراكات، تسجيل المدفوعات، أو دعوة المرافقين عند تعطيل ميزاتها.
+  6. **شاشة المطور (`src/pages/developer-page.tsx`):**
+     - عند تفعيل أو تعطيل أي ميزة، يتم استدعاء `refreshFeatureFlags()` فوراً لتحديث الواجهة بالكامل في نفس اللحظة بدون الحاجة لإعادة تحميل الصفحة.
+- **التحقق:**
+  - اختبارات الوحدات: جميع الاختبارات الـ 686 ناجحة 100%.
+  - فحص TypeScript (Front + Back): خالٍ من أي أخطاء.
+  - بناء الملف التنفيذي `dist-exe/GymSystem.exe` بنجاح كامل.
 
-## Active tasks
-- **TASK-021** — extended: resolved الاشتراكات / الباقات duplicate. Attendance fast-tab removal pushed (`cc3bdb8`); subscriptions+packages+plans merge/tab-reorder pushed (`29de98e`); packages-primary interface pushed (`9f53d30`). This session: phase 9 merged `/cash` + `/treasury` into a tabbed `/treasury` (pushed `7ac7420`), phase 10 removed the tabs → single `/treasury` page (cash session primary + daily closing below), and phase 11 removed the daily-closing feature entirely so `/الخزينة` = cash sessions (الوردية) only (migration v27).
+### TASK-139: لوحة تحكم المطور الفائقة — صيانة البيانات، إعادة تعيين المالك، قواطع الميزات، ومؤشرات الموارد (Done)
+- **المطلب الأساسي:**
+  1. صيانة وتشخيص قاعدة البيانات: فحص السلامة الهيكلية `PRAGMA integrity_check` و`foreign_key_check`، وضغط وترتيب قاعدة البيانات عبر `VACUUM`.
+  2. إعادة تعيين حساب المالك في حالات الطوارئ: تصفير كلمة المرور وفك القفل وتنشيط الحساب فورياً.
+  3. تنظيف سجلات السيرفر `server.log` لتوفير المساحة على القرص الصلب.
+  4. تمديد فترة السماح للترخيص باختيارات متعددة (3 / 7 / 14 يوماً).
+  5. قواطع الميزات الموسعة بالكامل (Feature Flags): تفعيل/تعطيل كافة وحدات وموديولات النظام الـ 17 (حضور الأعضاء، الأعضاء، الاشتراكات، البطاقات، الخزينة والمالية، المصروفات، المتجر POS، التقارير والأرباح، الحصص، قياسات InBody، بوابة واتساب، إدارة العملاء المحتملين CRM، برنامج الولاء، الإحالات والمكافآت، شؤون الموظفين، بصمة وحضور الموظفين، المزامنة السحابية بين الفروع) مع حفظها في الإعدادات بشكل فوري.
+  6. مؤشرات الموارد والبيئة التشغيلية (System Telemetry): عرض حي لاستهلاك الذاكرة العشوائية (RAM للبرنامج وللجهاز)، مواصفات المعالج، وقت تشغيل الجهاز والبرنامج، إصدارات Node.js وSQLite، ومسارات التخزين النشطة.
+- **التنفيذ الخلفي (Backend & Services):**
+  - `src/core/services/developer.service.ts`:
+    - إضافة `devRunIntegrityCheck(db, actor)` لفحص السلامة الهيكلية والعلاقات الأجنبية.
+    - إضافة `devVacuumDatabase(db, actor)` لتنفيذ `VACUUM`.
+    - إضافة `devResetOwnerEmergency(db, actor, newPass)` لتصفير حساب المالك وتنشيطه فورياً.
+    - إضافة `getFeatureFlags(db, actor)` و `setFeatureFlag(db, actor, flag, enabled)`.
+  - `server/context.ts`:
+    - إضافة `clearServerLogs()` لإغلاق مسار السجل، مسح `server.log`، وإعادة فتح السجل بسلاسة.
+  - `server/rpc/dev.rpc.ts`:
+    - تسجيل وعرض دوال RPC: `runIntegrityCheck`، `vacuumDatabase`، `clearServerLogs`، `resetOwnerEmergency`، `getFeatureFlags`، `setFeatureFlag`، و`getSystemTelemetry`.
+  - `src/core/services/settings.service.ts`:
+    - إضافة مفاتيح الإعدادات `feature_pos_enabled`، `feature_classes_enabled`، `feature_inbody_enabled`، `feature_whatsapp_enabled`، `feature_multibranch_enabled` إلى `SETTING_KEYS` والتحقق من صحتها.
+- **التنفيذ الأمامي (Client & UI):**
+  - `src/api/index.ts`: إضافة الواجهات البرمجية والأنواع تحت `api.dev.*`.
+  - `src/i18n/ar.ts`: إضافة الترجمات العربية الكاملة لكافة التبويبات والمودالات والرسائل.
+  - `src/pages/developer-page.tsx`:
+    - إضافة تبويبات جديدة: "الصيانة والتشخيص" (Maintenance)، "تفعيل الميزات والوحدات" (Feature Flags)، و"موارد الجهاز والبيئة" (Telemetry).
+    - إضافة نافذة اختيار أيام فترة السماح للطوارئ (3 / 7 / 14 يوماً).
+    - إضافة نافذة إعادة تعيين كلمة مرور المالك في الطوارئ.
+- **الاختبارات والحزمة:**
+  - إضافة 4 اختبارات وحدات جديدة شاملة في `tests/developer-console.test.ts`.
+  - جميع الاختبارات (686/686 في 60 ملف اختبار) ناجحة 100%.
+  - بناء تنفيذي ناجح: `dist-exe/GymSystem.exe`.
 
-## What was most recently completed (handoff context)
+### TASK-138: جعل جميع عناصر النظام قابلة للمسح بالصلاحيات وحذف الحصص والمدربين والورديات والمنتجات المباعة (Done)
+- **المطلب الأساسي:** تمكين حذف جميع العناصر في النظام (الحصص ومواعيدها وتكراراتها، المدربين، جلسات الخزينة المغلقة، المنتجات حتى وإن كانت لها مبيعات سابقة) بضوابط صلاحيات دقيقة، والمالك يملك كل الصلاحيات دائماً، مع نافذة تأكيد حمراء واضحة قبل الحذف.
+- **التنفيذ الخلفي (Services & RPC):**
+  - `src/core/services/classes.service.ts`:
+    - إضافة `deleteClass(db, actor, classId)`: فك وحذف الحجوزات، المواعيد، التكرارات، ثم الحصة نفسها بتسلسل FK آمن مع تسجيل تدقيق `CLASS_PURGED`.
+    - إضافة `deleteClassSession(db, actor, sessionId)`: حذف حجوزات الموعد ثم الموعد مع تسجيل تدقيق `CLASS_SESSION_PURGED`.
+    - إضافة `deleteClassRecurrence(db, actor, recurrenceId)`: حذف نمط التكرار مع تسجيل تدقيق `CLASS_RECURRENCE_PURGED`.
+  - `src/core/services/trainers.service.ts`:
+    - إضافة `deleteTrainer(db, actor, trainerId)`: فك ارتباط المدرب بالتقييمات، اختبارات اللياقة، الحصص، والموظفين، ثم حذف خطط التدريب والمدرب مع تسجيل تدقيق `TRAINER_PURGED`.
+  - `src/core/services/cash-session.service.ts`:
+    - تحديث `deleteCashSession(db, actor, sessionId)`: إزالة قيد الرفض على الجلسات المغلقة `closed`، والسماح للمالك ولمن يملك `cash.purge` بحذف الوردية.
+  - `src/core/services/store.service.ts`:
+    - تحديث `purgeProduct(db, actor, productId)`: إزالة قيد منع الحذف للمنتجات المباعة؛ فك الارتباط عبر `product_id = NULL` في `store_sale_items` و`store_return_items` مع الحفاظ التام على الأسماء والأسعار التاريخية للتقارير، ثم حذف حركات المخزون والمنتج وتسجيل التدقيق.
+- **قاعدة البيانات والصلاحيات (Migration v49):**
+  - إضافة `classes.purge` و`trainers.purge` لقاموس الصلاحيات `PERMS` ومنحها افتراضياً للمدير والمالك.
+  - Migration v49: تعديل جداول `store_sale_items` و`store_return_items` لجعل `product_id` يقبل `NULL` (`REFERENCES products(id)` بدون قيد `NOT NULL`).
+- **الواجهة الأمامية (UI & Confirmations):**
+  - `ClassesTab`: زر حذف الحصة وزر حذف نمط التكرار محمي بصلاحية `classes.purge` مع ConfirmDialog حمراء.
+  - `SessionDetailsModal`: زر حذف الموعد نهائياً محمي بصلاحية `classes.purge` مع ConfirmDialog حمراء.
+  - `TrainersTab`: خيار حذف المدرب في القائمة المنسدلة محمي بصلاحية `trainers.purge` مع ConfirmDialog حمراء.
+  - `CashSessionsPanel`: عمود حذف الورديات المغلقة في جدول السجل محمي بصلاحية `cash.purge` مع ConfirmDialog حمراء.
+- **الاختبارات والحزمة:**
+  - تم تحديث `tests/purge-others.test.ts` و`tests/store-history.test.ts` لتغطية السلوك الجديد بنجاح 100%.
+  - تشغيل `npm test`: 599/599 اختبار ناجح عبر 60 ملف اختبار.
+  - تشغيل `npm run typecheck` و`npm run typecheck:server`: 0 أخطاء.
+  - تشغيل `npm run build:exe`: تم بناء `dist-exe/GymSystem.exe` بنجاح.
 
-### TASK-020 — Subscriptions page blank-screen fix (2026-09-02)
-Fixed `FreezeSubscriptionModal` crash that blanked the whole /subscriptions page: it read a prop inside its initial `useState` while the parent always mounted it with `subscription={null}`, so `null.endDate` threw. Fix: made the `subscription` prop nullable, `if (!open || !sub) return null;` before any hooks, renamed `subscription`→`sub`, dropped `as Subscription` casts. Committed/pushed (`04bdf28`). Also added an `ErrorBoundary` (`src/components/ui/error-boundary.tsx`) in `src/main.tsx` so a single crash can no longer blank a whole route.
+### TASK-114: بادئة فرع على أرقام المرجع + قوالب مسودات للعمليات + فتح الصف مباشرة من البحث (Done)
+- **الإecase 1 — بادئة الفرع على كل الأرقام (مستقبلية، بدون backfill):**
+  - `nextDocNo(db, kind, atIso)` (جديد) يوزّع الرقم، و`assignDocNo` صار يستدعيه. الصيغة: `{branchPrefix}-{PREFIX}-{YYYY}-{000000}` مثل `B1-RFD-2026-000001` — **نفس约定 أكواد الأعضاء** `B1-MEM-000001`. البادئة تُحذف تلقائيًا إذا لم يكن للفرع prefix.
+  - `pdf.service.receiptNumber()` صار مجرد غلاف لـ `assignDocNo` (كود مكرر تم حذفه)، و`store.service` (البيع + المرتجع) صارا يستخدمان `nextDocNo` لأن `sale_no`/`return_no` أعمدة `NOT NULL` يلزم رقمها وقت الـ INSERT.
+  - **بادئة المرتجع تغيّرت `RTN` → `SRT`** prospectively (لم تكن هناك قالب PDF للمرتجع فلا يوجد مستند مطبوع قديم).
+  - **بحث على مرحلتين (درس مهم):** المرحلة 1 مطابقة exact على الرقم كاملًا (مع/بدون بادئة الفرع) — لو لقيت نتيجة ترجع **صفًا واحدًا بالظبط**؛ المرحلة 2 (فقط لو المرحلة 1 فشلت) بحث بالأرقام المتبقية. السبب: عدّادات `POS` و`SDP` كلٌّ يبدأ من 1 فالـ sequence `000001` موجود على النوعين، والبحث الساذج كان يرجّع 2 نتيجة حتى عند كتابة الرقم كاملًا.
+  - تطبيع البحث: `matchForms()` يزيل بادئة الفرع-leading ويستخرج **آخر token رقمي** كـ sequence (رقم `B1-RCP-2026-000123` و`POS-000001` القديم كلاهما يعمل).
+- **الإecase 2 — مسودات مطبوعة للعمليات اللي ماكانش لها PDF (قالب واحد مشترك):**
+  - `src/core/pdf/operation-voucher.ts` — قالب واحد يخدم الأربعة: ترويسة ملوّنة + **رقم المرجع كأكبر عنصر بالصفحة** + كارت بيانات + صف المبلغ المُبرَز (بلون حسب in/out) + ملاحظات + **خط توقيع** + فوتر بسطر الاعتماد.
+  - `src/core/services/vouchers.service.ts` — `generateOperationVoucher(db, actor, kind, rowId)` يبني البيانات لكل نوع (`refund` / `store_debt_payment` / `cash_closing` / `attendance`)، **يؤرشف في `pdf_deliveries`** بنفس نمط باقي المستندات (doc_type = `<kind>_voucher` + sha256 + الحجم).
+  - الصلاحيات: `refund`→`pdf.receipt` · `store_debt_payment`→`store.view` · `cash_closing`→`cash.close` · `attendance`→`reports.view`.
+  - **مهم:** إيصال الاسترجاع الآن يضمن وجود رقم الإيصال الأصلي (`assignDocNo("payment", …)`) ويطبعه، فالعميل يقدر يردّي المستندين بنفس البحث. اختُبر أن `receipt_no` كان `null` قبل الطباعة.
+  - `server/rpc/vouchers.rpc.ts` + `api.vouchers.generateOperationVoucher` + `VoucherActions` (مكوّن تحميل/طباعة) + مفاتيح `voucher.*`.
+  - **زر الطباعة وُضع في نتائج البحث نفسها** (`doc-no-search.tsx`) لا في كل صفحة — يغطي الأربعة مرة واحدة ويطابق سير العمل الحقيقي (العميل يسأل → تبحث → تطبع). `VOUCHER_FOR` يستثني `payment`/`store_sale` (لهما فواتيرهما) و`store_return` (لا يوجد له مستند).
+- **الإecase 3 — فتح الصف نفسه من نتيجة البحث:**
+  - `DataTable` أضاف `highlightRowKey?: string | null` → تظليل الصف + `scrollIntoView` تلقائي.
+  - `src/hooks/use-focus-row.ts` — `useFocusRow()` يقرأ `location.state.focusRowId` **مرة واحدة** ثم ينظّف الـ state حتى لا يفضل يظلّل صف قديم عند 방문 الصفحة يدويًا.
+  - مربوطة في: `payments-page` + `store-page` (بتمرير `highlightRowKey` إلى `SalesTab`/`ReturnsTab`/`DebtsTab`) + `cash-page`.
+- **مصائد تحذيرية:**
+  1. **`vi.mock` يكسر قياس العربية** (اكتُشف في TASK-113) — تمMeasurement عن طريق instrumentation/standalone بدلًا منه.
+  2. **أولوية `AND` فوق `OR`**: `WHERE A OR B AND extra` يجعل فرع المطابقة التامة يتخطى الفلتر. الحل لفّ المجموعة `(A OR B) AND …`. (تكرر مرتين: في فلتر الحضور المحذوف وفي نسخة الاستعلام الأولى قبل تقسيم المرحلتين.)
+  3. **تشفير UTF-8**: أي إعادة كتابة للملفات عبر PowerShell `Get-Content | Set-Content` **دمّرت ترميز العربية** في `vouchers.service.ts` (834 محرف تالف) وفي `tests/document-numbers.test.ts` وفي `tests/document-numbers.test.ts` (فصار اسم العضو في الاختبار نصًا تالفًا يُقارَن بنصٍّ تالف آخر، أي تحقّق زائف). أُعيد كتابة الملفين بأداة الكتابة المباشرة. أُعيد كتابة الملفين بأداة الكتابة المباشرة. **القاعدة: لا تستخدم PowerShell لتعديل ملفات فيها عربية — استخدم أدوات التحرير المباشرة، وتحقّق بـ فحص محارف U+00C0–U+00FF.**
+- **اختبارات تُحدِّثت لِـالصيغة الجديدة:** `pdf.test.ts` (5 تأكيدات على `receipt-RCP-`) و`store.test.ts` (`RTN-`).
+- **اختبارات جديدة:** `tests/vouchers.test.ts` = **7** (رقم المرجع في المستند، ضمان رقم الإيصال الأصلي، الأرشفة في `pdf_deliveries` مع الـ hash، إقفال صندوق، حضور، رفض صلاحية، رفض إقفال لم يحدث).
+- **الحزمة الكاملة: 655/655 في 57 ملفًا** · typecheck نظيف · `dist-exe/GymSystem.exe` مبني · `EXE E2E PASS` (والاسم الآن `receipt-B1-RCP-2026-000001.pdf`) · `check-rpc-consistency` لا مفقود · `npm run sync:docs`.
+- **متبقٍ غير منفَّذ (يحتاج قرار):** `treasury` و`reception` (الحضور) لا يعرضان الجداول بنمط `DataTable` الموحّد، فالتمييز فيهما غير مفعّل — البحث يعمل ويطبع المسودة لكن لا يظلّل الصف. كمان لا يوجد زر طباعة في صفحات القوائم نفسها (فقط من نتائج البحث).
 
-### TASK-021 — Page consolidation & sidebar reorganization (2026-09-02, in progress)
-Consolidate small admin/pages into shared shells and reorder the sidebar.
 
-**Phase 1 (done, pushed `18ff360`): assign-card quick action.** Added `members.qaAssignCard` i18n + `cards.assign`-gated `assignCard` quick action (`BadgePlus`) on member profile wired to the existing `cardModalOpen` state.
+### TASK-113: رقم مرجعي مطبوع وقابل للبحث لكل عملية + مربع بحث في النظام (Done)
+- **المشكلة الحقيقية:** الرقم لا يكفي لوحده — العميل بيتواصل ويقول «الرقم ده» فيلازم **رقم مطبوع على الورقة + طريقة واحدة أدور بيها عليه فورًا**.
+- **القرار (مؤكَّد من المالك):** العمليات = مالية + الحضور · بحث داخل النظام · بادئة مختلفة لكل نوع.
+- **Migration v43** (`src/db/migrations.ts`, append-only): أعمدة جديدة + **unique index جزئي** (`WHERE col IS NOT NULL` حتى لا يمسّ التاريخ القديم) + صفوف counters初始化:
+  - `payment_refunds.refund_no` · `store_debt_payments.payment_no` · `cash_sessions.closing_no` · `attendance.visit_no`
+  - الموجود مسبقًا: `payments.receipt_no` (v42) و`store_sales.sale_no` و`store_returns.return_no`.
+  - كل الـ DDL داخل `callback` وح-defensive (pattern v41/v42) لأن اختبارات الترقية تعيد تشغيل ترحيلات على مخطط جزئي. **`statements: []` إجباري** وإلا فشل التطبيق (`migration.statements is not iterable`).
+- **خدمة مشتركة جديدة `src/core/services/document-numbers.service.ts`:**
+  - `assignDocNo(db, kind, rowId, atIso)` — توزّع الرقم أو ترجّع الموجود (**idempotent، لا تستهلك counter جديد**)، وصيغة `{PREFIX}-{YYYY}-{000000}`.
+  - `searchByDocNo(db, actor, query)` — يبحث في **كل الأنواع** مرة واحدة: مطابقة exact (غير حساسة لحالة الأحرف) + fallback على الأرقام لوين العميل قال بس الأرقام.
+  - `DOC_KINDS`: prefixes = `RCP` دفع · `RFD` استرجاع · `POS` بيع متجر · `SRT` مرتجع · `SDP` سداد دين · `CS` إقفال صندوق · `ATT` حضور.
+  - الحقول مستخرجة من **مخطط حقيقي** (ليست تخمينًا): `attendance.checkin_at` (وليس `checked_in_at`)، والمرتجع والاسترجاع وسداد الدين توصل للعضو عبر **joins** (`store_sales` ← `store_debts` ← `payments`)، و`cash_sessions` **لا ينضم** لأعضاء إطلاقًا، فـ `memberName: null` له.
+  - `requirePermission(actor, "reports.view")` — حراسة في الخدمة نفسها مش في الواجهة بس.
+- **التركيب في الخدمات** (داخل نفس الـ transaction، لتفادي ترقيم صف يُلغى): `payments.service` (استرجاع) · `store.service` (سداد دين) · `cash-session.service` (إقفال) · `attendance.service` (**المكانين**: Fraser/عضو).
+- **RPC + API:** `server/rpc/document-numbers.rpc.ts` → `documentNumbers.searchByDocNo` مسجّل في `REGISTRY`، وغلاف في `src/api/index.ts` (`api.documentNumbers.searchByDocNo`).
+- **الواجهة:** `src/components/layout/doc-no-search.tsx` — استبدل **مربع البحث الزخرف الموجود فعلًا في الهيدر** (كان `input` بلا وظيفة مع تلميح Ctrl K)، فصار بحثًا حقيقيًا بـ debounce 220ms، يعرض (الرقم · نوع العملية · العضو · المبلغ · التاريخ) وينتقل للسجل عند الضغط أو Enter. **مخفي لمن لا يملك `reports.view`** (يرجع للمربع القديم). مفاتيح i18n تحت `header.docNoSearch*`.
+- **بprasίة معروضة:** `Payment.lastRefundNo` أضيف لـ `PAYMENT_SELECT` + الـ public type فيتمكّن الموظف من قراءة رقم الاسترجاع للعميل (لا يوجد PDF استرجاع حاليًا).
+- **أخطاء حقيقية كشفتها الاختبارات (مهمة):**
+  1. **`no such column: m.full_name`** عند `cash_closing` لأن الـ `from` لا ينضم لأعضاء بينما الـ SELECT كان يطلب `m.full_name` دائمًا → أُضيف `memberName` صريح لكل نوع.
+  2. **أولوية `AND` فوق `OR`**: `WHERE A OR B AND deleted_at IS NULL` كان يخلّي فرع المطابقة التامة يتخطى فلتر الحضور المحذوف → لُفّ بم_GROUP `(A OR B) AND …`.
+- **الاختبارات:** `tests/document-numbers.test.ts` = **11** اختبارًا (البادئة والصيغة، الترقيم التزايدي، idempotency وعدم استهلاك العدّاد، إقفال الصندوق، إخفاء الحضور المحذوف، البحث بالأرقام فقط، case-insensitive، نتيجة مجهولة = `[]` لا استثناء، رفض الاستعلام الفارغ ورفض `reception`، سداد الدين يوصل للعضو عبر الـ joins).
+- **تعديل لازم:** 3 اختبارات كانت تثبّت `schema_migrations` على **42** → حُدّثت إلى **43** (`foundation.smoke`، `part4-backup`، `restore-authz`).
+- **الحزمة الكاملة: 646/646 في 56 ملفًا** · typecheck (client + server) نظيف · `dist-exe/GymSystem.exe` مبني · `EXE E2E PASS` · `npm run sync:docs`.
+- **ملاحظات / توصيات مفتوحة (لم تُنفَّذ، تحتاج قرار المالك):**
+  - **الأرقام لا تحمل بادئة الفرع** (العدّاد عالمي). مع تعدّد الفروع المتزامن قد تتكرّر أرقام بين الفرعين — وهو نفس سلوك `RCP`/`POS` الحالي. يلزم قرار: هل نضيف بادئة الفرع prospectively كما في `MEM`؟
+  - **لا توجد قوالب PDF** للمرتجع أو الاسترجاع أو سداد الدين أو إقفال الصندوق أو الحضور، فالرقم فيها غير مطبوع (قابل للبحث فقط). إضافة هذه القوالب هي مهمة منفصلة.
+  - **تنقّل النتيجة لا يحدّد الصف فعليًا** حاليًا: نمرّر `state.focusRowId` لكن الصفحات (payments / store / attendance / treasury) لا تقرأه بعد — فالنقرة تنقلك للصفحة فقط.
 
-**Phase 2 (done, this session): /staff page.** Extracted `UsersTab` (`src/components/staff/users-tab.tsx`) + `PermissionsTab` (`src/components/staff/permissions-tab.tsx`) from the old pages; `users-page.tsx`/`permissions-page.tsx` now re-export them (legacy `/users` + `/permissions` routes preserved). New `src/pages/staff-page.tsx` renders both as Tabs, gated by `users.view`. Added `/staff` to `NAV_ROUTES` + sidebar `ICONS`. `nav.staff` i18n key added previously.
 
-**Phase 3 (done, this session): Settings tabs.** Extracted `HealthTab` (`src/components/settings/health-tab.tsx`) + `ScannerTab` (`src/components/settings/scanner-tab.tsx`); `health-page.tsx`/`scanner-diagnostics-page.tsx` re-export them (legacy routes preserved). `settings-page.tsx` became a 3-tab shell: general (settings cards), backups (`HealthTab`), scanner diagnostics (`ScannerTab`). Added `settings.backupsTab` + `settings.scannerDiagTab` i18n keys.
+### TASK-112: توحيد سطر اعتماد المطوّر في كل مولّدات PDF — متمركز + أصغر + أغمق + بادئة `System by :` (Done)
+- **المطلوب:** جعل `Yassen Mohamed Kotb | 01288536381` أصغر وأغمق ومتمركزًا في **نص الورقة**، مع كتابة `System by :` بجانبه.
+- **قبل:** السطر كان **مكررًا في 3 ملفات** بأشكال مختلفة: `receipt.ts` (11pt، align right، يبدأ عند `left+100` بعرض `width-120`)، `store-receipt.ts` (نفس الشيء)، `subscription-contract.ts` (10.5pt، align center، عند `footerY+90`). اللون `COLOR_VALUE` = `#0f172a`.
+- **الحل:** helper مشترك جديد `src/core/pdf/credit.ts` → `drawDeveloperCredit(doc, y)`:
+  - `System by :` → 7.5pt، regular، رمادي `#64748b` (Slate 500).
+  - `Yassen Mohamed Kotb | 01288536381` → 8.5pt، **bold**، **أسود `#000000`** (أغمق من `#0f172a`).
+  - فاصل 4pt بين الجزأين.
+  - **التوسيط:** يقيس الجزأين بـ `measureText` ثم `startX = (doc.page.width - totalW) / 2` — أي التوسيط على **عرض الصفحة A4** لا على عمود المحتوى، فيثبت مهما تغيّر التخطيط.
+- **الملفات المعدّلة:** `src/core/pdf/credit.ts` (جديد)، `src/core/pdf/receipt.ts`، `src/core/pdf/store-receipt.ts`، `src/core/pdf/subscription-contract.ts` (كلها استدعاء واحد للـ helper بدل الكود المكرر). **لا تغيير في قاعدة البيانات.**
+- **التحقق:**
+  - قياس حبر السطر من الـ PDF: `x 206.80 -> 387.76` → مركز السطر `297.28` مقابل مركز الصفحة `297.64` → انحراف **0.36pt فقط** (متمركز عمليًا)، والارتفاع 7.92pt (يعكس صغر الحجم).
+  - **نفس النتيجة بالضبط في الـ EXE المحزوم**: `PACKAGED PDF OK` + انحراف `0.36pt` → `EXE E2E PASS`.
+  - اختبار انحدار جديد `centers the developer credit on the page width` (stub doc يتحقق من نداءي fill ومن انحراف المركز عن `page.width / 2`).
+  - `tests/pdf.test.ts` = **26** اختبارًا، الحزمة الكاملة **634/634** (54 ملفًا)، typecheck (client + server) نظيف، `dist-exe/GymSystem.exe` مبني.
+- **ملاحظة (discovered-followup):** `MeasureOptions.doc` في `arabic.ts` أصبح **خاملًا (no-op)** لأن `measureText` صار قائمًا كليًا على `getVisualGlyphs` (محرك vector) ولا يستعمل `doc` — لذلك لم يُمرَّر في `credit.ts`. الخيار ما زال موجودًا وموثقًا في `arabic.ts` ولم يُغيَّر هنا.
+- **تحذير تعارض يجب حسمه (docs vs code):** التوثيق في TASK-111 يقول إن تجزئة `splitBiDiRuns` **تعطّل** HarfBuzz وتسبب انعكاس الأرقام (`باقة 12 جلسة` → `باقة 21 جلسة`) وأن الحل هو **عدم التجزئة إطلاقًا**، لكن الكود الحالي في `getVisualGlyphs` **ما زال يستخدم `splitBiDiRuns` مع عكس ترتيب الـ runs**. أحدهما غير صحيح. **لم يُغيَّر أي كود هنا** لأن ذلك خارج نطاق TASK-112؛ يحتاج مراجعة صريحة من المالك قبل أي تعديل على محرك BiDi.
 
-**Phase 4 (done, this session): grouped sidebar.** Added `group: NavGroup` to every `NAV_ROUTES` entry + `NAV_GROUP_ORDER`; sidebar now renders group headers (`nav.group.*`) and only shows groups with ≥1 visible route. Cleaned-up canonical sidebar set: removed `/users`,`/permissions`,`/scanner`,`/health` (their pages now live under /staff + /settings; legacy *routes* still resolvable), and removed the dangling `/hr` icon map entry + `nav.hr` i18n key. Added missing sidebar icons for `/store` (ShoppingBag), `/classes` (ListChecks), `/crm` (MessageSquare).
 
-**Phase 5 (done, pushed `1c88c86`): merged attendance screens.** Merged the two overlapping attendance pages (fast barcode/card check-in + reception search) into a single `/attendance` page with tabs. Extracted `FastCheckInTab` + `ReceptionTab` into `src/components/attendance/`; `checkin-page.tsx`/`reception-page.tsx` re-export them. Sidebar uses single `/attendance` entry. Added i18n `nav.attendance`, `nav.attendanceFast`, `nav.attendanceSearch`.
+### TASK-111: حل جذري لمشكلة انعكاس الأرقام وتداخل النصوص في فواتير وعقود PDF (Done)
+- **الأسباب الجذرية المكتشفة بالتدقيق البرمجي:**
+  1. **سبب انعكاس الأرقام (مثل `1,500.00` تظهر `00.005,1`):**
+     - مكتبة fontkit بها قصور داخلي في خوارزمية BiDi عند وجود نصوص وأرقام داخل نص عربي (مثل `1,500.00 ج.م` أو `باقة 12 جلسة`). كان يتم قلب الأرقام الأوروبية LTR ظناً أنها جزء من السياق اليميني.
+     - بالإضافة لذلك، كان كود `drawVectorText` يقوم بـ `run.glyphs.reverse()` مما يؤدي إلى رسم الأرقام بالمقلوب على الشاشة.
+     - **الحل الجذري المطبق في `arabic.ts`:**
+       - تجزئة النص إلى runs مستقلة: نصوص عربية RTL، وأرقام/أكواد/رموز LTR.
+       - تشكيل كل run بواسطة خط Cairo بشكل مستقل (وبالتالي لا يقوم fontkit بقلب الأرقام مطلقاً، وتظل أرقام مثل `1,500.00` و`12` و`01288536381` و`B1-MEM-000001` بترتيبها الطبيعي).
+       - عكس ترتيب الـ runs ككل لأن القراءة العربية تسير من اليمين إلى اليسار (فيبدأ السطر العربي من اليمين، والـ run الأول في اليمين، ثم الرقم على يساره، ثم العملة على يساره).
+       - تجميع الـ glyphs الناتجة بترتيب بصري يساري موحد (Visual LTR) وإرسالها إلى المسار دون أي قلب للأرقام.
+  2. **سبب تداخل النصوص (كلام متداخل في البطاقات وجداول الإيصالات):**
+     - في دالة `cardField`، كان استخدام سطر أفقي واحد للعنوان والقيمة يسبب تصادماً في المنتصف بين العمودين (`test2كود العضوية:`).
+     - في ترويسة الجدول، كان رأس عمود البيان (`البند والبيان`) يتقاطع في المنتصف مع رأس عمود المبلغ (`المبلغ )جنيه مصري`).
+     - وجود أقواس `(ج.م)` كان يعكس اتجاه القوس بسبب محاذاة الخط.
+     - **الحل الجذري المطبق:**
+       - تحويل خلايا البطاقات إلى **النمط الرأسي المكدس (Stacked Layout)**:
+         - السطر الأول: العنوان (حجم صغير `8.5pt` ولون خفيف `slate-500` محاذى لليمين).
+         - السطر الثاني: القيمة (حجم `10.5pt` ولون أسود بارز `slate-900` محاذى لليمين).
+         - هذا النمط يفصل العنوان عن القيمة تماماً، ويعزل الأعمدة اليمينية واليسارية بحيث يستحيل أي تداخل حتى مع أطول الأسماء.
+       - تعديل أعمدة الجدول في `receipt.ts` لتكون متباعدة بوضوح: عمود البيان يبدأ من اليمين، وعمود المبلغ محاذى لليسار بشكل نظيف، واستبدال الأقواس بفاصل شرطة `- ج.م` لمنع انعكاس القوس.
+       - تعديل صندوق الإجمالي الكبير ليعرض `1,500.00 ج.م` دون أي تشويه.
+  3. **تطبيق الحل وتعميمه وتحسينات طلب المالك:**
+     - تم تحديث `src/core/pdf/arabic.ts` (معالجة `moduleDir` بدون تحذيرات bundler).
+     - تم تعديل مسمى الهاتف إلى `رقم الموبايل` في كافة القوالب (`receipt.ts`, `store-receipt.ts`, `subscription-contract.ts`) لتجنب شكل حرف الهاء المتوسط الغريب في خط Cairo ولتطابق المصطلح الدارج في الصالات الرياضية المصرية.
+     - تم حذف النصوص الطويلة أسفل الفاتورة واستبدالها بتوقيع المطور وبيانات التواصل المعتمدة: `Yassen Mohamed Kotb | 01288536381` بخط عريض بجانب رمز الـ QR.
+     - تم تنظيف متغيرات الألوان غير المستخدمة (`COLOR_MUTED`).
+  4. **التحقق:**
+     - جميع الاختبارات (633 اختباراً عبر 54 ملفاً) ناجحة 100%، واختبارات الـ PDF (25/25) ناجحة.
+     - `npm run typecheck` و `npm run typecheck:server` خاليان تماماً من الأخطاء (0 errors).
+     - تم بناء وتحديث الملف التنفيذي `dist-exe/GymSystem.exe` بنجاح تام.
 
-**Phase 6 (done, pushed `cc3bdb8`): removed fast attendance tab.** Per user request, deleted the "fast (barcode/card)" tab + `/checkin` page entirely — the reception/search screen is now the only attendance UI. Deleted `fast-checkin-tab.tsx`, `checkin-page.tsx`, `attendance-page.tsx`. `/attendance` route now renders `ReceptionPage` gated by `reception.view`; removed `/checkin` route + imports; `NAV_ROUTES` `/attendance` gated by `reception.view`. Removed dead i18n keys `nav.attendanceFast`/`nav.attendanceSearch`. Backend `checkin.*` permissions + `recordCheckIn` engine are KEPT because `reception.checkIn` delegates to them (manager + reception roles already carry `checkin.create` + `checkin.view_history`).
+### TASK-110: إعادة تصميم مخرجات PDF بالكامل بمقاس A4 فخم (Done)
+- **المشاكل التي تم رصدها وإصلاحها في الكتابة:**
+  1. محرك `splitBiDiRuns` اليدوي كان يجزئ السلسلة إلى runs مستقلة، مما يعطل محرك HarfBuzz الخاص بخط Cairo، ويتسبب في انعكاس منطقي للأرقام داخل السياق العربي (مثل `باقة 12 جلسة` تخرج `باقة 21 جلسة`).
+  2. الحل: الاعتماد الكامل والمباشر على HarfBuzz في تشكيل السطر العربي كاملاً مع الأرقام والكلمات اللاتينية والأقواس دون تجزئة، مما جعل `12` و`VIP` و`%` والأرقام تخرج بترتيبها وقراءتها الطبيعية 100%.
+  3. إصلاح محاذاة القيم مع العناوين في نفس السطر (`align="right"` للقيم بجانب العنوان مباشرة بدلاً من رميها أقصى اليسار بفجوة واسعة).
+- **التصميم المودرن الفاخر الموحد (Executive Modern Style):**
+  1. **إطار جمالي خارجي (Outer Frame):** إطار رفيع ذو زوايا دائرية يحيط بكامل الصفحة A4 بتنسيق رسمي.
+  2. **ترويسة ملونة فخمة (Emerald Gradient Header Banner):** شريط علوي باللون الزمردي الداكن الملكي `#0f766e` مع تدرج هندسي يحمل اسم الجيم بالخط العريض وعنوان الإيصال وتاريخ التحرير والفرع.
+  3. **بطاقات بيانات الأعضاء والمعاملة (Card Layout):** بطاقات منفصلة بخلفيات ناعمة `#f8fafc` مع فواصل عمودية وأفقية لبيانات المشترك والكاشير وطريقة الدفع.
+  4. **صندوق الإجمالي المميز (Grand Total Badge):** مستطيل بارز بخلفية خضراء فاتحة `#f0fdf4` وحدود واضحة لإبراز المبلغ المدفوع بخط كبير عريض `18pt`.
+  5. **رمز التحقق والاستجابة السريعة (QR Code):** توليد وتضمين QR Code إلكتروني معتمد في أسفل كل فاتورة/عقد للتحقق السريع من بيانات الإيصال ورقم المعاملة وتاريخها.
+  6. **تعميم التصميم:** تطبيق نفس المعايير الجمالية الفاخرة على:
+     - إيصالات المدفوعات والاشتراكات (`receipt.ts`).
+     - إيصالات مبيعات المتجر ونقاط البيع (`store-receipt.ts`).
+     - عقود واتفاقيات العضوية واللوائح الداخلية (`subscription-contract.ts`).
+- **التحقق:**
+  - جميع الاختبارات (633 اختباراً) ناجحة 100%.
+  - اكتمال typecheck للواجهة والسيرفر بدون أخطاء.
+  - بناء وتحديث ملف التشغيل النهائي `dist-exe/GymSystem.exe`.
 
-**Phase 7 (done, pushed `29de98e`): merged subscriptions + packages + plans into one screen.** Per user request, `/subscriptions` (الاشتراكات) now consolidates الاشتراكات + الباقات + الخطط as one tabbed screen. `SubscriptionsPage` gained a 3rd tab الباقات (renders `<PackagesPage />`, which internally has الباقات + مقارنة tabs) gated by `packages.view`; kept existing الاشتراكات (`subs`) + الخطط (`plans`) tabs. Removed `/packages` from `NAV_ROUTES` sidebar (legacy `/packages` route in `routes/index.tsx` kept for bookmark compat, still renders `PackagesPage`). No backend/schema/permission changes. Note: subscriptions reference `membership_plans` (خطط), while الباقات is a separate richer catalog (time/visit/hybrid + compare).
+### TASK-107: إصلاح تشوّه رسم العربية في فواتير PDF — فصل الحروف المتصلة + قصّ أول حرف + خط الفاصل (Done)
+- **سببان منفصلان ظهروا كعيب واحد «أول حرف ناقص/منفصل»:**
+  1. **خط الفاصل في الرأس كان يقطع ذيل الحروف.** كان على بُعد 5 نقاط من خط الأساس بينما ذيل `ع/ج/ي` أطول، فكان يمر تحت الكلمة ويوهم بأن أول حرف ناقص. الحل: `cur.y += 22` بعد الرأس (نفس المعالجة في الفوتر) + `bodyBottom` +22.
+  2. **letter tracking كان يزيح أول حرف خارج الإطار.** كان `tracking = size * 0.02` يُضاف إلى `originX` في `drawRtlVector`، فتدفع أخيّن glyph (أقصى اليمين) خارج حدود العمود في `align="right"`، فتُقصّ أول حرف في كل عنوان. الحل: `originX = penRight - gl.advanceWidth * scale` بدون أي إزاحة.
+- **السبب الجذري الثالث (TASK-107): منع letter tracking نهائيًا.** الـ tracking أُضيف ظنًا أنه يخفف «الالتصاق»، لكنه **قطّع الحروف المتصلة** لأن العربية خط متصل (cursive) والحروف المتصلة تتشارك الضربات عند حدود الـ advance. النتيجة: «شهر» و«الرئيسي» خرجا حروفًا منفصلة. الحل: **حذف `tracking` بالكامل** من `drawRtlVector` ومن `measureText` (المقياس يجب أن يعكس الرسم حرفيًا). لم يتبقَّ سوى `spaceWidth = size * 0.3` **بين الكلمات فقط**.
+- **التحقق الهندسي (لا eyeballing):** تم توليد PDF عينة وقراءة `get_drawings()` بـ PyMuPDF، ثم مقارنة الفراغات بين bboxes المتتالية:
+  - `اب` → عرض الـ glyphs من اليسار لليمين `[9.37, 1.08]` ⇒ الألف (ضيق) على اليمين ⇒ ترتيب RTL صحيح.
+  - `شهر` → gaps `[-0.56, -0.56]` ⇒ متصل بالكامل.
+  - `قيمة` → gaps `[-0.56, -0.56, -0.56]` ⇒ متصل بالكامل.
+  - `الرئيسي` → فجوة موجبة واحدة فقط (2.41) عند `ل|ا` — وهي الحرف الوحيد الذي لا يستطيع الوصل في السلسلة.
+  - `الاشتراك` → الفجوات عند `ك|ا` و`ا|ر` و`ش|لا` و`لا|ا` فقط، أي بالضبط عند حروف عدم الوصل (ا/ر).
+  - الفجوة السالبة = تداخل الضربات = اتصال. لم يتبقَّ أي tracking.
+  - المبدأ العام: `penRight -= gl.advanceWidth * scale` يضع كل glyph على موضعه التصميمي بالضبط، فالاتصال صحيح بالقياس لا بالتخمين.
+- **إصلاح seam (الحروف «متقطعة»):** كان `doc.fill(color)` يُستدعى **داخل** حلقة glyph لكل حرف على حدة. الحروف المتصلة تتشارك الضربات عند حدود الـ advance، وملء كل حرف على حدة يترك **خطوطًا بيضاء رفيعة (anti-aliasing seams)** تقطع Forms الحروف المتصلة فيظهر النص وكأنه مفكّك. **الحل: تجميع كل contours السطر في path واحد واستدعاء `fill()` مرة واحدة بعد الحلقة** — قاعدة non-zero winding توحّد الأشكال فلا يبقى أي seam. تم التأكد أن كل سطر عربي أصبح **fill path واحدًا** (كان 3–6). اختبار `fills an Arabic line as ONE path so cursive joins have no seams` في `tests/pdf.test.ts` يحرس ذلك عبر stub doc يعدّ نداءات `fill`.
+- **ملاحظة أمانة علمية:** رسترة PyMuPDF (MuPDF) **لا تُظهر** فرق الـ seam بين التعبئة لكل حرف والتعبئة الموحّدة (المكوّنات واحدة: 4 لـ`شهر` في الحالتين)، فالـ seam **لا يمكن إعادة إنتاجه أو قياسه داخل البيئة الحالية** — الفرضية مبنية على سلوك الـ rasterizers الأخرى (PDFium/Edge/Acrobat) المعروفة بإظهاره.
+- **TASK-108 — تثبيت المرجع الصحيح: مطابقة محرك العربية لـ Chrome/HarfBuzz (.Done)**
+  - **الدرس الحاسم:** كل التحقق السابق كان على `get_drawings()` (هندسي) ولم يكن كافيًا. المرجع الصحيح هو **تشكيل HarfBuzz نفسه**، ويمكن 얻اؤه من Chrome عبر `msedge --headless=new --screenshot` + `@font-face` بخط Cairo نفس الملف. تمت مقارنة profile العرض (عرض الحبر + الفجوات الداخلية) بين PDF المُولَّد وChrome لكل نص في الفاتورة.
+  - **نتيجة المقارنة عند size=100 (موثوقة؛ الأحجام 8–11px غير موثوقة بسبب antialiasing/hinting):**
+    | النص | Chrome | المحرك | النتيجة |
+    |---|---|---|---|
+    | `جنيه` | 162 (بلا فجوات) | 162 (بلا فجوات) | مطابقة تامة |
+    | `قيمة الاشتراك` | 565 | 565 | مطابقة تامة (الفجوات متطابقة) |
+    | `جنيه` (bold) | 186 | 186 | مطابقة تامة |
+    | `مدفوع بالكامل` | 616 | 615 | فرق 1px (ضجيج rasterizer) |
+    | `الفرع الرئيسي` | 518 | 517 | فرق 1px |
+    | `فاتورة دفع` | 443 | 442 | فرق 1px |
+    | `الإجمالي بعد الخصم` | 787 | 786 | فرق 1px |
+  - **عيب حقيقي اكتُشف بهذه المقارنة:** فاصل الكلمات كان `spaceWidth = size * 0.3` بينما فاصل Cairo الحقيقي ≈ **0.22em**، فكانت كل النصوص متعددة الكلمات **أعرض بـ 4–8%** عن العرض على شاشة التطبيق (مثال: `قيمة الاشتراك` كانت 588 مقابل 565 فعليًا).
+  - **الحل:** تشكيل **السطر كاملًا كـ run واحد** عبر `font.layout(value)` بدل تقسيمه على `" "` يدويًا، فيأتي فاصل الكلمات من advance الفراغ الحقيقي في الخط، ويظل الوصل سليمًا لأن الـ shaper لا يوصل عبر الفراغ. حُذف كليًا `spaceWidth` من `measureText` و`drawRtlVector` (وكذلك من حساب `total`).
+  - **تحقّق إضافي على `جنيه`:** `measureText("جنيه",{size:8})` = **13.768** ثابت وخطي عند كل الأحجام (ratio 1.7210)، ومطابق لخط Cairo، وفي الفاتورة الفعلية يظهر ككتلة حبر **واحدة متصلة** في كل صفوف المال الخمسة (regular 13.20pt، bold 14.88pt) بلا أي فجوة داخلية.
+  - **تحذير منهجي (مهم):** `vi.mock("@/core/pdf/arabic")` في vitest **يُفسِد**_metrics_ العربية (أعاد `18.000` بدل `13.768` لكلمات، و`19.384` بدل `15.664` للـ bold) لأن سياق الوحدة يغيّر حل مسار الخط. **لا يجوز الاعتماد على `vi.mock` لقياس `measureText`**؛ القياس الصحيح تم عبر **instrumentation مباشر داخل `src/core/pdf/arabic.ts`** (سجل `[rtl]` مؤقت تم حذفه) أو عبر standalone renders. كما أن `vi.mock` آنِذاك أعطى قياسات غير واقعية استُخدمت في استنتاج خاطئ (استُبعدت بالكامل بعد إعادة القياس).
+  - **الاختبارات:** `tests/pdf.test.ts` = **22** اختبارًا. أضيف `matches the browser's shaping width for a multi-word label` (يثبّت عدم رجوع فاصل الكلمات إلى 0.3em) وتعديل `lays out Arabic cursively...` ليؤكد أن فاصل الكلمات > 0 و< 0.3em. الحزمة الكاملة **630/630** (54 ملفًا)، typecheck نظيف، `dist-exe/GymSystem.exe` مبني، وPDF EXE E2E ناجح.
+  - **الأدوات المؤقتة المستخدمة في التحقق (حُذفت كلها):** `tests/tmp-probe.test.ts`، `probe.pdf`، `probe-meta.json`، `probe-cases.json`، `ref.html`، `ref.png`، `cmp2.py`، `fontcheck.mjs`. إن أُعيد التحقق مستقبلًا فاستخدم `msedge --headless=new --disable-gpu --screenshot` + PyMuPDF `page.get_pixmap(dpi=..., clip=Rect(...))` (تذكير: `clip` بالـ **نقاط** لا بالبكسل).
+  - **إصلاح مُضاف:** عنوان الفاتورة أصبح تلقائيًا حسب نوع العملية عبر `DOC_TYPE_TITLES` (`payment_receipt: "فاتورة دفع"`) مع تجاوز يدوي من `SETTING_KEYS.receiptTitle`؛ سطر العنوان = `<title> · <receiptNo>`.
+- **الملفات المعدّلة:** `src/core/pdf/arabic.ts`، `src/core/pdf/receipt.ts`، `tests/pdf.test.ts`.
+- **تحذير قائم (discovered-followup):** النصوص المختلطة عربي/LTR (مثل `اشتراك شهري - 12 جلسة (خصم ٢٠٪) VIP`) تُعامل كـ run عربي واحد، وتحتاج تقسيمًا إلى runs. لم تُعالج بعد.
+- **تحذير قائم (TASK-105، مستقل):** سجلات `whatsapp-gateway/wa-session.js` تُظهر تعارض Chromium profile/lock؛ `whatsapp-gateway/wa-session.js` في commit `49b2361` يستخدم `executablePath` بشكل مشروط وEdge مثبت — لا يوجد إصلاح مُتحقَّق منه بعد.
 
-**Phase 8 (done, pushed `9f53d30`): resolved the "two الباقات" duplication — modern `packages` is now THE interface.** Investigation revealed the `plans` tab in `/subscriptions` was actually labeled "الباقات" too (i18n `plans.tabPlans: "الباقات"`), so there were two tabs both named الباقات (legacy `PlansGrid` from `membership_plans` vs modern `PackagesPage` from `packages`). Per user decision ("الباقات هي الواجهة"), `SubscriptionsPage` now shows only 2 tabs (`subs` + `packages`); the legacy `PlansGrid`/`PlanFormModal` (simple plans) is moved to a secondary sub-view toggled by an "إدارة الخطط البسيطة" button (with back). `SubscriptionFormModal` now defaults to the first package when packages exist (packages are the primary choice; simple plan remains a secondary fallback). Backend/schema untouched — `membership_plans` remains the load-bearing table for attendance/reports/payments via synthetic plans. Added i18n `plans.secondaryManage`.
+### TASK-106: Ù†Ø¸Ø§Ù… ÙÙˆØ§ØªÙŠØ± PDF (Ø¥ÙŠØµØ§Ù„ Ù‚Ø¨Ø¶) Ù…Ø¹ ØªØ­Ù…ÙŠÙ„/Ø·Ø¨Ø§Ø¹Ø©/Ø¥Ø±Ø³Ø§Ù„ ÙˆØ§ØªØ³Ø§Ø¨ Ù„Ù„Ø¹Ù…ÙŠÙ„ (Done)
+- **Ø§Ù„Ù…Ø·Ù„ÙˆØ¨ (Ù…Ù† Ø§Ù„Ù…Ø§Ù„Ùƒ):** Â«Ù†Ø¸Ø§Ù… pdf Ù„Ù„ÙÙˆØ§ØªÙŠØ± ÙˆØ§Ù„ØªÙ‚Ø§Ø±ÙŠØ± ÙˆÙƒÙ„ Ø­Ø§Ø¬Ù‡ ÙˆØ§Ù…ÙƒØ§Ù†ÙŠÙ‡ Ø§Ø±Ø³Ø§Ù„Ù‡Ø§ Ù„Ù„Ø¹Ù…ÙŠÙ„Â». Ø¨Ø¹Ø¯ Ø§Ù„Ù†Ù‚Ø§Ø´ Ø§Øª agreed Ø¹Ù„Ù‰ Ø§Ù„Ù…Ø±Ø­Ù„Ø© Ø§Ù„Ø£ÙˆÙ„Ù‰: **Ø¥ÙŠØµØ§Ù„ Ù‚Ø¨Ø¶ / ÙØ§ØªÙˆØ±Ø© Ø§Ø´ØªØ±Ø§Ùƒ** ÙÙ‚Ø·ØŒ Ù…Ø¹ **Ø¥Ø±Ø³Ø§Ù„ Ù„Ù„Ø¹Ù…ÙŠÙ„ Ø¹Ø¨Ø± ÙˆØ§ØªØ³Ø§Ø¨**ØŒ ÙˆÙ…Ù„Ù **Ø£Ø±Ø´ÙŠÙ** Ù„ÙƒÙ„ Ø¹Ù…Ù„ÙŠØ© Ø¥Ø±Ø³Ø§Ù„.
+- **Ø§Ù„Ù…ÙˆØ§ÙÙ‚Ø§Øª:** Ø§Ù„Ù…Ø§Ù„Ùƒ ÙˆØ§ÙÙ‚ Ø¹Ù„Ù‰ Ù…ÙƒØªØ¨Ø§Øª Ø®Ø§Ø±Ø¬ÙŠØ© ÙˆØ¹Ù„Ù‰ Ø¬Ø¯ÙˆÙ„ Ø£Ø±Ø´ÙŠÙ `pdf_deliveries`.
+- **Ø§Ù„Ø­Ù„ Ø§Ù„Ø¬Ø°Ø±ÙŠ:**
+  1. **Ù…Ø­Ø±Ùƒ Ø§Ù„Ù†Øµ Ø§Ù„Ø¹Ø±Ø¨ÙŠ (`src/core/pdf/arabic.ts`)** â€” ÙˆÙ‡Ù‰ Ø£Ù‡Ù… Ù†Ù‚Ø·Ø© ÙÙŠ Ø§Ù„Ø´ØºÙ„ Ø¯Ù‡:
+     - PDFKit ÙŠØ±Ø³Ù… Ø§Ù„Ø­Ø±ÙˆÙ Ù…Ù† Ø§Ù„ÙŠØ³Ø§Ø± Ù„Ù„ÙŠÙ…ÙŠÙ† Ø­Ø³Ø¨ ØªØ±ØªÙŠØ¨ Ø§Ù„Ù€ shaperØŒ ÙˆÙ…ÙÙŠØ´ hook Ù„Ø¥Ø¯Ø®Ø§Ù„ glyphs Ø¬Ø§Ù‡Ø²Ø©. Ø§Ù„Ù†ØªÙŠØ¬Ø© Ø§Ù„ÙØ¹Ù„ÙŠØ© (Ø§ØªØ£ÙƒØ¯Ù†Ø§ Ù…Ù†Ù‡Ø§ Ø¨ØªØµÙˆÙŠØ± Ø§Ù„Ù€ PDF): Â«Ø¥ÙŠØµØ§Ù„ Ù‚Ø¨Ø¶Â» Ø¨ØªØ·Ù„Ø¹ Â«Ù‚Ø¨Ø¶Ø¥ÙŠØµØ§Ù„Â» ÙˆÂ«Ø£Ø­Ù…Ø¯ Ù…Ø­Ù…Ø¯ Ø¹Ø¨Ø§Ø³Â» Ø¨ØªØ·Ù„Ø¹ Â«Ø¹Ø¨Ø§Ø³Ø­Ù…Ø¯ Ø£Ø­Ù…Ø¯Â».
+     - Ø§Ù„Ø·Ø±ÙŠÙ‚Ø© Ø§Ù„ØµØ­ (Ù†ÙØ³ Ø§Ù„Ù„ÙŠ Ø¨ÙŠØ¹Ù…Ù„Ù‡ Ø§Ù„Ù…ØªØµÙØ­): ØªØ´ÙƒÙŠÙ„ ÙƒÙ„ **ÙƒÙ„Ù…Ø©** Ø¨Ø§Ù„ØªØ±ØªÙŠØ¨ Ø§Ù„Ù…Ù†Ø·Ù‚ÙŠ (fontkit Ø¨ÙŠØ·Ø¨Ù‘Ù‚ Ø¬Ø¯Ø§ÙˆÙ„ GSUB ÙØ§Ù„Ø­Ø±ÙˆÙ Ø¨ØªØ§Ø®Ø¯ Ø£Ø´ÙƒØ§Ù„Ù‡Ø§ Ø§Ù„ØµØ­ ÙˆØ§Ù„Ù†Ù‚Ø· Ø¨ØªÙØ¶Ù„ Ù…ØªØ¹Ù„Ù‚Ø©)ØŒ Ø¨Ø¹Ø¯ÙŠÙ† Ø±Ø³Ù… Ø§Ù„Ù€ glyphs **Ø¨ØªØ±ØªÙŠØ¨ Ù…Ø¹ÙƒÙˆØ³** ÙˆØ§Ù„Ù‚Ù„Ù… Ø¨ÙŠØªØ­Ø±Ùƒ **Ù„Ù„ÙŠØ³Ø§Ø±**.
+     - **Ù…Ø¹Ù„ÙˆÙ…Ø© Ù…Ù‡Ù…Ø©:** ÙƒÙ„Ù…Ø© Â«Ø¬Ù†ÙŠÙ‡Â» ÙˆØ§Ù„Ø£Ø±Ù‚Ø§Ù… Ù„Ø§Ø²Ù… ÙŠÙƒÙˆÙ†ÙˆØ§ ÙÙŠ Ø®Ù„Ø§ÙŠØ§ Ù…Ù†ÙØµÙ„Ø©ØŒ Ù„Ø£Ù† Ø§Ù„Ø±Ù‚Ù… LTR ÙˆØ§Ù„ÙƒÙ„Ù…Ø© Ø¹Ø±Ø¨ÙŠØ© RTL â€” Ù„Ùˆ Ø§ØªØ¬Ù…Ø¹ÙˆØ§ ÙÙŠ Ù†Øµ ÙˆØ§Ø­Ø¯ Ø¨ÙŠØ­ØµÙ„ ØªØµØ§Ø¯Ù….
+     - **Ù†ØªÙŠØ¬Ø© Ù…Ù‚Ø¨ÙˆÙ„Ø©:** Ø§Ù„Ø¹Ø±Ø¨ÙŠ Ø¨ÙŠØ·Ù„Ø¹ vector (Ù…Ø´ Ù†Øµ Ù‚Ø§Ø¨Ù„ Ù„Ù„ØªØ­Ø¯ÙŠØ¯/Ø§Ù„Ø¨Ø­Ø«)ØŒ ÙˆØ§Ù„Ø£Ø±Ù‚Ø§Ù… ÙˆØ§Ù„Ø£ÙƒÙˆØ§Ø¯ Ø¨ØªÙØ¶Ù„ Ù†Øµ Ø­Ù‚ÙŠÙ‚ÙŠ.
+  2. **Ù…Ù‡Ù…: Ù„Ø§Ø²Ù… Ø®Ø·ÙˆØ· static** â€” Ø§Ù„Ù€ subsetter Ø¨ØªØ§Ø¹ PDFKit Ø¨ÙŠØ®Ø±Ù‘Ø¨ Ø§Ù„Ø®Ø· Ø§Ù„Ù€ variable ÙˆØ¨ÙŠØ·Ù„Ø¹ PDF ÙØ§Ø¶ÙŠ. Ù„Ø°Ù„Ùƒ `npm run build:fonts` Ø¨ÙŠÙˆÙ„Ù‘Ø¯ `Cairo-Regular.ttf` Ùˆ `Cairo-Bold.ttf` (Ø«Ø§Ø¨ØªØ©ØŒ 321 Ùƒ.Ø¨) Ù…Ù† Ø§Ù„Ø®Ø· Ø§Ù„Ù€ variableØŒ Ùˆ `build-exe` Ø¨ÙŠÙØ´Ù„ Ù„Ùˆ Ù†Ø§Ù‚ØµÙŠÙ† ÙˆØ¨ÙŠÙ†Ø³Ø®Ù‡Ù… Ù„Ù€ `dist-exe/assets/fonts/`.
+  3. **ØªØ­Ø°ÙŠØ± Ù…Ù‡Ù… Ù„Ù„Ù€ backend:** pdfkit Ù…ÙƒØªÙˆØ¨ ESM ÙˆØ¨ÙŠÙØªØ±Ø¶ `import.meta`. Ø¹Ù†Ø¯ ØªØ¬Ù…ÙŠØ¹Ù‡ CJS ÙƒØ§Ù† Ø§Ù„Ù€ **Ø³ÙŠØ±ÙØ± ÙƒÙ„Ù‡ Ù…Ø´ Ø¨ÙŠÙ‚ÙˆÙ…** (`ERR_INVALID_URL`) ÙˆÙƒÙ…Ø§Ù† `#standard-fonts/*` Ù…Ø´ Ø¨ÙŠØªØ­Ù„. Ø§ØªØµÙ„Ù‘Ø­ ÙÙŠ `scripts/build-server.mjs` Ø¹Ø¨Ø± esbuild plugin â€” **ÙˆØ§Ù„Ø­Ø§Ù„Ø© Ø¯ÙŠ Ø¸Ù‡Ø±Øª Ø¨Ø³ Ù„Ù…Ø§ Ø´ØºÙ‘Ù„Ù†Ø§ Ø§Ù„Ø¨Ù†ÙŠØ© Ø§Ù„Ù…Ø¨Ù†ÙŠØ©ØŒ Ù…Ø´ ÙÙŠ Ø§Ù„Ù€ unit tests**.
+  4. **Ø§Ù„Ø®Ø¯Ù…Ø© (`src/core/services/pdf.service.ts`)** â€” `generatePaymentReceipt` (Ù‚Ø±Ø§Ø¡Ø© ÙÙ‚Ø·ØŒ Ù…Ø§ Ø¨ØªØ¹Ù…Ù„Ø´ Ø³Ø¬Ù„) Ùˆ `sendPaymentReceipt` (Ø¨ØªØ¹Ù…Ù„ Ø³Ø¬Ù„ ÙÙŠ `pdf_deliveries` Ø¯Ø§Ø¦Ù…Ø§Ù‹ Ø­ØªÙ‰ Ø¹Ù†Ø¯ Ø§Ù„ÙØ´Ù„) Ùˆ `listPdfDeliveries`. Ø±Ù‚Ù… Ø§Ù„Ø¥ÙŠØµØ§Ù„ ØªØ³Ù„Ø³Ù„ÙŠ `RCP-<Ø³Ù†Ø©>-<6 Ø£Ø±Ù‚Ø§Ù…>` ÙˆØ¨ÙŠØªØ«Ø¨Øª Ø£ÙˆÙ„ Ù…Ø±Ø© Ø¹Ù„Ù‰ Ø§Ù„Ø¯ÙØ¹Ø©.
+  5. **Ø§Ù„ÙˆØ§Ø¬Ù‡Ø©:** `ReceiptActions` (ØªØ­Ù…ÙŠÙ„ / Ø·Ø¨Ø§Ø¹Ø© / Ø¥Ø±Ø³Ø§Ù„ ÙˆØ§ØªØ³Ø§Ø¨) ÙÙŠ ØµÙØ­Ø© Ø§Ù„Ù…Ø¯ÙÙˆØ¹Ø§Øª ÙˆÙÙŠ ØªØ¨ÙˆÙŠØ¨ Ù…Ø¯ÙÙˆØ¹Ø§Øª Ø§Ù„Ø¹Ø¶Ùˆ.
+  6. **Ø§Ù„ØµÙ„Ø§Ø­ÙŠØ§Øª:** `pdf.receipt` (owner + manager + reception). Ø§Ù„ØªÙˆÙ„ÙŠØ¯ ÙˆØ§Ù„Ø¹Ø±Ø¶ Ù…Ø³Ù…ÙˆØ­ ÙÙŠ ÙˆØ¶Ø¹ Ø§Ù„Ù‚Ø±Ø§Ø¡Ø© ÙÙ‚Ø·Ø› Ø§Ù„Ø¥Ø±Ø³Ø§Ù„ (ÙƒØªØ§Ø¨Ø©) Ù…Ø´ Ù…Ø³Ù…ÙˆØ­.
+  7. **Ù‚Ø§Ø¹Ø¯Ø© Ø§Ù„Ø¨ÙŠØ§Ù†Ø§Øª â€” Migration v42:** Ø¬Ø¯ÙˆÙ„ `pdf_deliveries` + Ø¹Ù…ÙˆØ¯ `payments.receipt_no` + Ø¹Ø¯Ù‘Ø§Ø¯ `receipt_no`. Ø§Ù„Ø¹Ù…ÙˆØ¯ Ø¨ÙŠØªØ¶Ø§Ù Ø¨Ø·Ø±ÙŠÙ‚Ø© Ø¯ÙØ§Ø¹ÙŠØ© (Ø²ÙŠ v41) Ø¹Ø´Ø§Ù† Ø§Ø®ØªØ¨Ø§Ø± Ø§Ù„ØªØ±Ù‚ÙŠØ© Ø¨ÙŠØ¹ÙŠØ¯ Ø¨Ù†Ø§Ø¡ skeleton Ù†Ø§Ù‚Øµ.
+- **Ø§Ù„Ø§Ø®ØªØ¨Ø§Ø±Ø§Øª ÙˆØ§Ù„ØªØ­Ù‚Ù‚:**
+  - `tests/pdf.test.ts` â€” 13 Ø§Ø®ØªØ¨Ø§Ø± (PDF ØµØ§Ù„Ø­ ØµÙØ­Ø© ÙˆØ§Ø­Ø¯Ø©ØŒ Ø§Ù„Ø®Ø· Ù…Ø¯Ù…Ø¬ØŒ Ø§Ù„ØªÙˆÙ„ÙŠØ¯ Ù…Ø§ Ø¨ÙŠØ³Ø¬Ù„Ø´ØŒ Ø±ÙØ¶ Ø¨Ø¯ÙˆÙ† ØµÙ„Ø§Ø­ÙŠØ©ØŒ `no_phone` Ù‚Ø¨Ù„ `not_configured`ØŒ Ø§Ù„Ø£Ø±Ø´ÙØ©ØŒ ÙˆØ§Ø¬Ù‡Ø© Ø§Ù„ØªØ±Ø¬Ù…Ø©).
+  - `node scripts/pdf-e2e.mjs` â€” Ø¨ÙŠØ´ØºÙ‘Ù„ `dist-server/index.cjs` Ø§Ù„Ø­Ù‚ÙŠÙ‚ÙŠ ÙˆÙŠØ¹Ù…Ù„ ÙØ§ØªÙˆØ±Ø© Ø¹Ø¨Ø± HTTP.
+  - `node scripts/pdf-exe-e2e.mjs` â€” Ø¨ÙŠØ´ØºÙ‘Ù„ `GymSystem.exe` Ø§Ù„Ù…Ø­Ø²ÙˆÙ… Ù…Ù† Ø¬ÙˆÙ‡ Ù…Ø³Ø§Ø± **Ø®Ø§Ø±Ø¬ Ø§Ù„Ù…Ø³ØªÙˆØ¯Ø¹** Ø¹Ø´Ø§Ù† ÙŠØªØ£ÙƒØ¯ Ø¥Ù† Ø§Ù„Ø®Ø· Ø§ØªÙ„Ù‚Ø· ØµØ­ Ù…Ù† `GYMSYSTEM_EXE_DIR`.
+  - Ø§Ù„Ø¥Ø¬Ù…Ø§Ù„ÙŠ: **621/621 Ø§Ø®ØªØ¨Ø§Ø± Ù†Ø§Ø¬Ø­** ÙÙŠ 54 Ù…Ù„ÙØŒ typecheck Ù†Ø¶ÙŠÙØŒ Ùˆ `dist-exe/GymSystem.exe` Ù…Ø¨Ù†ÙŠ ÙˆØ·Ø§Ù„Ø¹ Ø§Ø®ØªØ¨Ø§Ø± Ø´Ø§Ù…Ù„.
+- **Ù…Ù„ÙØ§Øª:** `src/core/pdf/arabic.ts`ØŒ `src/core/pdf/receipt.ts`ØŒ `src/core/services/pdf.service.ts`ØŒ `server/rpc/pdf.rpc.ts`ØŒ `src/components/finance/receipt-actions.tsx`ØŒ `assets/fonts/*`ØŒ `scripts/build-fonts.mjs`ØŒ `scripts/pdf-e2e.mjs`ØŒ `scripts/pdf-exe-e2e.mjs`ØŒ `tests/pdf.test.ts`.
 
-**Phase 9 (done, this session): merged the two confusing financial pages into one clarified screen.** User: "خزينة النادي والاغلاق اليومي مش مفهومين". Approved direction: rename/clarify + redesign + fix broken UI + merge into one page. `/treasury` is now the single tabbed container "الخزينة النقدية" with 2 tabs:
-- **الإغلاق اليومي** (`tabClosing`) — the daily closing: expected (from ledger) vs counted per box (النادي/المتجر), reopen/print/history/detail. Copied from old treasury page.
-- **ورديات الخزينة** (`tabSessions`) — the cash drawer sessions (open/close session, counted vs expected difference, history). `cash-page.tsx` became `CashSessionsPanel` (page title removed) embedded as the tab; a new `CashSessionsPage` wrapper re-exports the standalone page for the kept legacy `/cash` route.
-Nav: removed `/cash` sidebar entry (was `payments.view`); single `/treasury` entry now gated by `permissions: ["cash.daily_close", "payments.view"]` (any-of) so nobody loses access — a `payments.view`-only user sees only the ورديات tab. `nav.cash` i18n key removed; renamed `nav.treasury` → "الخزينة النقدية".
-Broken-UI fixes in the closing panel: removed two dead `value="" onChange={()=>{}}` reason inputs; removed the misleading duplicate "counted cash (نقدي)" box in the detail financials (it wrongly showed `expected.cash` as counted — real counted is `countedCashMinor`, already shown in the closed section); simplified "إنشاء / تحديث السجل" → "إنشاء سجل الإغلاق اليومي" with clearer hint; box cards now titled صندوق النادي/المتجر with a shared `closingCardHint`. Added i18n `treasury.tabClosing`/`tabSessions`/`tabClosingHint`/`tabSessionsHint`/`closingCardHint`. Backend/schema untouched.
+### TASK-104: Ø­Ø°Ù Ø£ÙŠ ÙƒØ§Ø±Øª Ù…Ø·Ø¨ÙˆØ¹ Ù…Ù† ØµÙØ­Ø© Ø§Ù„ÙƒØ±ÙˆØª ÙˆØµÙØ­Ø© Ø§Ù„Ø¹Ø¶Ùˆ (Done)
+- **Ø§Ù„Ù…Ø·Ù„ÙˆØ¨ (Ù…Ù† Ø§Ù„Ù…Ø§Ù„Ùƒ):** Â«Ø¹Ø§ÙŠØ² ÙŠØ¨Ù‚Ù‰ ÙÙŠÙ‡ Ù…ÙŠØ²Ù‡ ÙÙŠ Ø§Ù„Ø³ÙŠØ³ØªÙ… Ù…Ù† Ø®Ù„Ø§Ù„ ØµÙØ­Ù‡ Ø§Ù„Ø¹Ø¶Ùˆ Ø§Ùˆ ØµÙØ­Ù‡ Ø§Ù„ÙƒØ±ÙˆØª Ø§Ù†ÙŠ Ø§Ù‚Ø¯Ø± Ø§Ù…Ø³Ø­ Ø§ÙŠ ÙƒØ±Øª Ù…Ø±Ø¨ÙˆØ· Ø¨Ø¹Ø¶ Ø¨Ø³ Ø§Ù„ÙƒØ±ÙˆØª Ø§Ù„Ù…Ø·Ø¨ÙˆØ¹Ù‡ Ø¨Ø³Â».
+- **Ø§Ù„ÙˆØ¶Ø¹ Ø§Ù„Ø³Ø§Ø¨Ù‚:** ÙƒØ§Ù†Øª `deleteCard` Ù…ÙˆØ¬ÙˆØ¯Ø© ÙÙŠ Ø§Ù„Ø®Ø¯Ù…Ø© ÙˆØ§Ù„Ù…ÙØ³Ø¬ÙŽÙ‘Ù„Ø© ÙÙŠ RPCØŒ Ù„ÙƒÙ†Ù‡Ø§ **Ù…ÙŠØªØ©** â€” Ù„Ø§ ÙŠÙˆØ¬Ø¯ Ø£ÙŠ Ø²Ø± Ø­Ø°Ù ÙÙŠ Ø£ÙŠ ÙˆØ§Ø¬Ù‡Ø©ØŒ ÙˆØ«Ù„Ø§Ø«Ø© Ù…ÙØ§ØªÙŠØ­ Ø£Ø®Ø·Ø§Ø¡ ÙƒØ§Ù†Øª Ù…ÙÙ‚ÙˆØ¯Ø© Ù…Ù† `ar.ts` Ù…Ø§ ÙƒØ§Ù†Ø´ ÙŠÙ…Ø± Ø§Ø®ØªØ¨Ø§Ø± `i18n-coverage`.
+- **Ø§Ù„Ø­Ù„ Ø§Ù„Ø¬Ø°Ø±ÙŠ:**
+  1. **Ø§Ù„Ø®Ø¯Ù…Ø© (`src/core/services/cards.service.ts`):** Ø¥Ø¶Ø§ÙØ© `DeleteCardOptions { force }` Ùˆ `DeleteCardResult { unassigned, detachedAttendance }`.
+     - **Ø§Ù„ÙƒØ±ÙˆØª Ø§Ù„Ø§ÙØªØ±Ø§Ø¶ÙŠØ© (`kind='virtual'`) Ù…Ø­Ù…ÙŠØ© Ø¯Ø§Ø¦Ù…Ø§Ù‹** â€” Ø­ØªÙ‰ Ù…Ø¹ `force` â€” Ù„Ø£Ù†Ù‡Ø§ Ø£Ø³Ø§Ø³ Ø­Ø¶ÙˆØ± Ø§Ù„Ø¹Ø¶Ùˆ (Ø¨Ø§Ø±ÙƒÙˆØ¯Ù‡Ø§ = ÙƒÙˆØ¯ Ø§Ù„Ø¹Ø¶Ùˆ). Ù„Ùˆ Ø§ØªØ´Ø§Ù„Øª Ù…Ø´ Ù‡ÙŠÙ‚Ø¯Ø± ÙŠØ¹Ù…Ù„ check-in.
+     - **Ø§Ù„ÙˆØ¶Ø¹ Ø§Ù„Ø¢Ù…Ù† (Ø¨Ø¯ÙˆÙ† `force`):** ÙŠØ±ÙØ¶ Ø§Ù„ÙƒØ§Ø±Øª Ø§Ù„Ù…Ø±Ø¨ÙˆØ· Ø¨Ø¹Ø¶Ùˆ (`cardAssignedCannotDelete`) ÙˆØ§Ù„ÙƒØ§Ø±Øª Ø§Ù„Ù„ÙŠ Ø¹Ù„ÙŠÙ‡ Ø³Ø¬Ù„ Ø­Ø¶ÙˆØ± (`cardHasAttendanceCannotDelete`).
+     - **Ø§Ù„ÙˆØ¶Ø¹ Ø§Ù„Ù‚Ù‡Ø±ÙŠ (`force: true`):** ÙŠÙÙƒ Ø§Ù„Ø±Ø¨Ø· Ù…Ù† Ø§Ù„Ø¹Ø¶Ùˆ (`CARD_UNASSIGNED` ÙÙŠ Ø³Ø¬Ù„ Ø§Ù„Ù…Ø±Ø§Ø¬Ø¹Ø©)ØŒ ÙˆÙŠÙØµÙ„ Ø³Ø¬Ù„Ø§Øª Ø§Ù„Ø­Ø¶ÙˆØ± Ø¨Ø¯Ù„ Ø­Ø°ÙÙ‡Ø§ (`UPDATE attendance SET card_id = NULL`) Ø­ØªÙ‰ Ù„Ø§ ØªÙ†ÙƒØ³Ø± Ù…Ø±Ø§Ø¬Ø¹ Ø§Ù„Ø­Ø¶ÙˆØ± Ø§Ù„ØªØ§Ø±ÙŠØ®ÙŠØ©ØŒ Ø«Ù… ÙŠØ­Ø°Ù `card_deliveries` Ù‚Ø¨Ù„ `cards` (ØªØ±ØªÙŠØ¨ Ø¢Ù…Ù† Ù„Ù„Ù€ FK)ØŒ ÙˆÙŠØ³Ø¬Ù‘Ù„ `CARD_DELETED` Ù…Ø¹ Ø¹Ø¯Ø¯ Ø§Ù„Ø³Ø¬Ù„Ø§Øª Ø§Ù„Ù…ÙØµÙˆÙ„Ø©.
+     - ÙƒÙ„ Ø°Ù„Ùƒ Ø¯Ø§Ø®Ù„ `db.transaction` ÙˆØ§Ø­Ø¯Ø©. `force` ÙŠÙÙ‚Ø±Ø£ Ø¨Ù€ `opts != null && opts.force === true` Ù„Ø£Ù† Ø§Ù„Ù€ RPC ÙŠÙ…Ø±Ø± JSON Ø®Ø§Ù… â€” Ø£ÙŠ Ù‚ÙŠÙ…Ø© ØºÙŠØ± `true`-boolean ØªØ±Ø¬Ø¹ Ù„Ù„ÙˆØ¶Ø¹ Ø§Ù„Ø¢Ù…Ù†.
+     - **Ù„Ø§ ÙŠÙˆØ¬Ø¯ migration** â€” ÙƒÙ„ Ø§Ù„ØªØºÙŠÙŠØ±Ø§Øª Ø¹Ù„Ù‰ Ù…Ø³ØªÙˆÙ‰ Ø§Ù„Ø®Ø¯Ù…Ø©.
+  2. **Ø§Ù„ÙˆØ§Ø¬Ù‡Ø©:** Ø²Ø± Ø­Ø°Ù (Ø£ÙŠÙ‚ÙˆÙ†Ø© Ø³Ù„Ø©) ÙÙŠ `src/pages/cards-page.tsx` Ù„ØµÙØ­Ø© Ø§Ù„ÙƒØ±ÙˆØªØŒ ÙˆÙÙŠ `CardsCard` Ø¨ØµÙØ­Ø© Ø§Ù„Ø¹Ø¶Ùˆ (`src/pages/member-profile/tabs/membership-tab.tsx`) â€” ÙŠØ¸Ù‡Ø± **Ù„Ù„ÙƒØ±ÙˆØª Ø§Ù„Ù…Ø·Ø¨ÙˆØ¹Ø© ÙÙ‚Ø·** (`kind === 'physical'`) ÙˆØ¨ØµÙ„Ø§Ø­ÙŠØ© `cards.delete`. Ø±Ø³Ø§Ù„Ø© ØªØ£ÙƒÙŠØ¯ ØªÙˆØ¶Ø­ Ø¥Ù† Ø§Ù„Ø±Ø¨Ø· Ù‡ÙŠØªÙÙƒ ÙˆØ¥Ù† Ø³Ø¬Ù„Ø§Øª Ø§Ù„Ø­Ø¶ÙˆØ± Ù‡ØªÙØ¶Ù„ Ù…Ø­ÙÙˆØ¸Ø©ØŒ ÙˆØ§Ù„Ø±Ø³Ø§Ù„Ø© Ø§Ù„Ù†Ù‡Ø§Ø¦ÙŠØ© (toast) ØªØ¨Ù„Ù‘Øº Ø¨Ø§Ù„Ø¹Ø¯Ø¯ Ø§Ù„Ø­Ù‚ÙŠÙ‚ÙŠ Ù…Ù† Ù†ØªÙŠØ¬Ø© Ø§Ù„Ø®Ø¯Ù…Ø©.
+  3. **Ø§Ù„ØªØ±Ø¬Ù…Ø© (`src/i18n/ar.ts`):** Ø¥Ø¶Ø§ÙØ© 3 Ù…ÙØ§ØªÙŠØ­ Ø£Ø®Ø·Ø§Ø¡ Ù…ÙÙ‚ÙˆØ¯Ø© + `perms.cards.delete` (7 Ù…ÙØ§ØªÙŠØ­ ÙˆØ§Ø¬Ù‡Ø© Ø¬Ø¯ÙŠØ¯Ø©).
+  4. **Ø§Ù„Ø§Ø®ØªØ¨Ø§Ø±Ø§Øª:** `tests/cards.delete.test.ts` â€” 12 Ø§Ø®ØªØ¨Ø§Ø±Ø§Ù‹ ØªØºØ·ÙŠ Ø±ÙØ¶ Ø§Ù„Ø§ÙØªØ±Ø§Ø¶ÙŠ (Ø¢Ù…Ù† ÙˆÙ‚Ù‡Ø±ÙŠ)ØŒ Ø±ÙØ¶ Ø§Ù„Ù…Ø±Ø¨ÙˆØ·/Ø§Ù„Ø­Ø¶ÙˆØ± ÙÙŠ Ø§Ù„ÙˆØ¶Ø¹ Ø§Ù„Ø¢Ù…Ù†ØŒ Ø§Ù„Ø­Ø°Ù Ø§Ù„Ù‚Ù‡Ø±ÙŠ Ù„Ù…Ø±Ø¨ÙˆØ· Ù…Ø¹ ÙÙƒ Ø§Ù„Ø±Ø¨Ø·ØŒ Ø­ÙØ¸ Ø³Ø¬Ù„Ø§Øª Ø§Ù„Ø­Ø¶ÙˆØ± Ù…Ø¹ ÙØµÙ„Ù‡Ø§ØŒ ØªÙ†Ø¸ÙŠÙ `card_deliveries`ØŒ Ø³Ø¬Ù„ Ø§Ù„Ù…Ø±Ø§Ø¬Ø¹Ø©ØŒ ØªÙƒØ±Ø§Ø± Ø§Ù„Ø­Ø°Ù (ØºÙŠØ± Ù…ÙˆØ¬ÙˆØ¯)ØŒ ÙˆÙ…Ù†Ø¹ Ø§Ù„Ø¯ÙˆØ± Ø¨Ø¯ÙˆÙ† ØµÙ„Ø§Ø­ÙŠØ©.
+- **Ø¥ØµÙ„Ø§Ø­ Ø¥Ø¶Ø§ÙÙŠ:** Ø§Ø®ØªØ¨Ø§Ø± `i18n-coverage` ÙƒØ§Ù† **ÙØ§Ø´Ù„Ø§Ù‹** Ù‚Ø¨Ù„ Ù‡Ø°Ù‡ Ø§Ù„Ù…Ù‡Ù…Ø© (`perms.cards.delete` + 3 Ù…ÙØ§ØªÙŠØ­ Ø£Ø®Ø·Ø§Ø¡ Ù…ÙÙ‚ÙˆØ¯Ø©) â€” Ø£ØµØ¨Ø­ Ù†Ø§Ø¬Ø­Ø§Ù‹.
 
-**Phase 10 (done, this session): single-page `/treasury` — no tabs, the cash session (الوردية) is the PRIMARY daily tool, daily closing merged below.** User decisions: (1) "الوردية (cash session) هي الأساسي" — it's what they operate every shift; (2) "ادمج الورديات جوه الإغلاق اليومي" — merge, don't keep separate; (3) "صفحة واحدة بدون تبويبات". Rewrote `TreasuryPage` in `src/pages/treasury/index.tsx`: removed the `Tabs` container entirely. New layout reads top-to-bottom:
-- Page header (الخزينة النقدية).
-- **وردية الخزينة** (primary) — renders `<CashSessionsPanel />` (open-session KPIs + open/close form + سجل الورديات), gated by `payments.view`. Each section gets a heading row with a neon icon + hint (`sessionSectionHint`).
-- **الإغلاق اليومي** — renders `<DailyClosingPanel />` (expected-by-method per box النادي/المتجر + خزينة اليوم KPI + سجل الإقفال + detail), gated by `cash.daily_close`.
-- Forbidden (EmptyState) only if the actor has neither permission. A `payments.view`-only user sees just the وردية section; a `cash.daily_close`-only user sees just الإغلاق اليومي.
-Removed the now-unused tab keys from i18n: `tabClosing`/`tabSessions`/`tabClosingHint`/`tabSessionsHint`; added `treasury.dailyClosingTitle`/`dailyClosingSectionHint`/`sessionSectionHint`; updated `treasury.subtitle`. Removed the `Tabs` import + `TreasuryTab` type from `treasury/index.tsx`. Backend/schema untouched. Verification: `npm run typecheck` clean, i18n coverage 3/3, `npm test` 424/424 (33 files), `npm run build` OK (pre-existing seed.ts CJS `import.meta` warning, non-fatal).
+### TASK-103: Ø¥ØµÙ„Ø§Ø­ Ø¹Ø¯Ù… ØªÙˆØ§ÙÙ‚ Ø§Ù„ÙˆØ¶Ø¹ Ø§Ù„ØªÙ„Ù‚Ø§Ø¦ÙŠ Ù…Ø¹ Ù‚Ø§Ø±Ø¦ Ø§Ù„Ø¨Ø§Ø±ÙƒÙˆØ¯ Ø§Ù„ÙÙŠØ²ÙŠØ§Ø¦ÙŠ (Done)
+- **Ø§Ù„Ù…Ø´ÙƒÙ„Ø©:** `"Ø§Ù„ÙˆØ¶Ø¹ Ø§Ù„ØªÙ„Ù‚Ø§Ø¦ÙŠ Ù…Ø´ Ù…ØªÙˆØ§ÙÙ‚ Ù…Ø¹ barcode reader"` â€” Ø§Ù„ÙƒØ´Ùƒ Ù„Ù… ÙŠØ³ØªØ¬Ø¨ Ù„Ù‚Ø§Ø±Ø¦ Ø§Ù„Ø¨Ø§Ø±ÙƒÙˆØ¯ Ø§Ù„Ù„ÙŠØ²Ø±ÙŠ ÙÙŠ Ø¬Ù…ÙŠØ¹ Ø§Ù„Ø­Ø§Ù„Ø§Øª.
+- **Ø§Ù„Ø£Ø³Ø¨Ø§Ø¨ Ø§Ù„Ø¬Ø°Ø±ÙŠØ© ÙˆØ­Ù„ÙˆÙ„Ù‡Ø§:**
+  1. **ØªØ®Ø·ÙŠØ· Ø§Ù„ÙƒÙŠØ¨ÙˆØ±Ø¯ Ø§Ù„Ø¹Ø±Ø¨ÙŠ:** Ø¹Ù†Ø¯ Ø¶Ø¨Ø· Windows Ø¹Ù„Ù‰ Ø§Ù„Ù„ØºØ© Ø§Ù„Ø¹Ø±Ø¨ÙŠØ©ØŒ ÙŠÙØ±Ø³Ù„ Ø§Ù„Ù‚Ø§Ø±Ø¦ Ø£Ø­Ø±ÙØ§Ù‹ Ø¹Ø±Ø¨ÙŠØ© Unicode (Ù…Ø«Ù„ `Ù„Ø§` Ø¨Ø¯Ù„Ø§Ù‹ Ù…Ù† `B`) â€” ØªÙ… Ø¥Ø¶Ø§ÙØ© `ARABIC_TO_ENGLISH_MAP` Ùˆ `normalizeBarcodeString()` ÙÙŠ `src/core/barcode/barcode-input.ts`.
+  2. **Ø§Ø³ØªØ®Ø¯Ø§Ù… `event.key` Ø¨Ø¯Ù„Ø§Ù‹ Ù…Ù† `event.code`:** Ø§Ù„ÙƒÙˆØ¯ Ø§Ù„Ù‚Ø¯ÙŠÙ… ÙƒØ§Ù† ÙŠÙ‚Ø±Ø£ `event.key` Ø§Ù„Ù…ØªØ£Ø«Ø± Ø¨Ù„ØºØ© Ø§Ù„ÙƒÙŠØ¨ÙˆØ±Ø¯ â€” ØªÙ… Ø§Ø³ØªØ¨Ø¯Ø§Ù„Ù‡ Ø¨Ù€ `resolveScannerChar()` Ø§Ù„Ø°ÙŠ ÙŠØ³ØªØ®Ø¯Ù… `event.code` (Ø§Ù„Ù…ÙˆØ¶Ø¹ Ø§Ù„ÙØ¹Ù„ÙŠ Ù„Ù„Ù…ÙØªØ§Ø­) Ø£ÙˆÙ„Ø§Ù‹ Ø¨ØµØ±Ù Ø§Ù„Ù†Ø¸Ø± Ø¹Ù† Ù„ØºØ© Ø§Ù„Ù†Ø¸Ø§Ù….
+  3. **Ø¶ÙŠÙ‚ Ù†Ø§ÙØ°Ø© Ø§Ù„ØªÙˆÙ‚ÙŠØª:** ÙƒØ§Ù†Øª `maxKeyIntervalMs = 80ms` Ø¶ÙŠÙ‚Ø© Ø¬Ø¯Ø§Ù‹ Ù„Ø¨Ø¹Ø¶ Ø§Ù„Ù‚Ø±Ø§Ø¡ â€” Ø±ÙÙØ¹Øª Ø¥Ù„Ù‰ `200ms`.
+  4. **Ø­Ø¬Ø¨ Ø§Ù„Ø£Ø­Ø¯Ø§Ø« Ø¹Ù†Ø¯ ØªØ±ÙƒÙŠØ² Ø­Ù‚Ù„ Ø¥Ø¯Ø®Ø§Ù„:** Ø¯Ø§Ù„Ø© `isTypingTarget` ÙƒØ§Ù†Øª ØªØ­Ø¬Ø¨ Ø£Ø­Ø¯Ø§Ø« Ø§Ù„Ù‚Ø§Ø±Ø¦ Ø¹Ù†Ø¯ ØªØ±ÙƒÙŠØ² Ø£ÙŠ `<input>` â€” ØªÙ… Ø¥Ø¶Ø§ÙØ© Ø§Ø³ØªØ«Ù†Ø§Ø¡ `data-scanner-input="true"` Ù„Ø­Ù‚ÙˆÙ„ Ø§Ù„Ø¥Ø¯Ø®Ø§Ù„ Ø§Ù„Ù…Ø®ØµØµØ© Ù„Ù„Ù‚Ø§Ø±Ø¦.
+  5. **Ø§Ù„ÙƒØ´Ùƒ Ù„Ù… ÙŠÙƒÙ† ÙŠØ³ØªÙ…Ø¹ Ù„Ù„Ù‚Ø§Ø±Ø¦ Ù…Ø¨Ø§Ø´Ø±Ø©:** ÙƒØ§Ù† ÙŠØ¹ØªÙ…Ø¯ Ø¹Ù„Ù‰ Ø¨Ø±ÙˆØ¨ `externalBarcode` Ù…Ù† Ø§Ù„Ù…ÙƒÙˆÙ† Ø§Ù„Ø£Ø¨ â€” ØªÙ… Ø¥Ø¶Ø§ÙØ© `useConfiguredScanner` Ù…Ø¨Ø§Ø´Ø±Ø© Ø¯Ø§Ø®Ù„ `ReceptionKioskPanel`.
+  6. **Ø¹Ø¯Ù… ØªØ·Ø¨ÙŠÙ‚ Ø§Ù„ØªØ·Ø¨ÙŠØ¹ Ø¹Ù„Ù‰ Ø§Ù„Ø¨Ø§Ø±ÙƒÙˆØ¯ ÙÙŠ Ø§Ù„ÙƒØ´Ùƒ:** `processBarcode` ÙƒØ§Ù†Øª ØªØ·Ø¨Ù‚ `.toUpperCase()` ÙÙ‚Ø· â€” ØªÙ… ØªØ¹Ø¯ÙŠÙ„Ù‡Ø§ Ù„ØªØ³ØªØ¯Ø¹ÙŠ `normalizeBarcodeString()` Ø£ÙˆÙ„Ø§Ù‹.
+  7. **Ø¥Ø¶Ø§ÙØ© Ø­Ù‚Ù„ Ø¥Ø¯Ø®Ø§Ù„ ÙŠØ¯ÙˆÙŠ:** Ø­Ù‚Ù„ `<Input data-scanner-input="true">` ÙÙŠ ÙˆØ¶Ø¹ Ø§Ù„Ø§Ù†ØªØ¸Ø§Ø± Ø¨Ø§Ù„ÙƒØ´Ùƒ ÙŠØ¯Ø¹Ù… Ø§Ù„ÙƒØªØ§Ø¨Ø© Ø§Ù„ÙŠØ¯ÙˆÙŠØ© Ø£Ùˆ Ø§Ù„Ù‚Ø§Ø±Ø¦ Ø§Ù„Ù…ØªØµÙ„ Ø¹Ù†Ø¯ ØªØ±ÙƒÙŠØ² Ø§Ù„Ø­Ù‚Ù„.
+- **Ø§Ù„Ù…Ù„ÙØ§Øª Ø§Ù„Ù…Ø¹Ø¯Ù„Ø©:**
+  - `src/core/barcode/barcode-input.ts` â€” Ø¥Ø¹Ø§Ø¯Ø© ÙƒØªØ§Ø¨Ø© ÙƒØ§Ù…Ù„Ø© Ø¨Ø®Ø±ÙŠØ·Ø© Ø§Ù„Ø¹Ø±Ø¨ÙŠØ© Ùˆ `normalizeBarcodeString` Ùˆ `resolveScannerChar` ÙˆØ±ÙØ¹ Ø§Ù„ÙØ§ØµÙ„ Ø§Ù„Ø²Ù…Ù†ÙŠ
+  - `src/components/attendance/reception-kiosk-panel.tsx` â€” Ø¥Ø¶Ø§ÙØ© `useConfiguredScanner` Ùˆ `normalizeBarcodeString` ÙÙŠ `processBarcode` ÙˆØ­Ù‚Ù„ Ø§Ù„Ø¥Ø¯Ø®Ø§Ù„ Ø§Ù„ÙŠØ¯ÙˆÙŠ
+  - `src/i18n/ar.ts` â€” Ø¥Ø¶Ø§ÙØ© Ù…ÙØªØ§Ø­ `autoKioskInputPh`
 
-**Phase 11 (done, this session): removed the daily closing (الإغلاق اليومي) feature ENTIRELY — `/الخزينة` = الوردية only.** User decisions: "حذف الميزة كاملة من النظام" + "الخزينة = الوردية فقط" (Recommended). This is a full, clean removal across the whole stack:
-- `/treasury` (`src/pages/treasury/index.tsx`) rewritten to a minimal page = header + `<CashSessionsPanel/>` (cash sessions, gated `payments.view`). Deleted `closing-detail.tsx`/`closing-form.tsx`/`closing-list.tsx`/`print.tsx` + the `/treasury/print/:closingId` route.
-- Backend: deleted `src/core/services/daily-closing.service.ts` + `server/rpc/daily-closing.rpc.ts`; removed the `dailyClosing` registration from `server/rpc/registry.ts` and `getTreasuryForDashboard` from `dashboard.rpc.ts` + `dashboard.service.ts` (incl. `DashboardTreasurySection` type + the daily-closing import). Removed `api.treasury.*` wrappers + exported types in `src/api/index.ts`.
-- Permissions: removed `cash.daily_close` + `cash.daily_reopen` from `PERMS`/`MANAGER_PERMS`/`RECEPTION_PERMS` + i18n `perms` keys. Audit actions: removed `DAILY_CLOSING_*`. Dashboard: removed the treasury KPI card + related state/fetch from `dashboard-page.tsx`.
-- Migration **v27** (append-only): `DROP TABLE daily_closing_audit_entries` → 3 indexes → `daily_closings`, and `DELETE`s the seeded `cash.daily_close`/`cash.daily_reopen` permission + role-grant rows. Cash sessions (`cash_sessions`) untouched.
-- i18n: removed the unused `treasury.*` block (kept only `title`/`subtitle`/`sessionSectionHint`) and the unused `errors.treasury.*` block.
-- Tests: deleted `tests/daily-closing.test.ts` (was 30 cases); bumped the 3 hardcoded migration-version assertions 26→27 (`foundation.smoke.test.ts`, `part4-backup.test.ts`, `restore-authz.test.ts`).
-- Verification: `npm run typecheck` clean, `npm run typecheck:server` clean, i18n coverage 3/3, `npm test` **394/394** (32 files), `npm run build` OK (pre-existing seed.ts CJS `import.meta` warning non-fatal), `node scripts/check-rpc-consistency.cjs` ok (264 entries, no missing).
+### TASK-102: Ø§Ù„ÙˆØ¶Ø¹ Ø§Ù„ØªÙ„Ù‚Ø§Ø¦ÙŠ Ù„ÙƒØ´Ùƒ ØªØ³Ø¬ÙŠÙ„ Ø§Ù„Ø­Ø¶ÙˆØ± Ø¨Ø§Ù„ÙƒØ§Ù…ÙŠØ±Ø§ ÙˆÙ‚Ø§Ø±Ø¦ Ø§Ù„Ø¨Ø§Ø±ÙƒÙˆØ¯ + Ø¥Ù„ØºØ§Ø¡ ÙˆØ§Ø³ØªØ±Ø¬Ø§Ø¹ Ø§Ù„Ø­Ø¶ÙˆØ± Ø¨Ø§Ù„ØµÙ„Ø§Ø­ÙŠØ§Øª (Done)
+- **Ø§Ù„Ù…Ø·Ù„ÙˆØ¨:**
+  1. Ø²Ø± "Ø§Ù„ÙˆØ¶Ø¹ Ø§Ù„ØªÙ„Ù‚Ø§Ø¦ÙŠ" Ø¨Ø´Ø§Ø´Ø© Ø§Ù„Ø§Ø³ØªÙ‚Ø¨Ø§Ù„ Ù„ØªØ´ØºÙŠÙ„ Ø§Ù„ÙƒØ§Ù…ÙŠØ±Ø§ Ø§Ù„Ù…Ø¨Ø§Ø´Ø±Ø© ÙˆÙ…Ø³Ø­ Ø§Ù„Ø¨Ø§Ø±ÙƒÙˆØ¯/QR ØªÙ„Ù‚Ø§Ø¦ÙŠØ§Ù‹ Ø¯ÙˆÙ† ØªØ¯Ø®Ù„ Ø¨Ø´Ø±ÙŠ ÙˆØªØ±ÙƒÙ‡ ÙŠØ¹Ù…Ù„ Ø¹Ù„Ù‰ Ø§Ù„ÙƒØ§ÙˆÙ†ØªØ±.
+  2. Ø¯Ø¹Ù… Ù‚Ø§Ø±Ø¦ Ø§Ù„Ø¨Ø§Ø±ÙƒÙˆØ¯ Ø§Ù„Ù„ÙŠØ²Ø±ÙŠ/Ø§Ù„ÙŠØ¯ÙˆÙŠ Ø¨Ø§Ù„ØªØ²Ø§Ù…Ù† Ù…Ø¹ Ø§Ù„ÙƒØ§Ù…ÙŠØ±Ø§ ÙˆØªØ³Ø¬ÙŠÙ„ Ø§Ù„Ø­Ø¶ÙˆØ± ÙÙˆØ±Ø§Ù‹ ÙÙŠ ÙƒÙ„ØªØ§ Ø§Ù„Ø­Ø§Ù„ØªÙŠÙ†.
+  3. ØµÙˆØª Ù…Ù…ÙŠØ² Ø¹Ù†Ø¯ Ù†Ø¬Ø§Ø­ ØªØ³Ø¬ÙŠÙ„ Ø§Ù„Ø­Ø¶ÙˆØ± ÙˆØµÙˆØª ØªÙ†Ø¨ÙŠÙ‡ Ù…Ø®ØªÙ„Ù ÙˆÙ‚ÙˆÙŠ Ø¹Ù†Ø¯ ÙØ´Ù„ Ø£Ùˆ Ø±ÙØ¶ Ø§Ù„ØªØ³Ø¬ÙŠÙ„.
+  4. Ø¨Ù‚Ø§Ø¡ ØªÙØ§ØµÙŠÙ„ Ø§Ù„Ø¹Ù…ÙŠÙ„ ÙˆØ­Ø§Ù„ØªÙ‡ Ø¸Ø§Ù‡Ø±Ø© Ø¹Ù„Ù‰ Ø§Ù„Ø´Ø§Ø´Ø© Ù„Ù…Ø¯Ø© 20 Ø«Ø§Ù†ÙŠØ© Ù…Ø¹ Ø¹Ø¯ ØªÙ†Ø§Ø²Ù„ÙŠ Ù…Ø±Ø¦ÙŠØŒ ÙˆØ¥ØªØ§Ø­Ø© Ø¥Ø¬Ø±Ø§Ø¡Ø§Øª Ø³Ø±ÙŠØ¹Ø© Ù„Ù…ÙˆØ¸Ù Ø§Ù„Ø§Ø³ØªÙ‚Ø¨Ø§Ù„ ÙÙŠ Ø­Ø§Ù„ ØªÙˆØ§Ø¬Ø¯Ù‡.
+  5. Ù…ÙŠØ²Ø© Ù…Ù‚ÙŠØ¯Ø© Ø¨Ø§Ù„ØµÙ„Ø§Ø­ÙŠØ§Øª ØªØ³Ù…Ø­ Ù„Ø£Ø´Ø®Ø§Øµ Ù…Ø­Ø¯Ø¯ÙŠÙ† Ø¨Ø¥Ù„ØºØ§Ø¡ Ø­Ø¶ÙˆØ± Ø´Ø®Øµ Ø­Ø¶Ø± Ø¨Ø§Ù„ÙØ¹Ù„ Ø£Ùˆ Ø§Ø³ØªØ±Ø¬Ø§Ø¹Ù‡ Ù…Ø¹ Ø¥Ø¹Ø§Ø¯Ø© Ø±ØµÙŠØ¯ Ø§Ù„Ø­ØµØµ Ù„Ù„Ø§Ø´ØªØ±Ø§Ùƒ.
+- **Ø§Ù„Ø­Ù„ Ø§Ù„Ø¬Ø°Ø±ÙŠ:**
+  1. **Ù…ÙƒÙˆÙ† ÙƒØ´Ùƒ Ø§Ù„Ø­Ø¶ÙˆØ± Ø§Ù„ØªÙ„Ù‚Ø§Ø¦ÙŠ (`ReceptionKioskPanel`):**
+     - ØªÙ… Ø¨Ù†Ø§Ø¡ Ù…ÙƒÙˆÙ† ÙƒØ´Ùƒ Ù…ØªÙƒØ§Ù…Ù„ ÙÙŠ `src/components/attendance/reception-kiosk-panel.tsx` ÙŠØ¹Ù…Ù„ ÙÙŠ Ø§Ù„ÙˆØ§Ø¬Ù‡Ø© Ù…Ø¨Ø§Ø´Ø±Ø©.
+     - ØªØ´ØºÙŠÙ„ Ø§Ù„ÙƒØ§Ù…ÙŠØ±Ø§ Ù…Ø¹ Ø­Ù„Ù‚Ø© ÙƒØ´Ù Ù…Ø³ØªÙ…Ø±Ø© Ø¹Ø¨Ø± `BarcodeDetector`ØŒ Ù…Ø¹ Ø®Ø· Ù„ÙŠØ²Ø± Ù…ØªØ­Ø±Ùƒ ÙˆØªØ­Ø¯ÙŠØ¯ Ø²ÙˆØ§ÙŠØ§ Ø§Ù„Ù…Ø³Ø­ ÙˆØ§Ø®ØªÙŠØ§Ø± ÙƒØ§Ù…ÙŠØ±Ø§ Ø§Ù„Ø¥Ø¯Ø®Ø§Ù„ ÙˆØ­ÙØ¸ Ø§Ù„ÙƒØ§Ù…ÙŠØ±Ø§ Ø§Ù„Ù…ÙØ¶Ù„Ø©.
+     - Ø±Ø¨Ø· Ù‚Ø§Ø±Ø¦ Ø§Ù„Ø¨Ø§Ø±ÙƒÙˆØ¯ Ø§Ù„ÙØ¹Ù„ÙŠ Ø§Ù„Ø®Ø§Ø±Ø¬ÙŠ Ø¹Ø¨Ø± `useConfiguredScanner` Ù„ÙŠØ¹Ù…Ù„ Ø¬Ù†Ø¨Ø§Ù‹ Ø¥Ù„Ù‰ Ø¬Ù†Ø¨ Ù…Ø¹ Ø§Ù„ÙƒØ§Ù…ÙŠØ±Ø§.
+     - ØªØ³Ø¬ÙŠÙ„ Ø§Ù„Ø­Ø¶ÙˆØ± Ø§Ù„ÙÙˆØ±ÙŠ Ø¹Ù†Ø¯ Ø§Ù„ØªÙ‚Ø§Ø· Ø§Ù„Ø¨Ø§Ø±ÙƒÙˆØ¯ ÙˆØ¥Ø±Ø³Ø§Ù„ `deviceIdentifier: "auto-kiosk"`.
+  2. **Ø£ØµÙˆØ§Øª ØªÙØ§Ø¹Ù„ÙŠØ© Ø§Ø­ØªØ±Ø§ÙÙŠØ© ÙˆØ§Ø¶Ø­Ø© ÙÙŠ Ø¨ÙŠØ¦Ø© Ø§Ù„Ø¬ÙŠÙ… (`src/utils/sound.ts`):**
+     - ØªØ­Ø¯ÙŠØ« `playSuccessChime` Ø¨Ù†ØºÙ…Ø© ÙƒÙˆØ±Ø¯ ØµØ§Ø¹Ø¯Ø© Ø«Ù„Ø§Ø«ÙŠØ© Ù…Ø¨Ù‡Ø¬Ø© ÙˆÙ…Ø±Ø­Ø¨Ø© Ù„Ù„Ø£Ø¹Ø¶Ø§Ø¡ Ø§Ù„Ø³Ø§Ø±ÙŠÙ†.
+     - ØªØ­Ø¯ÙŠØ« `playErrorBuzz` Ø¨Ù†ØºÙ…Ø© Ø·Ù†ÙŠÙ† Ù‚ÙˆÙŠØ© Ù…Ù†Ø®ÙØ¶Ø© Ø§Ù„ØªØ±Ø¯Ø¯ Ø«Ù†Ø§Ø¦ÙŠØ© Ø§Ù„Ù†Ø¨Ø¶Ø§Øª ØªÙ„ÙØª Ø§Ù„Ø§Ù†ØªØ¨Ø§Ù‡ ÙÙˆØ±Ø§Ù‹ Ù„Ø­Ø§Ù„Ø§Øª Ø§Ù„Ø±ÙØ¶ ÙˆØ§Ù„Ø§Ø´ØªØ±Ø§ÙƒØ§Øª Ø§Ù„Ù…Ù†ØªÙ‡ÙŠØ©.
+     - ØªØ­Ø¯ÙŠØ« `playScanBeep` Ø¨Ù†ØºÙ…Ø© Ù„ÙŠØ²Ø± Ø³Ø±ÙŠØ¹Ø© ØªØ¤ÙƒØ¯ Ù…Ø³Ø­ Ø§Ù„ÙƒÙˆØ¯.
+     - Ø¶Ù…Ø§Ù† Ø§Ø³ØªØ¦Ù†Ø§Ù `audioContext.resume()` Ø§Ù„ØªÙ„Ù‚Ø§Ø¦ÙŠ Ø¹Ù†Ø¯ ØªÙØ§Ø¹Ù„ Ø§Ù„Ù…Ø³ØªØ®Ø¯Ù….
+  3. **Ø¹Ø±Ø¶ Ø¨ÙŠØ§Ù†Ø§Øª Ø§Ù„Ø¹Ø¶Ùˆ 20 Ø«Ø§Ù†ÙŠØ© Ù…Ø¹ Ø´Ø±ÙŠØ· Ø²Ù…Ù†ÙŠ:**
+     - Ø¹Ø±Ø¶ ØµÙˆØ±Ø© Ø§Ù„Ø¹Ø¶ÙˆØŒ Ø§Ø³Ù…Ù‡ØŒ ÙƒÙˆØ¯Ù‡ØŒ Ø¨Ø§Ù‚ØªÙ‡ØŒ ØªØ§Ø±ÙŠØ® Ø§Ù†ØªÙ‡Ø§Ø¦Ù‡Ø§ØŒ Ø§Ù„Ø£ÙŠØ§Ù… ÙˆØ§Ù„Ø­ØµØµ Ø§Ù„Ù…ØªØ¨Ù‚ÙŠØ©ØŒ ÙˆØ£ÙŠ Ù…Ø¯ÙŠÙˆÙ†ÙŠØ© Ù…Ø³ØªØ­Ù‚Ø©.
+     - Ø´Ø±ÙŠØ· Ø¹Ø¯ ØªÙ†Ø§Ø²Ù„ÙŠ ÙŠØªÙ†Ø§Ù‚Øµ Ù…Ù† 20 Ø¥Ù„Ù‰ 0 Ù…Ø¹ Ø²Ø± Ø¥ØºÙ„Ø§Ù‚ ÙÙˆØ±ÙŠ.
+     - ÙÙŠ Ø­Ø§Ù„ Ù…Ø³Ø­ Ø¹Ø¶Ùˆ Ø¢Ø®Ø± Ù‚Ø¨Ù„ Ø§Ù†ØªÙ‡Ø§Ø¡ Ø§Ù„Ù€ 20 Ø«Ø§Ù†ÙŠØ©ØŒ ÙŠØªÙ… Ø§Ø³ØªØ¨Ø¯Ø§Ù„ Ø§Ù„Ø¨ÙŠØ§Ù†Ø§Øª ÙÙˆØ±Ø§Ù‹ ÙˆØ¥Ø¹Ø§Ø¯Ø© Ø¶Ø¨Ø· Ø§Ù„Ø¹Ø¯Ø§Ø¯ Ù„Ù€ 20 Ø«Ø§Ù†ÙŠØ© Ù„Ù„Ø¹Ø¶Ùˆ Ø§Ù„Ø¬Ø¯ÙŠØ¯.
+     - Ø¥ØªØ§Ø­Ø© Ø£Ø²Ø±Ø§Ø± Ø³Ø±ÙŠØ¹Ø©: Ø¹Ø±Ø¶ Ø§Ù„Ù…Ù„Ù Ø§Ù„Ø´Ø®ØµÙŠØŒ ÙˆØ§ØªØ³Ø§Ø¨ Ø³Ø±ÙŠØ¹ØŒ ØªØ¬Ø¯ÙŠØ¯ Ø§Ù„Ø§Ø´ØªØ±Ø§ÙƒØŒ ÙˆØ³Ø¯Ø§Ø¯ Ø§Ù„Ù…Ø¯ÙŠÙˆÙ†ÙŠØ©.
+  4. **Ø¥Ù„ØºØ§Ø¡ ÙˆØ§Ø³ØªØ±Ø¬Ø§Ø¹ Ø§Ù„Ø­Ø¶ÙˆØ± Ø¨ØµÙ„Ø§Ø­ÙŠØ© `checkin.delete`:**
+     - Ø¥Ø¶Ø§ÙØ© Ø²Ø± "Ø¥Ù„ØºØ§Ø¡ Ù‡Ø°Ø§ Ø§Ù„Ø­Ø¶ÙˆØ±" ÙÙŠ Ø¨Ø·Ø§Ù‚Ø© Ø§Ù„ÙƒØ´Ùƒ ÙˆØ²Ø± ÙÙŠ Ø¬Ø¯ÙˆÙ„ Ø¢Ø®Ø± Ø§Ù„Ø­Ø¶ÙˆØ± (Recent check-ins).
+     - ØªØ­Ø¯ÙŠØ« `deleteAttendance` ÙÙŠ `src/core/services/attendance.service.ts` Ù„Ø±Ø¯ Ø±ØµÙŠØ¯ Ø§Ù„Ø­ØµØµ Ø§Ù„Ù…Ø³ØªÙ‡Ù„ÙƒØ© ØªÙ„Ù‚Ø§Ø¦ÙŠØ§Ù‹ (`sessions_used = MAX(0, sessions_used - 1)`).
+     - ØªØ­Ø¯ÙŠØ« `restoreAttendance` Ù„Ø¥Ø¹Ø§Ø¯Ø© Ø§Ø­ØªØ³Ø§Ø¨ Ø§Ù„Ø­ØµØ© Ø¹Ù†Ø¯ Ø§Ø³ØªØ±Ø¬Ø§Ø¹ Ø§Ù„Ø³Ø¬Ù„.
+     - Ø­Ù…Ø§ÙŠØ© Ø¹Ù„Ù‰ Ù…Ø³ØªÙˆÙ‰ Ø§Ù„Ø¨Ø§Ùƒ Ø¥Ù†Ø¯ Ø¨Ø±ÙØ¶ Ø£ÙŠ Ø¹Ù…Ù„ÙŠØ© Ø­Ø°Ù Ø£Ùˆ Ø§Ø³ØªØ±Ø¬Ø§Ø¹ Ø¨Ø¯ÙˆÙ† ØµÙ„Ø§Ø­ÙŠØ© `checkin.delete`.
+     - Ø¥Ø¶Ø§ÙØ© Ø²Ø± "Ø§Ø³ØªØ±Ø¬Ø§Ø¹ Ø§Ù„Ø­Ø¶ÙˆØ±" Ø§Ù„ØªØ±Ø§Ø¬Ø¹ÙŠ Ø§Ù„ÙÙˆØ±ÙŠ Ø¹Ù†Ø¯ Ø§Ù„Ø¥Ù„ØºØ§Ø¡ Ø¨Ø§Ù„Ø®Ø·Ø£.
+  5. **Ø§Ù„Ø§Ø®ØªØ¨Ø§Ø±Ø§Øª:**
+     - Ø¥Ø¶Ø§ÙØ© Ø§Ø®ØªØ¨Ø§Ø±Ø§Øª Ø´Ø§Ù…Ù„Ø© ÙÙŠ `tests/cards.checkin.test.ts` ÙˆØ§Ù„ØªØ­Ù‚Ù‚ Ù…Ù† Ø§Ù„ØµÙ„Ø§Ø­ÙŠØ§Øª ÙˆØ§Ø³ØªØ±Ø¯Ø§Ø¯ Ø§Ù„Ø­ØµØµ. Ø§Ù„Ù†Ø¬Ø§Ø­ Ø¨Ù†Ø³Ø¨Ø© 100% Ù„Ø¬Ù…ÙŠØ¹ Ø§Ù„Ù€ 596 Ø§Ø®ØªØ¨Ø§Ø±.
 
-**Phase 12 (done, this session): cleaned build warning + corrected dev-seeding docs.**
-- Removed the **dead `import.meta` branch** in `shouldSeedDemo()` (`src/db/seed.ts:12-19`). This branch was never executed — `shouldSeedDemo()` is called only by `server/context.ts` (the Node/CJS backend bundle, which always took the `process.env` path), and no frontend code imports it. It tripped the esbuild CJS `import.meta` warning. `shouldSeedDemo()` now checks only `process.env.GYM_SEED_DEMO === "1"`. **`npm run build` is now fully clean** (`node scripts/build-server.mjs` → exit 0, no warning; the only remaining note is Vite's cosmetic chunk-size suggestion, unrelated).
-- Corrected inaccurate dev-seeding docs: seeding runs only in the backend; the frontend `VITE_SEED_DEMO` from `.env.development` does **not** reach the Node server process, so it never seeded. Dev seeding = `set GYM_SEED_DEMO=1 && npm run dev:server` (the README already said this). Fixed AGENTS.md (§2), `.ai/architecture.md`, `docs/ai/security.md`.
-- Verification: `npm run typecheck` clean, `npm test` **394/394**, `npm run build` clean.
+### TASK-101: ØªÙˆØ­ÙŠØ¯ ÙˆØªÙ†Ø¸ÙŠÙ… Ø·Ø±Ù‚ ØªØ´ØºÙŠÙ„ Ø§Ù„Ù†Ø¸Ø§Ù… ÙˆØªØ´ØºÙŠÙ„ Ø§Ù„ÙØ±Ø¹ Ø§Ù„Ø«Ø§Ù†ÙŠ Ø¨Ù†ÙØ³ Ø·Ø±ÙŠÙ‚Ø© Ø§Ù„Ø£ÙˆÙ„ (Done)
+- **Ø§Ù„Ù…Ø·Ù„ÙˆØ¨:** ØªÙ„Ø¨ÙŠØ© Ø·Ù„Ø¨ Ø§Ù„Ù…Ø§Ù„Ùƒ: Â«Ø¸Ø¨Ø·Ù„ÙŠ Ø·Ø±Ù‚ ØªØ´ØºÙŠÙ„ Ø§Ù„Ø³ÙŠØ³ØªÙ… ÙˆØ§Ø¹Ù…Ù„ ØªØ´ØºÙŠÙ„ Ø§Ù„ÙØ±Ø¹ Ø§Ù„ØªØ§Ù†ÙŠ Ø¨Ù†ÙØ³ Ø·Ø±ÙŠÙ‚Ù‡ Ø§Ù„Ø§ÙˆÙ„Â».
+- **Ø§Ù„Ø­Ù„ Ø§Ù„Ø¬Ø°Ø±ÙŠ:**
+  1. **ØªØ´ØºÙŠÙ„ Ø§Ù„ÙØ±Ø¹ Ø§Ù„Ø«Ø§Ù†ÙŠ ÙƒÙ…Ù„Ù ØªÙ†ÙÙŠØ°ÙŠ Ù…Ø³ØªÙ‚Ù„ (`GymSystem-Branch2.exe`):**
+     - ØªÙ…ÙƒÙŠÙ† Ø§Ù„ØªØ¹Ø±Ù Ø§Ù„ØªÙ„Ù‚Ø§Ø¦ÙŠ Ø¹Ù„Ù‰ Ø§Ù„ÙØ±Ø¹ Ø§Ù„Ø«Ø§Ù†ÙŠ Ù…Ù† Ø§Ø³Ù… Ù…Ù„Ù Ø§Ù„Ù€ EXE (`resolveDefaultPort` ÙÙŠ `server/index.ts` Ùˆ `resolveRoot` ÙÙŠ `server/config.ts`) Ø¨Ø­ÙŠØ« ÙŠØ®ØªØ§Ø± Ø§Ù„Ù…Ù†ÙØ° `8895` ÙˆÙ…Ø¬Ù„Ø¯ Ø§Ù„Ø¨ÙŠØ§Ù†Ø§Øª `%LOCALAPPDATA%\GymSystem_Branch2` ØªÙ„Ù‚Ø§Ø¦ÙŠØ§Ù‹ Ø¯ÙˆÙ† Ø£ÙŠ Ø¥Ø¹Ø¯Ø§Ø¯Ø§Øª Ø¥Ø¶Ø§ÙÙŠØ©.
+     - ØªØ¹Ø¯ÙŠÙ„ `scripts/build-exe.mjs` Ù„Ø¥Ù†ØªØ§Ø¬ Ù†Ø³Ø®ØªÙŠÙ† ØªÙ†ÙÙŠØ°ÙŠØªÙŠÙ† Ø¬Ø§Ù‡Ø²ØªÙŠÙ† ÙÙŠ `dist-exe`: `GymSystem.exe` (Ø§Ù„ÙØ±Ø¹ Ø§Ù„Ø±Ø¦ÙŠØ³ÙŠ) Ùˆ `GymSystem-Branch2.exe` (Ø§Ù„ÙØ±Ø¹ Ø§Ù„Ø«Ø§Ù†ÙŠ).
+  2. **Ø­Ù…Ø§ÙŠØ© ØªØ´ØºÙŠÙ„ Ø§Ù„ÙØ±Ø¹ÙŠÙ† Ù…Ø¹Ø§Ù‹ Ø¯ÙˆÙ† ØªØµØ§Ø¯Ù… (Single Instance Scoped to Port):**
+     - ØªØ¹Ø¯ÙŠÙ„ `ensureSingleActiveInstance` ÙÙŠ `server/single-instance.ts` Ù„ÙŠÙƒÙˆÙ† Ù…Ù‚ÙŠØ¯Ø§Ù‹ Ø¨Ø§Ù„Ù…Ù†ÙØ° Ø§Ù„Ù…Ø³ØªÙ‡Ø¯Ù ÙÙ‚Ø·Ø› sehingga Ù„Ø§ ÙŠÙ‚ÙˆÙ… Ø§Ù„ÙØ±Ø¹ Ø§Ù„Ø«Ø§Ù†ÙŠ Ø¨Ø¥ØºÙ„Ø§Ù‚ Ø§Ù„ÙØ±Ø¹ Ø§Ù„Ø£ÙˆÙ„ ÙˆØ§Ù„Ø¹ÙƒØ³ØŒ Ù…Ø¹ Ø¶Ù…Ø§Ù† Ø§Ø³ØªØ±Ø¯Ø§Ø¯ Ø§Ù„Ù…Ù†ÙØ° Ø¨Ù†Ø¬Ø§Ø­ Ø¹Ù†Ø¯ Ø¥Ø¹Ø§Ø¯Ø© Ø§Ù„ØªØ´ØºÙŠÙ„.
+  3. **Ù…Ù„ÙØ§Øª ØªØ´ØºÙŠÙ„ ÙˆØ§Ø¶Ø­Ø© Ø¨Ø£Ø³Ù…Ø§Ø¡ Ø¹Ø±Ø¨ÙŠØ© ØµØ±ÙŠØ­Ø©:**
+     - ÙÙŠ Ø§Ù„Ù…Ø¬Ù„Ø¯ Ø§Ù„Ø±Ø¦ÙŠØ³ÙŠ Ù„Ù„Ù…Ø´Ø±ÙˆØ¹: `ØªØ´ØºÙŠÙ„ Ø§Ù„ÙØ±Ø¹ Ø§Ù„Ø£ÙˆÙ„ (Ø§Ù„Ø±Ø¦ÙŠØ³ÙŠ).bat` Ùˆ `ØªØ´ØºÙŠÙ„ Ø§Ù„ÙØ±Ø¹ Ø§Ù„Ø«Ø§Ù†ÙŠ.bat` (ØªØ¯Ø¹Ù… ØªØ´ØºÙŠÙ„ Ø§Ù„Ù€ EXE Ø§Ù„Ù…Ø¬Ù…Ø¹ ØªÙ„Ù‚Ø§Ø¦ÙŠØ§Ù‹ Ø£Ùˆ Ø¨ÙŠØ¦Ø© Ø§Ù„ØªØ·ÙˆÙŠØ±).
+     - ÙÙŠ Ù…Ø¬Ù„Ø¯ `dist-exe`: `ØªØ´ØºÙŠÙ„ Ø§Ù„ÙØ±Ø¹ Ø§Ù„Ø±Ø¦ÙŠØ³ÙŠ.bat` Ùˆ `ØªØ´ØºÙŠÙ„ Ø§Ù„ÙØ±Ø¹ Ø§Ù„Ø«Ø§Ù†ÙŠ.bat` Ùˆ `Start-Branch1.bat` Ùˆ `Start-Branch2.bat`.
+     - ØªØ­Ø¯ÙŠØ« Ø³ÙƒØ±Ø¨ØªØ§Øª `scripts/windows/start-gymsystem.bat` Ùˆ `scripts/windows/start-branch2.bat`.
 
-**Phase 13 (done, this session): removed legacy routes — canonical URLs only.**
-- Removed the 7 legacy/duplicate routes from `src/routes/index.tsx`: `/reception` (→`/attendance`), `/packages` (→`/subscriptions` باقات tab), `/cash` (→`/treasury`), `/users` + `/permissions` (→`/staff`), `/scanner` + `/health` (→`/settings` tabs). Kept `ReceptionPage` import (still used by `/attendance`). Pruned the now-unused imports (`PackagesPage`, `UsersPage`, `CashSessionsPage`, `ScannerDiagnosticsPage`, `HealthPage`, `PermissionsPage`). Old bookmarks now hit the `*` catch-all → `/`.
-- Deleted 4 fully-unused re-export wrapper pages: `users-page.tsx`, `permissions-page.tsx`, `scanner-diagnostics-page.tsx`, `health-page.tsx` (their tab components are imported directly by `/staff` + `/settings`).
-- `cash-page.tsx`: removed the unused `CashSessionsPage` export; kept `CashSessionsPanel` (used by `/treasury`). Note `cashPage.title` is still used by `/treasury` (`treasury/index.tsx`), so no i18n cleanup needed.
-- Kept `packages-page.tsx` (still imported by `subscriptions-page.tsx` for the باقات tab).
-- Verification: `npm run typecheck` clean, `npm test` **394/394**, `npm run build` clean, `node scripts/check-rpc-consistency.cjs` → 264 entries, no missing, exit 0. Committed/pushed as `cb0d2bb`.
+### TASK-100: ÙØªØ­ Ø§Ù„ØªØ·Ø¨ÙŠÙ‚ ÙÙŠ Ø§Ù„Ù…ØªØµÙØ­ Ø§Ù„Ø§ÙØªØ±Ø§Ø¶ÙŠ Ù…Ø¨Ø§Ø´Ø±Ø© ÙˆØ¯Ø¹Ù… Ø§Ù„Ù…ØµØ§Ø¯Ù‚Ø© Ø¨Ø¯ÙˆÙ† ÙƒÙˆÙƒÙŠØ² (Done)
+- **Ø§Ù„Ù…Ø·Ù„ÙˆØ¨:**
+  1. Ø¥Ù„ØºØ§Ø¡ ÙØªØ­ Ù…Ù„Ù `GymSystem.exe` ÙÙŠ Ù†Ø§ÙØ°Ø© Ù…Ù†ÙØµÙ„Ø© Ø®Ø§ØµØ© Ø¨Ø§Ù„Ù…ØªØµÙØ­ (`--app=...`)ØŒ ÙˆØ¥Ø±Ø¬Ø§Ø¹Ù‡ Ù„ÙØªØ­ ØªØ¨ÙˆÙŠØ¨ Ø¹Ø§Ø¯ÙŠ Ø¯Ø§Ø®Ù„ Ø§Ù„Ù…ØªØµÙØ­ Ø§Ù„Ø§ÙØªØ±Ø§Ø¶ÙŠ Ù„Ù„Ù†Ø¸Ø§Ù… ÙƒÙ…Ø§ ÙƒØ§Ù† ÙÙŠ Ø§Ù„Ø³Ø§Ø¨Ù‚.
+  2. Ù…Ù†Ø¹ ØªØ³Ø¬ÙŠÙ„ ÙˆØªØ®Ø²ÙŠÙ† Ù…Ù„ÙØ§Øª ØªØ¹Ø±ÙŠÙ Ø§Ù„Ø§Ø±ØªØ¨Ø§Ø· (Cookies) ÙÙŠ Ø§Ù„Ù…ØªØµÙØ­.
+- **Ø§Ù„Ø­Ù„ Ø§Ù„Ø¬Ø°Ø±ÙŠ:**
+  1. **ÙØªØ­ Ø§Ù„Ù…ØªØµÙØ­ Ø§Ù„Ø§ÙØªØ±Ø§Ø¶ÙŠ ÙƒØªØ¨ÙˆÙŠØ¨ Ø¹Ø§Ø¯ÙŠ:**
+     - ØªØ¹Ø¯ÙŠÙ„ Ø¯Ø§Ù„Ø© `openAppWindow` ÙÙŠ `server/index.ts` Ù„Ø§Ø³ØªØ®Ø¯Ø§Ù… `cmd /c start "" <url>` Ù„ÙØªØ­ Ø§Ù„Ø±Ø§Ø¨Ø· ÙÙŠ Ø§Ù„Ù…ØªØµÙØ­ Ø§Ù„Ø§ÙØªØ±Ø§Ø¶ÙŠ Ù„Ù„Ù†Ø¸Ø§Ù… ÙˆØªØ¨ÙˆÙŠØ¨Ø§ØªÙ‡ Ø§Ù„Ø¹Ø§Ø¯ÙŠØ©ØŒ ÙˆØ­Ø°Ù Ù…Ù†Ø·Ù‚ `--app=...` ÙˆØ§Ù„Ø¨Ø­Ø« Ø¹Ù† Chromium App Mode.
+     - ØªØ¹Ø¯ÙŠÙ„ Ø³ÙƒØ±Ø¨Øª `scripts/windows/start-gymsystem.bat` Ù„ÙØªØ­ Ø§Ù„Ù…ØªØµÙØ­ Ø§Ù„Ø§ÙØªØ±Ø§Ø¶ÙŠ Ù…Ø¨Ø§Ø´Ø±Ø©.
+  2. **Ø¯Ø¹Ù… Ø§Ù„Ù…ØµØ§Ø¯Ù‚Ø© Ø§Ù„Ù…Ø¹ØªÙ…Ø¯Ø© Ø¹Ù„Ù‰ Ø§Ù„Ù€ Token ÙˆØ¥Ù„ØºØ§Ø¡ ØªØ³Ø¬ÙŠÙ„ Ø§Ù„ÙƒÙˆÙƒÙŠØ² (Cookie-Free Auth):**
+     - ØªÙ…ÙƒÙŠÙ† Ø¥Ø±Ø³Ø§Ù„ `token` Ø§Ù„Ø¬Ù„Ø³Ø© Ù…Ø¨Ø§Ø´Ø±Ø© ÙÙŠ ÙƒØ§Ø¦Ù† Ø§Ù„Ø§Ø³ØªØ¬Ø§Ø¨Ø© Ù„Ù…Ø³Ø§Ø±Ø§Øª ØªØ³Ø¬ÙŠÙ„ Ø§Ù„Ø¯Ø®ÙˆÙ„ `/api/auth/login` ÙˆØ§Ù„Ø¥Ø¹Ø¯Ø§Ø¯ Ø§Ù„Ø£ÙˆÙ„ÙŠ `/api/auth/setup`.
+     - Ø¯Ø¹Ù… ØªÙ…Ø±ÙŠØ± ÙˆØ§Ø³ØªØ®Ø±Ø§Ø¬ Ø§Ù„ØªÙˆÙƒÙ† Ø¹Ø¨Ø± ØªØ±ÙˆÙŠØ³Ø© `Authorization: Bearer <token>` ÙˆØªØ±ÙˆÙŠØ³Ø© `x-session-token`ØŒ ÙˆÙƒØ°Ù„Ùƒ ÙƒÙ…Ø¹Ø§Ù…Ù„ Ø§Ø³ØªØ¹Ù„Ø§Ù… `?token=` Ù„Ø±ÙˆØ§Ø¨Ø· Ø§Ù„ØµÙˆØ± ÙˆØ§Ù„Ø¨Ø§Ø±ÙƒÙˆØ¯ ÙˆØªÙ†Ø²ÙŠÙ„ Ø§Ù„Ù†Ø³Ø® Ø§Ù„Ø§Ø­ØªÙŠØ§Ø·ÙŠØ©.
+     - Ø¥Ø±ÙØ§Ù‚ ØªØ±ÙˆÙŠØ³Ø© `x-disable-cookies: 1` ÙÙŠ Ø¹Ù…ÙŠÙ„ Ø§Ù„Ù€ API Ø¨Ø§Ù„ÙˆØ§Ø¬Ù‡Ø©ØŒ ÙˆØªØ®Ø·ÙŠ Ø¥Ø±Ø³Ø§Ù„ ØªØ±ÙˆÙŠØ³Ø© `Set-Cookie` ÙÙŠ Ø§Ù„Ø³ÙŠØ±ÙØ± Ø¹Ù†Ø¯ ÙˆØ¬ÙˆØ¯Ù‡Ø§ Ø£Ùˆ Ø¹Ù†Ø¯ Ø¶Ø¨Ø· Ù…ØªØºÙŠØ± Ø§Ù„Ø¨ÙŠØ¦Ø© `GYMSYSTEM_DISABLE_COOKIES=1`.
+     - Ø­ÙØ¸ Ø§Ù„ØªÙˆÙƒÙ† ÙÙŠ Ù…Ø³Ø§Ø­Ø© Ø§Ù„ØªØ®Ø²ÙŠÙ† Ø§Ù„Ø®Ø§ØµØ© Ø¨Ø§Ù„Ù…ØªØµÙØ­ `localStorage` ÙˆØ­Ø°ÙÙ‡ Ø¹Ù†Ø¯ ØªØ³Ø¬ÙŠÙ„ Ø§Ù„Ø®Ø±ÙˆØ¬ Ø£Ùˆ Ø§Ù†ØªÙ‡Ø§Ø¡ Ø§Ù„ØµÙ„Ø§Ø­ÙŠØ© Ø¯ÙˆÙ† ØªØ³Ø¬ÙŠÙ„ Ø£ÙŠ ÙƒÙˆÙƒÙŠØ² Ø¹Ù„Ù‰ Ø§Ù„Ù‚Ø±Øµ.
 
-**Phase 14 (done, this session): removed orphaned `nav.*` i18n keys.**
-- Removed 6 unused `nav.*` keys from `ar.ts`: `checkin`, `reception`, `packages`, `scannerDiagnostics`, `health`, `inbody` — all confirmed unused via repo-wide grep (their sidebar entries/routes were removed in earlier phases/TASK-023). Kept `nav.users`/`nav.permissions` (still used as tab titles in `/staff`). Verified: i18n coverage 3/3, `npm run typecheck` clean, `npm test` **394/394**, `npm run build` clean.
+### TASK-099: Ø­Ù„ Ù…Ø´ÙƒÙ„Ø© ØªØ³Ø¬ÙŠÙ„ Ø£Ø¹Ø¶Ø§Ø¡ Ø§Ù„ÙØ±Ø¹ Ø§Ù„Ø±Ø¦ÙŠØ³ÙŠ Ø¨Ø§Ø³Ù… ÙˆØ¨Ø§Ø¯Ø¦Ø© Ø§Ù„ÙØ±Ø¹ Ø§Ù„Ø«Ø§Ù†ÙŠ [B2] (Done)
+- **Ø§Ù„Ù…Ø´ÙƒÙ„Ø©:** Ø¥Ø´Ø¹Ø§Ø± Ø§Ù„Ù…Ø§Ù„Ùƒ: Â«Ø£Ù†Ø§ Ø¹Ù…Ù„Øª Ø¹Ø¶Ùˆ Ù…Ù† Ø§Ù„ÙØ±Ø¹ Ø§Ù„Ø§Ø³Ø§Ø³ÙŠ ÙˆØ¨ÙŠØªØ³Ø¬Ù„ ÙƒØ¯Ø§ [B2] Ø§Ù„ÙØ±Ø¹ Ø§Ù„Ø«Ø§Ù†ÙŠÂ».
+- **Ø§Ù„Ø³Ø¨Ø¨ Ø§Ù„Ø¬Ø°Ø±ÙŠ:**
+  1. Ù‚Ø§Ø¹Ø¯Ø© Ø¨ÙŠØ§Ù†Ø§Øª Ø§Ù„ÙØ±Ø¹ Ø§Ù„ØªØ§Ø¨Ø¹ (`GymSystem_Branch2`) Ø¨Ø¯Ø£Øª Ø¨Ù‚ÙŠÙ…Ø© Ø§ÙØªØ±Ø§Ø¶ÙŠØ© `branch_id = 'main'` Ø¯Ø§Ø®Ù„ Ø¬Ø¯ÙˆÙ„ `branch_info`. ÙˆØ¹Ù†Ø¯ ØªØ¹Ø¯ÙŠÙ„ Ø¥Ø¹Ø¯Ø§Ø¯Ø§Øª Ø§Ù„ÙØ±Ø¹ Ø§Ù„Ø«Ø§Ù†ÙŠ ÙÙŠ Ø§Ù„ÙˆØ§Ø¬Ù‡Ø©ØŒ Ù„Ù… ÙŠÙƒÙ† ÙŠØªÙ… ØªØ­Ø¯ÙŠØ« `branch_id` ÙˆØ¸Ù„ `'main'`.
+  2. Ø£Ø«Ù†Ø§Ø¡ Ø§ØªØµØ§Ù„ Ø§Ù„ÙØ±Ø¹ Ø§Ù„Ø«Ø§Ù†ÙŠ Ø¨Ø§Ù„Ø³ÙŠØ±ÙØ± Ø§Ù„Ø±Ø¦ÙŠØ³ÙŠ (Ø¹Ø¨Ø± ping Ø£Ùˆ push Ø£Ùˆ pull)ØŒ ÙƒØ§Ù† ÙŠØ±Ø³Ù„ `branchId: 'main', branchName: 'Ø§Ù„ÙØ±Ø¹ Ø§Ù„Ø«Ø§Ù†ÙŠ', branchPrefix: 'B2'`.
+  3. Ø§Ø³ØªÙ‚Ø¨Ù„ Ø§Ù„Ø³ÙŠØ±ÙØ± Ø§Ù„Ø±Ø¦ÙŠØ³ÙŠ Ù‡Ø°Ø§ Ø§Ù„Ø·Ù„Ø¨ ÙˆÙ†ÙØ° `upsertRegisteredBranch` Ø§Ù„ØªÙŠ Ù‚Ø§Ù…Øª Ø¨Ø¹Ù…Ù„ `UPDATE registered_branches SET branch_name = 'Ø§Ù„ÙØ±Ø¹ Ø§Ù„Ø«Ø§Ù†ÙŠ', branch_prefix = 'B2' WHERE branch_id = 'main'`ØŒ ÙØªÙ…Øª ÙƒØªØ§Ø¨Ø© Ù‡ÙˆÙŠØ© Ø§Ù„ÙØ±Ø¹ Ø§Ù„Ø«Ø§Ù†ÙŠ ÙÙˆÙ‚ Ù‡ÙˆÙŠØ© Ø§Ù„ÙØ±Ø¹ Ø§Ù„Ø±Ø¦ÙŠØ³ÙŠ Ù†ÙØ³Ù‡!
+  4. Ù†ØªÙŠØ¬Ø© Ù„Ø°Ù„ÙƒØŒ Ø£ÙŠ Ø¹Ø¶Ùˆ Ø£Ùˆ Ù…Ø¹Ø§Ù…Ù„Ø© ØªÙ†Ø´Ø£ Ø¹Ù„Ù‰ Ø§Ù„ÙØ±Ø¹ Ø§Ù„Ø±Ø¦ÙŠØ³ÙŠ ÙˆØªØ­Ù…Ù„ `branch_id = 'main'` ÙƒØ§Ù†Øª Ø´Ø§Ø±Ø© Ø§Ù„ÙØ±Ø¹ `BranchBadge` ØªØ¨Ø­Ø« Ø¹Ù†Ù‡Ø§ ÙÙŠ `registered_branches` ÙØªØ¬Ø¯Ù‡Ø§ Ù…Ø³Ø¬Ù„Ø© Ø¨Ø§Ø³Ù… `[B2] Ø§Ù„ÙØ±Ø¹ Ø§Ù„Ø«Ø§Ù†ÙŠ`.
+- **Ø§Ù„Ø­Ù„ Ø§Ù„Ø¬Ø°Ø±ÙŠ:**
+  1. **Ø§Ù„Ø­Ù…Ø§ÙŠØ© Ø§Ù„ØªÙ„Ù‚Ø§Ø¦ÙŠØ© Ù„Ù„ÙØ±Ø¹ Ø§Ù„Ø±Ø¦ÙŠØ³ÙŠ ÙÙŠ `upsertRegisteredBranch`:** Ù…Ù†Ø¹ Ø£ÙŠ ÙØ±Ø¹ ØªØ§Ø¨Ø¹ Ù…Ù† Ø­Ø¬Ø² Ø£Ùˆ Ø§Ù„ÙƒØªØ§Ø¨Ø© ÙÙˆÙ‚ Ù…Ø¹Ø±Ù‘Ù `'main'`. Ø¥Ø°Ø§ Ø£Ø±Ø³Ù„ ÙØ±Ø¹ ØªØ§Ø¨Ø¹ Ù…Ø¹Ø±Ù‘Ù `'main'` ÙŠØªÙ… ØªØ­ÙˆÙŠÙ„Ù‡ ØªÙ„Ù‚Ø§Ø¦ÙŠØ§Ù‹ ÙˆØ¨Ø£Ù…Ø§Ù† Ø¥Ù„Ù‰ Ù…Ø¹Ø±Ù‘ÙÙ‡ Ø§Ù„ÙØ±ÙŠØ¯ Ø§Ù„Ù…Ø³ØªÙ‚Ù„ (`branch-2` Ø£Ùˆ `branch-${prefix}`).
+  2. **Ø§Ù„ØªØ¹Ø§ÙÙŠ Ø§Ù„Ø°Ø§ØªÙŠ Ù„Ù„ÙØ±Ø¹ Ø§Ù„ØªØ§Ø¨Ø¹ ÙÙŠ `getBranchConfig` Ùˆ `updateBranchConfig`:** Ø¥Ø°Ø§ ÙƒØ§Ù† Ø¯ÙˆØ± Ø§Ù„ÙØ±Ø¹ `replica` ÙˆÙ…Ø¹Ø±Ù‘ÙÙ‡ Ù„Ø§ ÙŠØ²Ø§Ù„ `'main'`ØŒ ÙŠØªÙ… ØªØµØ­ÙŠØ­Ù‡ ÙÙˆØ±Ø§Ù‹ ÙˆØªÙ„Ù‚Ø§Ø¦ÙŠØ§Ù‹ Ø¥Ù„Ù‰ Ù…Ø¹Ø±Ù‘Ù ÙØ±ÙŠØ¯ ØºÙŠØ± Ø±Ø¦ÙŠØ³ÙŠØŒ ÙˆØªØ­Ø¯ÙŠØ« Ø¬Ù…Ù„ Ø§Ù„Ù€ UPDATE Ù„Ø­ÙØ¸ `nextBranchId`.
+  3. **Ø¹Ø²Ù„ Ù‡ÙˆÙŠØ© Ø§Ù„Ø³ÙŠØ±ÙØ± Ø§Ù„Ø±Ø¦ÙŠØ³ÙŠ ÙÙŠ `listRegisteredBranches`:** Ø¶Ù…Ø§Ù† Ø¨Ù‚Ø§Ø¡ Ø³Ø¬Ù„ `'main'` Ø¯Ø§Ø¦Ù…Ø§Ù‹ Ø¨Ø§Ø³Ù… "Ø§Ù„ÙØ±Ø¹ Ø§Ù„Ø±Ø¦ÙŠØ³ÙŠ" ÙˆØ¯ÙˆØ± "primary" ÙˆØ¨Ø§Ø¯Ø¦Ø© "B1".
+  4. **Ø¥Ø¹Ø§Ø¯Ø© Ø¥Ø³Ù†Ø§Ø¯ Ø§Ù„Ø³Ø¬Ù„Ø§Øª ÙˆØªØµØ­ÙŠØ­ Ù‚ÙˆØ§Ø¹Ø¯ Ø§Ù„Ø¨ÙŠØ§Ù†Ø§Øª Ø§Ù„Ø­ÙŠØ©:** Ø¥Ø³Ù†Ø§Ø¯ Ø£ÙŠ Ø£Ø¹Ø¶Ø§Ø¡ ÙŠØ­Ù…Ù„ÙˆÙ† Ø¨Ø§Ø¯Ø¦Ø© `B2-` Ø¥Ù„Ù‰ `branch-2`ØŒ ÙˆØ¥Ø¹Ø§Ø¯Ø© Ø³Ø¬Ù„ `'main'` ÙÙŠ Ø§Ù„ÙØ±Ø¹ Ø§Ù„Ø±Ø¦ÙŠØ³ÙŠ Ù„ÙŠØ¸Ù‡Ø± ÙÙˆØ±Ø§Ù‹ Ø¨Ø§Ù„Ø´Ø§Ø±Ø© Ø§Ù„ØµØ­ÙŠØ­Ø© `[B1] Ø§Ù„ÙØ±Ø¹ Ø§Ù„Ø±Ø¦ÙŠØ³ÙŠ`.
 
-**Phase 15 (done, this session): resolved "expense attachments BLOBs → `Files\`" — already implemented; synced stale docs.**
-- User asked for the roadmap "move expense-attachment BLOBs from SQLite to Files\" item. **Investigation showed the code migration was already fully implemented (ADR-018):** `server/files.service.ts` is a complete secure filesystem registry (kind `expense_attachment`, MIME whitelist + magic-byte sniffing, path-traversal guards, atomic writes, crash-safe trash delete); `server/expense-attachments-backfill.ts` idempotently backfills legacy BLOB rows to `Files/expense_attachment/<id>.<ext>` at boot (`server/context.ts:111`); migrations **v15** drops the old `expense_attachments` BLOB table (when empty), **v25** adds `files.relative_path`, **v26** is the backfill marker; `server/index.ts` uploads (`POST /api/files`) + serves (`GET /api/files/:id`). `expenses.service.ts` has zero BLOB code. Backups already archive `Files/` into `.gymbak` trailers.
-- No code re-build was done (nothing to build). Instead corrected the **stale docs/AI-state** that still described the removed BLOB storage: removed the `expense_attachments` schema section in `docs/ai/database.md` (replaced with "removed; backfilled to Files/"), added `relative_path` to the `files` table doc, fixed `.ai/project.md` (removed stale known-limitation + feature-list), `.ai/business-rules.md:41`, `docs/ai/business-rules.md:75`, `docs/ai/roadmap.md:11`, `AGENTS.md:133`, `README.md:151`, `.ai/architecture.md:63` (v4 + "(dropped v15)"), and corrected factual errors in `.ai/decisions.md` ADR-018 (v20→v25, v21→v26, `unlinkPendingForPaths`→`unlinkFileBytes`+`sweepPendingDeletes`) and the `migrations.ts:649` comment path (`src/db/`→`server/`).
-- Verification: `npm run sync:docs` (docs in sync), `npm run typecheck` + `npm run typecheck:server` clean, `npm run build` clean, targeted tests pass (`finance` 42, `i18n-coverage` 3, `part4-backup` 8).
+### TASK-098: ØªÙ†Ø¸ÙŠÙ Ù…Ù„ÙØ§Øª Ø§Ù„Ù…Ø´Ø±ÙˆØ¹ ÙˆØªÙˆØ«ÙŠÙ‚ Ø§Ù„Ù‚ÙˆØ§Ø¹Ø¯ Ø§Ù„Ø°Ù‡Ø¨ÙŠØ© Ù„ØªØ³Ù„ÙŠÙ… Ø§Ù„Ù…Ø´Ø±ÙˆØ¹ Ù„Ø£ÙŠ ÙˆÙƒÙŠÙ„ Ø°ÙƒØ§Ø¡ Ø§ØµØ·Ù†Ø§Ø¹ÙŠ (Done)
+- **Ø§Ù„Ù…Ø´ÙƒÙ„Ø©:** Ø¹Ù†Ø¯ Ø¥Ø¹Ø¯Ø§Ø¯ Ø§Ù„ÙØ±Ø¹ Ø§Ù„Ø«Ø§Ù†ÙŠØŒ ØªÙ… ØªØ³Ø¬ÙŠÙ„ Ø§Ù„ÙØ±Ø¹ Ø§Ù„Ø±Ø¦ÙŠØ³ÙŠ `main` ÙÙŠ Ø¬Ø¯ÙˆÙ„ `registered_branches` Ø¯Ø§Ø®Ù„ Ù‚Ø§Ø¹Ø¯Ø© Ø¨ÙŠØ§Ù†Ø§Øª Ø§Ù„ÙØ±Ø¹ Ø§Ù„Ø«Ø§Ù†ÙŠ Ø¨Ø§Ø³Ù… Â«Ø§Ù„ÙØ±Ø¹ Ø§Ù„Ø«Ø§Ù†ÙŠÂ»ØŒ Ù…Ù…Ø§ ØªØ³Ø¨Ø¨ ÙÙŠ Ø¸Ù‡ÙˆØ± ÙƒÙ„ Ø§Ù„Ø³Ø¬Ù„Ø§Øª Ø§Ù„Ù‚Ø§Ø¯Ù…Ø© Ù…Ù† Ø§Ù„Ø±Ø¦ÙŠØ³ÙŠ ÙƒØ£Ù†Ù‡Ø§ ØªØ§Ø¨Ø¹Ø© Ù„Ù„ÙØ±Ø¹ Ø§Ù„Ø«Ø§Ù†ÙŠ.
+- **Ø§Ù„Ø­Ù„:**
+  1. ØªØµØ­ÙŠØ­ Ù‚Ø§Ø¹Ø¯Ø© Ø¨ÙŠØ§Ù†Ø§Øª Ø§Ù„ÙØ±Ø¹ Ø§Ù„Ø«Ø§Ù†ÙŠ Ù…Ø­Ù„ÙŠØ§Ù‹ Ù„ØªØ³Ø¬ÙŠÙ„ `main` Ø¨Ø§Ø³Ù… Â«Ø§Ù„ÙØ±Ø¹ Ø§Ù„Ø±Ø¦ÙŠØ³ÙŠÂ» ÙˆØ¯ÙˆØ± `primary` ÙˆØ¨Ø§Ø¯Ø¦Ø© `B1`.
+  2. Ø¥Ø¶Ø§ÙØ© Ø¢Ù„ÙŠØ© ØªØ¹Ø§ÙÙ ÙˆØ­Ù…Ø§ÙŠØ© Ø°Ø§ØªÙŠØ© (Auto-Healing) ÙÙŠ `sync.service.ts`:
+     - ÙÙŠ `listRegisteredBranches`: Ø­Ù…Ø§ÙŠØ© ØªÙ„Ù‚Ø§Ø¦ÙŠØ© ØªÙ…Ù†Ø¹ ØªØ·Ø§Ø¨Ù‚ Ø§Ø³Ù… Ø§Ù„Ø³ÙŠØ±ÙØ± Ø§Ù„Ø±Ø¦ÙŠØ³ÙŠ Ù…Ø¹ Ø§Ø³Ù… Ø§Ù„ÙØ±Ø¹ Ø§Ù„ØªØ§Ø¨Ø¹.
+     - ÙÙŠ `perFormsyncCycle`: ØªØ­Ø¯ÙŠØ« Ø§Ø³Ù… ÙˆØ¨Ø§Ø¯Ø¦Ø© Ø§Ù„Ø³ÙŠØ±ÙØ± Ø§Ù„Ø±Ø¦ÙŠØ³ÙŠ Ø¢Ù„ÙŠØ§Ù‹ ÙÙˆØ± ÙˆØ±ÙˆØ¯ Ø¨ÙŠØ§Ù†Ø§ØªÙ‡ Ù…Ù† Ø§Ù„Ù€ Pull.
+     - ÙÙŠ `updateBranchConfig`: Ø­Ù…Ø§ÙŠØ© Ø³Ø¬Ù„ `main` Ø¹Ù†Ø¯ Ø¶Ø¨Ø· Ø¥Ø¹Ø¯Ø§Ø¯Ø§Øª ÙØ±Ø¹ ØªØ§Ø¨Ø¹ Ø¬Ø¯ÙŠØ¯.
 
-**Phase 16 (done, this session): advanced analytics — Retention & Activity Insights (TASK-025).**
-- The `/reports` page already covered finance + attendance (visits/peak-hours/top-members) + staff activity. The genuine missing gap was **member retention/churn + activity insight**. Built a new, non-duplicative module as a 4th tab "الاحتفاظ والنشاط" (`retention`) in `reports-page.tsx`.
-- New `src/core/services/activity-insights.service.ts` → `getRetentionInsights(db, actor, {fromKey,toKey})`, gated `reports.view`, department-scoped for men/women staff, pure reads (no schema/migration/permission/audit change):
-  - `inactiveMembers` — active members with an active paid-ish subscription whose last visit is older than the configured `inactive_days` (reuses `getInactiveDays`), incl. code/name/department/lastVisitAt/daysSinceLastVisit.
-  - `visitorSplit {newMembers, returning}` — a visitor is "new" when this period holds their **all-time** first check-in (computed from global MIN; a subtle range-scoping bug was caught+fixed during testing).
-  - `totalVisitors` + `avgCheckinsPerVisitingMember` (total / unique, 2dp).
-  - `byDayOfWeek` (7 buckets, Sun=0) + `byDepartment` (general/men/women).
-- Wiring: `server/rpc/reports.rpc.ts` (+`getRetentionInsights`), `src/api/index.ts` (`api.reports.retentionInsights(range)`). Reused existing `reports.view` — no new permission (avoids permission-count churn in tests/docs).
-- UI: `RetentionView` in `reports-page.tsx` — 4 StatCards (inactive count w/ threshold, new vs returning, avg check-ins, total visits), day-of-week + department neon bars, at-risk members DataTable. i18n keys in `src/i18n/ar.ts`: `rpt.tabRetention`, `rpt.department`, `rpt.daysSinceVisit`, `rpt.dayUnit`, `rpt.retentionInactive`, `rpt.inactiveThreshold`, `rpt.retentionNewVisitors`, `rpt.retentionReturning`, `rpt.retentionAvgCheckins`, `rpt.dayOfWeekTitle`, `rpt.departmentSplitTitle`, `rpt.inactiveListTitle`/`Hint`/`Empty` + new `dow.day0..day6` namespace; dept labels reuse `members.dept*`.
-- Tests: `tests/activity-insights.test.ts` (5) — aggregation math, `reports.view` denials, range/date validation, `inactive_days` threshold respect, archived exclusion. Dept scoping delegated to the already-covered `departmentScopeCondition` helper.
-- Verification: `npm run typecheck` + `typecheck:server` clean, `node scripts/check-rpc-consistency.cjs` ok (265 entries, no missing client call), `npm test` **399/399** (33 files, +5 new), `npm run build` clean, `npm run sync:docs` in sync. No commit made (user-facing report pending).
+### TASK-096: Ø¨Ø§Ø¯Ø¦Ø© Ø§Ù„ÙØ±Ø¹ Ù„Ø£ÙƒÙˆØ§Ø¯ Ø§Ù„Ù…Ø´ØªØ±ÙƒÙŠÙ† ÙˆØªØªØ¨Ø¹ Ù…ØµØ¯Ø± Ø§Ù„Ø¹Ù…Ù„ÙŠØ§Øª Ø­Ø³Ø¨ Ø§Ù„ÙØ±Ø¹ (Done â€” Migration v41)
+- **Ø§Ù„Ù…Ø·Ù„ÙˆØ¨:** Ø¨Ø¯Ø¡ Ø£Ø±Ù‚Ø§Ù… Ø§Ù„Ø¹Ø¶ÙˆÙŠØ© Ø¨Ø¨Ø§Ø¯Ø¦Ø© ÙƒÙˆØ¯ Ø§Ù„ÙØ±Ø¹ (`B1-MEM-000001` Ù„Ù„Ø±Ø¦ÙŠØ³ÙŠØŒ Ùˆ `B2-MEM-000001` Ù„Ù„ÙØ±Ø¹ Ø§Ù„Ø«Ø§Ù†ÙŠ) ÙˆØªØªØ¨Ø¹ Ù…ØµØ¯Ø± Ø£ÙŠ Ø¹Ù…Ù„ÙŠØ© ÙˆÙ…Ø¹Ø±ÙØ© Ø§Ù„ÙØ±Ø¹ Ø§Ù„Ø°ÙŠ ØªÙ…Øª ÙÙŠÙ‡.
+- **Ø§Ù„Ø­Ù„:**
+  1. Ø¥Ù†Ø´Ø§Ø¡ ÙˆØ­Ø¯Ø© Ù…Ø³Ø§Ø¹Ø¯Ø© `src/core/branch.ts` Ø¨Ø¯Ø§Ù„ØªÙŠ `getLocalBranchId(db)` Ùˆ `getLocalBranchPrefix(db)`.
+  2. Ø¥Ø¶Ø§ÙØ© ØªØ±Ù‚ÙŠØ© Ù‚Ø§Ø¹Ø¯Ø© Ø§Ù„Ø¨ÙŠØ§Ù†Ø§Øª `migration v41` Ù„Ø¥Ø¶Ø§ÙØ© Ø¹Ù…ÙˆØ¯ `branch_id` Ù…ÙÙ‡Ø±Ø³Ø§Ù‹ Ù„Ø¬Ø¯ÙˆÙ„ `store_sales`.
+  3. ØªÙˆÙ„ÙŠØ¯ ÙƒÙˆØ¯ Ø§Ù„Ù…Ø´ØªØ±Ùƒ Ø§Ù„Ø¬Ø¯ÙŠØ¯ Ø¨ØªÙ†Ø³ÙŠÙ‚ `{prefix}-MEM-{seq}` ÙˆØ­ÙØ¸ `branch_id` ØµØ±Ø§Ø­Ø© Ø¹Ù†Ø¯ Ø§Ù„Ø¥Ù†Ø´Ø§Ø¡.
+  4. Ø­ÙØ¸ `branch_id` ØµØ±Ø§Ø­Ø© ÙÙŠ Ø¬Ù…Ù„ `INSERT` Ù„ÙƒÙ„ Ù…Ù†: Ø§Ù„Ø§Ø´ØªØ±Ø§ÙƒØ§Øª (`member_subscriptions`)ØŒ Ø§Ù„Ù…Ø¯ÙÙˆØ¹Ø§Øª (`payments`)ØŒ Ø§Ù„Ø­Ø¶ÙˆØ± (`attendance`)ØŒ Ø§Ù„Ù…ØµØ±ÙˆÙØ§Øª (`expenses`)ØŒ ÙˆÙ…Ø¨ÙŠØ¹Ø§Øª Ø§Ù„Ù…ØªØ¬Ø± (`store_sales`).
+  5. Ø¥Ù†Ø´Ø§Ø¡ Ø§Ù„Ù…ÙƒÙˆÙ† Ø§Ù„Ù…ÙˆØ­Ø¯ `BranchBadge` ÙˆØ¥Ø¶Ø§ÙØªÙ‡ ÙÙŠ Ø¬Ø¯Ø§ÙˆÙ„ Ø§Ù„Ù…Ø´ØªØ±ÙƒÙŠÙ†ØŒ Ø§Ù„Ø§Ø´ØªØ±Ø§ÙƒØ§ØªØŒ Ø§Ù„Ù…Ø¯ÙÙˆØ¹Ø§ØªØŒ Ø´Ø§Ø´Ø© Ø§Ù„Ø§Ø³ØªÙ‚Ø¨Ø§Ù„ ÙˆØ§Ù„Ø­Ø¶ÙˆØ±ØŒ Ø§Ù„Ù…ØµØ±ÙˆÙØ§ØªØŒ ÙˆØ§Ù„Ù…ØªØ¬Ø±.
 
-**Files changed (TASK-025 — retention & activity insights):**
-- Created: `src/core/services/activity-insights.service.ts`, `tests/activity-insights.test.ts`
-- Modified: `server/rpc/reports.rpc.ts`, `src/api/index.ts`, `src/pages/reports-page.tsx`, `src/i18n/ar.ts`, `.ai/tasks.md` (+TASK-025), `.ai/current-state.md` (this file)
-- No DB changes (no migration), no permission/audit changes.
+### TASK-095: Ø­Ù…Ø§ÙŠØ© Ù…ÙØ§ØªÙŠØ­ Ø§Ù„Ø±Ø¨Ø· Ø§Ù„Ø®Ø§Ø±Ø¬ÙŠØ© Ø£Ø«Ù†Ø§Ø¡ Ø§Ù„Ù…Ø²Ø§Ù…Ù†Ø© Ù„Ù…Ù†Ø¹ Ø®Ø·Ø£ FOREIGN KEY constraint failed (Done)
+- ØªØ£Ù…ÙŠÙ† ÙƒØ§ÙØ© Ø¯ÙˆØ§Ù„ Ø§Ù„Ø§Ø³ØªÙ‚Ø¨Ø§Ù„ ÙˆØ§Ù„Ù…Ø²Ø§Ù…Ù†Ø© ÙÙŠ `sync.service.ts` Ø¹Ø¨Ø± Ù…Ø¹Ø§Ù„Ø¬Ø§Øª ÙˆÙ‚Ø§Ø¦ÙŠØ© Ù„Ù„Ù…ÙØ§ØªÙŠØ­ Ø§Ù„Ø®Ø§Ø±Ø¬ÙŠØ© (`resolveLocalUserId`, `resolveLocalRequiredUserId`, `resolveLocalFileId`, `resolveLocalCardId`, `resolveLocalSubscriptionId`) Ù„Ø¶Ù…Ø§Ù† Ø§Ø³ØªÙ‚Ø±Ø§Ø± ÙˆÙ†Ø¬Ø§Ø­ Ø§Ù„Ù…Ø²Ø§Ù…Ù†Ø© Ø¨ÙŠÙ† Ø§Ù„ÙØ±ÙˆØ¹ Ø¨Ù†Ø³Ø¨Ø© 100%.
 
-## Known issues / follow-ups
+### TASK-094: ØªØµØ­ÙŠØ­ Ø³Ø±Ø¹Ø© Ø§Ø³ØªØ´Ø¹Ø§Ø± Ø§Ù†Ù‚Ø·Ø§Ø¹ Ø§Ù„ÙØ±Ø¹ Ø§Ù„ØªØ§Ø¨Ø¹ ÙˆØ§Ù„ØªØ­Ø¯ÙŠØ« Ø§Ù„ØªÙ„Ù‚Ø§Ø¦ÙŠ Ù„Ù„ÙˆØ§Ø¬Ù‡Ø© (Done)
+- ØªÙ‚Ù„ÙŠØµ Ù…Ù‡Ù„Ø© Ø§Ø¹ØªØ¨Ø§Ø± Ø§Ù„ÙØ±Ø¹ Ø§Ù„ØªØ§Ø¨Ø¹ Ø£ÙˆÙÙ„Ø§ÙŠÙ† Ø¥Ù„Ù‰ 60 Ø«Ø§Ù†ÙŠØ© ÙÙŠ `sync.service.ts`.
+- Ø¥Ø¶Ø§ÙØ© Ù…Ø¤Ù‚Øª ØªØ­Ø¯ÙŠØ« Ø¢Ù„ÙŠ ÙƒÙ„ 8 Ø«ÙˆØ§Ù†Ù ÙÙŠ Ø¨Ø·Ø§Ù‚Ø© Ø§Ù„ÙØ±ÙˆØ¹ Ø§Ù„ØªØ§Ø¨Ø¹Ø© Ù„Ø´Ø§Ø´Ø© Ø§Ù„Ø¥Ø¹Ø¯Ø§Ø¯Ø§Øª ÙˆØ²Ø± ØªØ­Ø¯ÙŠØ« ÙÙˆØ±ÙŠ Ù…Ø¨Ø§Ø´Ø± ÙÙŠ ØªØ±ÙˆÙŠØ³Ø© Ø§Ù„Ø¨Ø·Ø§Ù‚Ø©.
+- ØªØ¹ÙŠÙŠÙ† Ø´Ø§Ø±Ø© Ù…Ù…ÙŠØ²Ø© Â«Ø§Ù„Ø³ÙŠØ±ÙØ± Ø§Ù„Ø±Ø¦ÙŠØ³ÙŠ Ù†Ø´Ø·Â» Ù„Ù„ÙØ±Ø¹ Ø§Ù„Ø±Ø¦ÙŠØ³ÙŠ ÙˆØªÙ‚Ù„ÙŠØµ Ø¯ÙˆØ±Ø© ØªØ­Ø¯ÙŠØ« Ø§Ù„Ù‡ÙŠØ¯Ø± Ø¥Ù„Ù‰ 10 Ø«ÙˆØ§Ù†Ù.
 
-- **License signing secrets:** `config/id_ed25519_private.pem` is the ONLY private key that matches the embedded `EMBEDDED_PUBLIC_PEM` in `server/license/crypto.ts`. It is gitignored (`config/`, `*.pem`, `license.lic`). **Never commit them;** if you regenerate via `npm run license:keygen` you MUST copy the new public PEM into `crypto.ts` and rebuild, or activation will fail (signature mismatch). Before shipping to a real customer, generate a fresh dedicated keypair and embed only its public key — the current one is a dev key.
-- **TASK-031 Phase 3 hardening (discovered, RESOLVED by TASK-036-F1 + TASK-038):** while the license state is `unlicensed`, `isHardLocked=false` so all writes are allowed and there is **no expiry ceiling** — an actor can simply delete `configDir/license.json` + `license.lic` to revert a never-expired state and escape the license lockdown. TASK-036-F1 added the `license_activation` marker (ADR-021) so deleting the license files reverts to the marker's grant, not to `unlicensed`; TASK-038/ADR-022 made the expired lock a total lockdown (no read-only escape).
-- Browser camera capture still not live-tested (needs real webcam).
-- `scripts/e2e-audit.ps1` (66-check audit) now **passes all 66 checks** (exit 0). Two stale audit assertions fixed (test-data only, no product change): (1) "frozen subscription denied" asserted the old deny-on-frozen-scan behavior, but the product intentionally **auto-unfreezes on check-in** (unit-tested in `tests/subscriptions.freeze.enhanced.test.ts`) — the audit now asserts the scan is granted; (2) the member-photo upload sent an `object[]` body that PowerShell transmitted as text, failing the JPEG magic-byte sniff (ADR-018 §4) — now built as a true `byte[]` with `FF D8 FF E0` header so it uploads as binary.
-- `npm run e2e` (e2e-smoke) **passes all 24 checks**; corrected the stale `unauthenticated /me` check in `scripts/e2e-smoke.ps1` — the server intentionally returns `200 {needsSetup:true}` (not 401) for unauthenticated `/api/auth/me`, so the old check asserted the opposite of the documented behavior.
-- Legacy `/users`, `/permissions`, `/health`, `/scanner`, `/reception`, `/packages`, `/cash` routes are **removed** (this session, phase 13) — no longer registered in `routes/index.tsx`. Canonical equivalents: `/reception`→`/attendance`, `/packages`→`/subscriptions` (باقات tab), `/cash`→`/treasury`, `/users`+`/permissions`→`/staff`, `/scanner`+`/health`→`/settings` (tabs). Old bookmarks now redirect to `/` (catch-all). Deleted wrapper pages `users-page.tsx`, `permissions-page.tsx`, `scanner-diagnostics-page.tsx`, `health-page.tsx`; removed unused `CashSessionsPage` export from `cash-page.tsx` (kept `CashSessionsPanel`).
-- The daily-closing feature (الإغلاق اليومي) is fully removed (tables, permissions, service, RPC, UI, dashboard). A full-repo sweep (source + docs, excluding the historical migration v20 definition and tasks/current-state history) confirmed **no stale references remain**; the last one fixed was the `treasury.subtitle` i18n string, which still mentioned daily-closing reconciliation and was updated to describe the cash-sessions-only page.
-- No i18n-coverage regression: shared `checkin.*` keys retained (used by dashboard `checkin.recent`/`checkin.noScans`, member-profile `checkin.deniedTitles`/`checkin.successTitle`, employee-checkin `checkin.submit`).
-- Some `checkin.*` fast-tab-only keys (e.g. `scanTitle`, `scanHint`, `quickTitle`, `fieldBarcode`) are now unused but retained (harmless; coverage test checks only that used keys exist).
-- Orphaned `nav.*` keys removed (phase 14): `nav.checkin`, `nav.reception`, `nav.packages`, `nav.scannerDiagnostics`, `nav.health`, `nav.inbody` — all confirmed unused via repo-wide grep (their sidebar entries/routes were removed in earlier phases). `nav.users`/`nav.permissions` kept (still used as tab titles in `/staff`). i18n coverage 3/3. Also removed dead `ICONS` entries (for the now-removed `/cash` + `/packages` paths) + unused `Wallet`/`PackageIcon` imports from `sidebar.tsx`.
+---
 
-## Blockers
+## 3. Multi-Branch Architecture Reference
 
-- None.
+| Branch Role | Default Port | Data Directory | Default Branch ID | Default Prefix |
+| --- | --- | --- | --- | --- |
+| **Primary (Ø§Ù„Ø±Ø¦ÙŠØ³ÙŠ)** | `8890` | `%LOCALAPPDATA%\GymSystem` | `main` | `B1` |
+| **Replica (Ø§Ù„ÙØ±Ø¹ Ø§Ù„Ø«Ø§Ù†ÙŠ)** | `8895` | `%LOCALAPPDATA%\GymSystem_Branch2` | `branch-2` | `B2` |
 
-## Files changed (TASK-021, this session)
+- **Ø§Ù„Ø§ØªØµØ§Ù„ ÙˆØ§Ù„Ø±Ø¨Ø·:**
+  - Ù…Ø­Ù„ÙŠØ§Ù‹ / Ø¹Ø¨Ø± Ø§Ù„Ø´Ø¨ÙƒØ© Ø§Ù„Ø³Ù„ÙƒÙŠØ©: `http://<LAN_IP>:8890`
+  - Ø¹Ø¨Ø± Tailscale VPN: `http://<Tailscale_IP>:8890`
+  - Ø¹Ø¨Ø± Ø¥Ù†ØªØ±Ù†Øª Ø¹Ø§Ù…: Ù†ÙÙ‚ Cloudflare Ø§Ù„Ù…Ø®ØµØµ (Named Tunnel) Ø¨Ù†Ù‚Ø±Ø© Ø²Ø± ÙˆØ§Ø­Ø¯Ø© Ø£Ùˆ Ø§Ù„ØªÙˆÙƒÙ† Ø§Ù„Ù…Ø®ØµØµ (`*.trycloudflare.com` Ø£Ùˆ Ø¯ÙˆÙ…ÙŠÙ† Ø®Ø§Øµ).
+- **Ø§Ù„Ø¬Ù„Ø³Ø§Øª ÙˆØ§Ù„ÙƒÙˆÙƒÙŠØ²:** Ù…Ø¹Ø²ÙˆÙ„Ø© Ø­Ø³Ø¨ Ø§Ù„Ù…Ù†ÙØ° (`gymsystem_session` Ù„Ù„Ù…Ù†ÙØ° 8890 Ùˆ `gymsystem_session_<port>` Ù„ØºÙŠØ±Ù‡) Ù„Ù…Ù†Ø¹ ØªØ¶Ø§Ø±Ø¨ Ø§Ù„Ø¬Ù„Ø³Ø§Øª Ø¹Ù†Ø¯ ØªØ´ØºÙŠÙ„ Ø£ÙƒØ«Ø± Ù…Ù† ÙØ±Ø¹ Ø¹Ù„Ù‰ Ù†ÙØ³ Ø§Ù„Ø¬Ù‡Ø§Ø².
 
-**Removed (phase 11 — daily-closing feature deleted entirely):**
-- `src/core/services/daily-closing.service.ts`, `server/rpc/daily-closing.rpc.ts` (deleted)
-- `src/pages/treasury/{closing-detail,closing-form,closing-list,print}.tsx` (deleted) + `src/pages/treasury/index.tsx` (rewritten to cash-sessions only)
-- `tests/daily-closing.test.ts` (deleted, 30 cases)
-- `src/routes/index.tsx` (`/treasury/print/:closingId` route + `TreasuryPrintPage` import removed; `/treasury` permission → `payments.view`), `src/routes/nav-routes.ts` (`/treasury` → `permissions: ["cash.daily_close","payments.view"]` → single `payments.view`)
-- `server/rpc/registry.ts` (removed `dailyClosing`), `server/rpc/dashboard.rpc.ts` + `src/core/services/dashboard.service.ts` (removed `getTreasuryForDashboard` + `DashboardTreasurySection` + import)
-- `src/api/index.ts` (removed `treasuryApi`, `api.treasury`, `dashboardApi.treasury`, exported daily-closing types + re-exports)
-- `src/core/permissions.ts` (removed `cash.daily_close`/`cash.daily_reopen`), `src/core/audit-actions.ts` (removed `DAILY_CLOSING_*`)
-- `src/pages/dashboard-page.tsx` (removed treasury KPI card + `treasury` state/fetch + type import)
-- `src/db/migrations.ts` (+ **v27**: drop `daily_closing_audit_entries` → indexes → `daily_closings`; delete seeded perms/grants)
-- `src/i18n/ar.ts` (removed `perms."cash.daily_close"`/`perms."cash.daily_reopen"`, unused `treasury.*` (kept title/subtitle/sessionSectionHint), unused `errors.treasury.*`)
+---
 
-**Modified (phase 11 — migration-version bumps 26→27):** `tests/foundation.smoke.test.ts`, `tests/part4-backup.test.ts`, `tests/restore-authz.test.ts`
+## 4. Verification & Validation Commands
 
-**Modified (phase 9 — cash/treasury merge):**
-- `src/pages/treasury/index.tsx` (`DailyClosingPanel` extracted; new tabbed `TreasuryPage` -> later replaced by single-page in phase 10; removed dead `value=""` reason inputs ×2; removed misleading duplicate counted-cash box in detail financials; box cards retitled; cleaner date-row header)
-- `src/pages/cash-page.tsx` (`CashSessionsPage` → `CashSessionsPanel` embedding component w/o title; new `CashSessionsPage` wrapper keeps legacy `/cash` page)
-- `src/routes/nav-routes.ts` (removed `/cash` sidebar entry; `/treasury` → `permissions: ["cash.daily_close","payments.view"]`)
-- `src/routes/index.tsx` (`/treasury` `RequirePermission` → `permissions` any-of)
-- `src/i18n/ar.ts` (+`treasury.tabClosing/tabSessions/tabClosingHint/tabSessionsHint/closingCardHint`; retitled `treasury.title`/`subtitle`+`nav.treasury`→"الخزينة النقدية"; clearer `snapshotMissingHint`/`createSnapshotBtn`; removed `nav.cash`)
+All commands verified passing on Windows:
+```bash
+npm run typecheck         # Client TypeScript check (0 errors)
+npm run typecheck:server  # Server TypeScript check (0 errors)
+npm test                  # Vitest suite (621 tests passing across 54 files)
+npm run build             # Full client (vite) + server (esbuild) build
+npm run build:exe         # Packaged desktop EXE (dist-exe/GymSystem.exe)
+npm run sync:docs         # Value-level documentation auto-sync
+npm run build:fonts       # Regenerate static Cairo PDF fonts (needs Python+fontTools)
+node scripts/pdf-e2e.mjs  # E2E: PDF receipt against the built server bundle
+node scripts/pdf-exe-e2e.mjs # E2E: PDF receipt against the packaged GymSystem.exe
+```
 
-**Modified (phase 10 — single-page `/treasury`, session primary):**
-- `src/pages/treasury/index.tsx` (removed `Tabs` container + `TreasuryTab` type; single-page `TreasuryPage` renders page header → `<CashSessionsPanel/>` under "وردية الخزينة" heading + hint (gated `payments.view`) → `<DailyClosingPanel/>` under "الإغلاق اليومي" heading + hint (gated `cash.daily_close`); EmptyState forbidden only if neither perm; added neon icon rows using `WalletCards`/`Coins`)
-- `src/i18n/ar.ts` (removed `tabClosing/tabSessions/tabClosingHint/tabSessionsHint`; added `treasury.dailyClosingTitle`/`dailyClosingSectionHint`/`sessionSectionHint`; updated `treasury.subtitle`)
-- `.ai/current-state.md`, `.ai/tasks.md` (these docs)
+---
 
-**Modified (phase 8):**
-- `src/pages/subscriptions-page.tsx` (tabs now `subs`/`packages` only; legacy `PlansGrid`/`PlanFormModal` moved to a secondary "إدارة الخطط البسيطة" sub-view toggled by a button with back; added `ArrowLeft` import + `showPlans` state)
-- `src/components/subscriptions/subscription-form-modal.tsx` (defaults to first package when packages exist — packages are the primary choice; simple plan stays a secondary fallback)
-- `src/i18n/ar.ts` (+`plans.secondaryManage`)
+## 5. Next Recommended Step / Open Followups
 
-**Modified (phase 7):**
-- `src/pages/subscriptions-page.tsx` (+`packages` tab rendering `<PackagesPage />`, gated by `packages.view`; tabs now `subs`/`packages`/`plans`; added `PackagesPage` import)
-- `src/routes/nav-routes.ts` (removed `/packages` sidebar entry)
+- **Ø¨ÙˆØ§Ø¨Ø© Ø§Ù„ÙˆØ§ØªØ³Ø§Ø¨ â€” ØºÙŠØ± Ù…Ø­Ø³ÙˆÙ…Ø©ØŒ Ø±Ø§Ø¬Ø¹Ù‡Ø§ Ù‚Ø¨Ù„ Ø£ÙŠ Ø¹Ù…Ù„ Ø¹Ù„ÙŠÙ‡Ø§:** ÙƒØ§Ù† Ù‡Ù†Ø§Ùƒ Ø§Ø¯Ø¹Ø§Ø¡ Ø¨Ø£Ù† Ù…ØªØµÙØ­ Ø§Ù„Ø¨ÙˆØ§Ø¨Ø© ÙŠÙØªØ­ `about:blank` ÙˆØ£Ù† Ø§Ù„Ø³Ø¨Ø¨ Ù‡Ùˆ `resolveBrowserPath()`. **Ù‡Ø°Ø§ Ø§Ù„Ø§Ø¯Ø¹Ø§Ø¡ ØºÙŠØ± ØµØ­ÙŠØ­** â€” Ø¨Ø§Ù„ØªØ­Ù‚Ù‚ Ù…Ù† Git ØªØ¨ÙŠÙ‘Ù† Ø£Ù† `whatsapp-gateway/wa-session.js` ÙÙŠ `HEAD` (commit `49b2361`) **Ù„Ø§ ÙŠØ­ÙˆÙŠ** throw Ø§Ù„Ø®Ø·Ø£ `no compatible browser installed` Ø£ØµÙ„Ø§Ù‹ØŒ ÙˆØ£Ù† `executablePath` ÙÙŠÙ‡ **Ù…Ø´Ø±ÙˆØ·** Ø£ØµÙ„Ø§Ù‹ (`if (executablePath) puppeteerOptions.executablePath = â€¦`). ÙƒÙ…Ø§ Ø£Ù† Edge Ù…Ø«Ø¨Ù‘Øª ÙØ¹Ù„Ø§Ù‹ Ø¹Ù„Ù‰ `C:\Program Files (x86)\Microsoft\Edge\Application\msedge.exe`.
+  - Ø§Ù„Ø£Ø®Ø·Ø§Ø¡ Ø§Ù„Ø­Ù‚ÙŠÙ‚ÙŠØ© Ø§Ù„Ù…ÙˆØ¬ÙˆØ¯Ø© ÙÙŠ `%LOCALAPPDATA%\GymSystem\Logs\whatsapp-gateway.log` (Ø¨ØªÙˆÙ‚ÙŠØª 2026-09-24 Ù…Ù† 00:39 Ø¥Ù„Ù‰ 01:06) Ù‡ÙŠ: `Failed to launch the browser process: Code: 0` Ùˆ `The browser is already running for â€¦\WhatAppGateway\wpp-profile` â€” Ø£ÙŠ **ØªØ¹Ø§Ø±Ø¶ ÙÙŠ Ù‚ÙÙ„ Ù…Ù„Ù profile Ø§Ù„Ø®Ø§Øµ Ø¨Ù€ Chromium**ØŒ ÙˆÙ„ÙŠØ³ ØºÙŠØ§Ø¨ Ù…ØªØµÙØ­.
+  - **Ù„Ù… ÙŠØªÙ… Ø§Ù„ØªØ­Ù‚Ù‚ Ù…Ù† Ø£ÙŠ Ø¥ØµÙ„Ø§Ø­ Ø¨Ø¹Ø¯ commit `49b2361`** â€” Ø§Ù„Ø³Ø¬Ù„Ø§Øª Ø§Ù„Ù…Ø°ÙƒÙˆØ±Ø© Ø£Ù‚Ø¯Ù… Ù…Ù† ÙˆÙ‚Øª Ø§Ù„Ø¥ØµÙ„Ø§Ø­. Ø§Ù„Ø®Ø·ÙˆØ§Øª Ø§Ù„Ù…Ù‚ØªØ±Ø­Ø©: (1) Ø­Ø°Ù Ù…Ø¬Ù„Ø¯ `%LOCALAPPDATA%\GymSystem\WhatAppGateway\wpp-profile`ØŒ (2) Ø§Ù„ØªØ£ÙƒØ¯ Ù…Ù† Ø¹Ø¯Ù… ÙˆØ¬ÙˆØ¯ Ø¹Ù…Ù„ÙŠØ© `msedge` Ø¹Ø§Ù„Ù‚Ø© Ø¹Ù„Ù‰ Ù†ÙØ³ Ø§Ù„Ù€ profileØŒ (3) ØªØ´ØºÙŠÙ„ `/pair` ÙˆÙ…Ø±Ø§Ù‚Ø¨Ø© Ø§Ù„Ø³Ø¬Ù„.
+  - ØªØ­Ø°ÙŠØ± Ù…Ù†Ù‡Ø¬ÙŠ: ÙÙŠ Ù‡Ø°Ù‡ Ø§Ù„Ø¬Ù„Ø³Ø© ÙƒØ§Ù†Øª Ø£Ø¯Ø§Ø© Ø§Ù„Ù‚Ø±Ø§Ø¡Ø© ØªØ¹ÙŠØ¯ Ù…Ø­ØªÙˆÙ‰ **Ù‚Ø¯ÙŠÙ…Ø§Ù‹ ÙˆÙ…Ø¶Ù„Ù„Ø§Ù‹** Ù„Ù…Ù„ÙØ§Øª ÙƒØ§Ù†Øª Ù…Ø¹Ø¯ÙŽÙ‘Ù„Ø© Ø¨Ø§Ù„ÙØ¹Ù„ ÙÙŠ `HEAD`. **Git Ù‡Ùˆ Ø§Ù„Ù…ØµØ¯Ø± Ø§Ù„ÙˆØ­ÙŠØ¯ Ø§Ù„Ù…ÙˆØ«ÙˆÙ‚** Ù„Ù„ØªØ­Ù‚Ù‚ Ù…Ù† Ø­Ø§Ù„Ø© Ø£ÙŠ Ù…Ù„Ù.
+- Ø§Ù„ÙƒØ´Ùƒ Ø§Ù„ØªÙ„Ù‚Ø§Ø¦ÙŠ (TASK-102 + TASK-103) Ù…ÙƒØªÙ…Ù„ ÙˆÙ…Ø³ØªÙ‚Ø±ØŒ ÙˆÙŠØ¹Ù…Ù„ Ù…Ø¹ ÙƒÙ„ Ù…Ù† Ø§Ù„ÙƒØ§Ù…ÙŠØ±Ø§ ÙˆÙ‚Ø§Ø±Ø¦ Ø§Ù„Ø¨Ø§Ø±ÙƒÙˆØ¯ Ø§Ù„ÙÙŠØ²ÙŠØ§Ø¦ÙŠ Ø­ØªÙ‰ Ø¹Ù†Ø¯ Ø¶Ø¨Ø· Windows Ø¹Ù„Ù‰ Ø§Ù„Ù„ØºØ© Ø§Ù„Ø¹Ø±Ø¨ÙŠØ©.
+- Multi-branch synchronization and branch tracking is fully stable.
+- All 621 unit tests pass and the desktop executables are ready.
+- If the owner requests new features (e.g. thermal receipt printer integration, specialized barcode printing, or advanced multi-branch financial aggregations), proceed following the conventions in `AGENTS.md`.
 
-**Modified (phase 6):**
-- `src/routes/nav-routes.ts` (`/attendance` permission → `reception.view`)
-- `src/i18n/ar.ts` (removed dead `nav.attendanceFast`/`nav.attendanceSearch`)
 
-**Deleted (phase 6):**
-- `src/components/attendance/fast-checkin-tab.tsx`
-- `src/pages/checkin-page.tsx`
-- `src/pages/attendance-page.tsx`
 
-**Created (phases 2-5):**
-- `src/components/staff/users-tab.tsx`, `src/components/staff/permissions-tab.tsx`, `src/pages/staff-page.tsx`
-- `src/components/settings/health-tab.tsx`, `src/components/settings/scanner-tab.tsx`
-- `src/components/attendance/reception-tab.tsx` (kept), `src/pages/attendance-page.tsx` (since deleted)
-
-**Modified (phases 2-5):**
-- `src/pages/users-page.tsx`, `src/pages/permissions-page.tsx` → re-export tab components
-- `src/pages/health-page.tsx`, `src/pages/scanner-diagnostics-page.tsx` → re-export tab components
-- `src/pages/reception-page.tsx` → re-export `ReceptionTab`
-- `src/pages/settings-page.tsx` → 3-tab shell
-- `src/routes/index.tsx` (+`/staff`, +`/attendance` routes; later `/checkin` removed), `src/routes/nav-routes.ts` (+`/staff`, single `/attendance`), `src/components/layout/sidebar.tsx` (grouped nav + `/attendance` icon + icon cleanup)
-- `src/i18n/ar.ts` (+`settings.backupsTab`, `settings.scannerDiagTab`, `nav.group.*`, `nav.attendance`; removed `nav.hr`)
-- **2026-09-19 â TASK-064 (payments TOCTOU part 2) done â source-only, no migration, no commit/EXE/push.** Moved refundPayment + undoRefund money reads+guards INSIDE the same BEGIN IMMEDIATE write tx (fresh in-tx re-reads) mirroring TASK-063's recordPayment. typecheck clean, finance suite green, full **npm test 529/529 (47 files)**, build clean. Working tree = payments.service.ts (2 sites) + existing TASK-063 residue; no schema/RPC/i18n. Verified above. No commit, no push, no EXE.
-
-## TASK-065 (2026-09-22) -- searchMembersForPicker department isolation (picker dept-audit regression), local commit only
-- Status: done and verified. picker (+ owner/reception picker fixture) + service fixed + regression test; typecheck + full suite green; local commit; NO push / NO EXE / NO installer (owner mandate, no approval requested).
-- What changed:
-  - src/core/services/members.service.ts : folded departmentScopeCondition(actor) into searchMembersForPicker (previously it read members with NO department scope, leaking women dept members into a men-reception picker and vice versa). m.-aliased, conditions/params arrays, members.view_all_departments/owner bypass intact.
-  - 	ests/department-scope.test.ts : appended picker-isolation describe (men reception never sees women member by name/phone-tail/memberCode; owner bypass still works). Full file now 6 tests.
-- Files touched (working tree only): the two above. No schema/RPC/i18n/migration change. No new deps.
-- Verification: 
-px vitest run tests/department-scope.test.ts 6/6; 
-pm test 47 files / 531 tests passed; 
-pm run typecheck + 
-pm run typecheck:server clean.
-- Next recommended step: review working tree, commit the TASK-065 slice the next agent owns (or fold into pending review), then continue remaining department-scope audit (listMembers/listSubscriptions/payments already department-scoped; ensure any other member picker call sites stay scoped).
-
-## Agent handoff (2026-09-22) - TASK-063/064 (payments+subscriptions TOCTOU fold) + TASK-065 (picker dept isolation) ALL committed; owner in-conversation approves push to origin/main (sole-agent finish mandate). Source-only; no EXE/no installer/no DB change. NO EXE built (AGENTS.md s16: separate explicit approval required; not given).
+- **ملاحظة تنسيق (2026-09-29):** بعد مراجعة المستخدم للتنسيق، اتصلح ترتيب الإيصال: كل المبالغ بقت على عمود واحد محاذاة لليمين مع كلمة جنيه على يمين كل رقم (الترتيب العربي الصحيح: الرقم ثم الوحدة). السبب الجذري كان ان measureText كان بيقدّر العرض تقدير غلط، فكان بيتداخل مع النص؛ دلوقتي بيقيس بـ PDFKit نفسه (measureText(value, { doc })). صُمم عمود الأرقام (digitColumn) ثابت لكل السطور عشان الأرقام تفضل على حافة واحدة.

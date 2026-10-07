@@ -61,6 +61,9 @@ export interface EmployeeInput {
   salaryBaseMinor?: number | null;
   notes?: string | null;
   userId?: string | null;
+  shiftStart?: string | null;
+  shiftEnd?: string | null;
+  commissionPct?: number | null;
 }
 
 export interface PublicEmployee {
@@ -81,6 +84,9 @@ export interface PublicEmployee {
   annualLeaveDays: number | null;
   sickLeaveDays: number | null;
   unpaidLeaveDays: number | null;
+  shiftStart: string | null;
+  shiftEnd: string | null;
+  commissionPct: number | null;
 }
 
 const EMP_SELECT = "SELECT * FROM employees";
@@ -106,6 +112,9 @@ function mapEmployee(r: Row): PublicEmployee {
     annualLeaveDays: r.annual_leave_days == null ? null : num(r.annual_leave_days),
     sickLeaveDays: r.sick_leave_days == null ? null : num(r.sick_leave_days),
     unpaidLeaveDays: r.unpaid_leave_days == null ? null : num(r.unpaid_leave_days),
+    shiftStart: r.shift_start == null ? null : str(r.shift_start),
+    shiftEnd: r.shift_end == null ? null : str(r.shift_end),
+    commissionPct: r.commission_pct == null ? null : num(r.commission_pct),
   };
 }
 
@@ -148,7 +157,7 @@ export async function createEmployee(db: Db, actor: ServiceActor, input: Employe
   const userId = linkUserId(db, input.userId, id);
   await db.transaction(async () => {
     db.run(
-      "INSERT INTO employees (id, full_name, phone, role_title, department, specialization, joined_date, salary_type, salary_base_minor, is_active, notes, user_id, created_by, created_at, updated_at)\nVALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 1, ?, ?, ?, ?, ?)",
+      "INSERT INTO employees (id, full_name, phone, role_title, department, specialization, joined_date, salary_type, salary_base_minor, is_active, notes, user_id, created_by, created_at, updated_at, shift_start, shift_end, commission_pct)\nVALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 1, ?, ?, ?, ?, ?, ?, ?, ?)",
       [
         id,
         fullName,
@@ -164,6 +173,9 @@ export async function createEmployee(db: Db, actor: ServiceActor, input: Employe
         actor.userId,
         stamp(),
         stamp(),
+        input.shiftStart?.trim() || null,
+        input.shiftEnd?.trim() || null,
+        input.commissionPct != null ? Number(input.commissionPct) : 0,
       ],
     );
     recordAudit(db, actor, "EMPLOYEE_CREATED", "employee", id, { name: fullName });
@@ -195,7 +207,7 @@ export async function updateEmployee(
   const userId = patch.userId !== undefined ? linkUserId(db, patch.userId, employeeId) : row.user_id == null ? null : str(row.user_id);
   await db.transaction(async () => {
     db.run(
-      "UPDATE employees SET full_name = ?, phone = ?, role_title = ?, department = ?, specialization = ?, joined_date = ?, salary_type = ?, salary_base_minor = ?, is_active = ?, notes = ?, user_id = ?, updated_at = ? WHERE id = ?",
+      "UPDATE employees SET full_name = ?, phone = ?, role_title = ?, department = ?, specialization = ?, joined_date = ?, salary_type = ?, salary_base_minor = ?, is_active = ?, notes = ?, user_id = ?, updated_at = ?, shift_start = ?, shift_end = ?, commission_pct = ? WHERE id = ?",
       [
         patch.fullName?.trim() ?? str(row.full_name),
         patch.phone !== undefined ? patch.phone?.trim() || null : row.phone,
@@ -213,6 +225,9 @@ export async function updateEmployee(
         patch.notes !== undefined ? patch.notes?.trim() || null : row.notes,
         userId,
         stamp(),
+        patch.shiftStart !== undefined ? patch.shiftStart?.trim() || null : row.shift_start,
+        patch.shiftEnd !== undefined ? patch.shiftEnd?.trim() || null : row.shift_end,
+        patch.commissionPct !== undefined ? (patch.commissionPct != null ? Number(patch.commissionPct) : 0) : row.commission_pct,
         employeeId,
       ],
     );
@@ -377,6 +392,12 @@ export async function paySalary(
     db.run(
       "UPDATE salaries SET status = 'paid', paid_at = ?, updated_at = ? WHERE id = ?",
       [ts, ts, salaryId],
+    );
+
+    // Settle any open advances for this employee and period
+    db.run(
+      "UPDATE employee_advances SET status = 'settled', repaid_minor = amount_minor, settled_at = ?, updated_at = ? WHERE employee_id = ? AND deduction_month = ? AND status = 'open'",
+      [ts, ts, str(row.employee_id), str(row.period_month)],
     );
 
     // unified treasury entry: expense row when the salaries category exists

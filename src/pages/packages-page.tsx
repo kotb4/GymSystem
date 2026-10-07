@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
-import { Copy, Pencil, Power, Plus } from "lucide-react";
+import { Copy, Pencil, Power, Plus, Ticket, Trash2 } from "lucide-react";
 import { useAuth } from "@/contexts/auth-context";
 import { useT } from "@/i18n";
 import { useToast } from "@/components/ui/toast";
@@ -20,15 +20,15 @@ type StatusFilter = "all" | "active" | "inactive";
 type ModelFilter = "all" | PackageModel;
 
 const MODEL_LABEL: Record<PackageModel, string> = {
-  time: "modelTime",
-  visit: "modelVisit",
-  hybrid: "modelHybrid",
+  time: "packages.modelTime",
+  visit: "packages.modelVisit",
+  hybrid: "packages.modelHybrid",
 };
 
 const AREA_LABEL: Record<AccessArea, string> = {
-  general: "areaGeneral",
-  men: "areaMen",
-  women: "areaWomen",
+  general: "packages.areaGeneral",
+  men: "packages.areaMen",
+  women: "packages.areaWomen",
 };
 
 export function PackagesPage() {
@@ -43,6 +43,7 @@ export function PackagesPage() {
   const [modelFilter, setModelFilter] = useState<ModelFilter>("all");
   const [formModal, setFormModal] = useState<{ open: boolean; target: Package | null }>({ open: false, target: null });
   const [deactivateTarget, setDeactivateTarget] = useState<Package | null>(null);
+  const [deleteTarget, setDeleteTarget] = useState<Package | null>(null);
   const [compareIds, setCompareIds] = useState<string[]>([]);
   const [compareSelect, setCompareSelect] = useState("");
 
@@ -75,6 +76,20 @@ export function PackagesPage() {
     try {
       await api.packages.toggle(p.id, active);
       toast("success", active ? t("packages.toggledActiveToast") : t("packages.toggledInactiveToast"));
+      reload();
+    } catch (err) {
+      toast("error", describeError(err, t));
+    }
+  };
+
+  const doDelete = async (p: Package) => {
+    try {
+      const res = await api.packages.delete(p.id);
+      if (res.softDeactivated) {
+        toast("info", "تم إلغاء تفعيل الباقة بدلاً من حذفها النهائي لوجود اشتراكات سابقة مسجلة بها");
+      } else {
+        toast("success", "تم حذف الباقة بنجاح نهائياً");
+      }
       reload();
     } catch (err) {
       toast("error", describeError(err, t));
@@ -186,6 +201,12 @@ export function PackagesPage() {
                       )}
                       <li>{t("packages.freezeAllowanceDays")}: <span className="tabnum">{formatNumber(p.freezeAllowanceDays)} {t("packages.dayUnit")}</span> / {t("packages.allowedFreezes")}: <span className="tabnum">{formatNumber(p.allowedFreezes)}</span></li>
                       {p.ptSessions > 0 && <li>{t("packages.ptSessions")}: <span className="tabnum">{formatNumber(p.ptSessions)} {t("packages.ptUnit")}</span></li>}
+                      {p.invitationsCount > 0 && (
+                        <li className="text-neon font-semibold flex items-center gap-1">
+                          <Ticket className="size-3.5" />
+                          <span>دعوات الضيوف: <span className="tabnum">{p.invitationsCount}</span> دعوة</span>
+                        </li>
+                      )}
                       {p.allowedAreas.length > 0 && (
                         <li>{t("packages.allowedAreas")}: <span className="flex flex-wrap gap-1 pt-0.5">{p.allowedAreas.map((a) => <Badge key={a} variant="neutral">{t(AREA_LABEL[a])}</Badge>)}</span></li>
                       )}
@@ -215,6 +236,18 @@ export function PackagesPage() {
                         <Button size="sm" variant="ghost" onClick={() => void doDuplicate(p)}>
                           <Copy className="size-3.5" />
                           {t("packages.duplicate")}
+                        </Button>
+                      )}
+                      {canManage && (
+                        <Button
+                          size="sm"
+                          variant="ghost"
+                          className="text-red hover:bg-red/10 hover:text-red"
+                          onClick={() => setDeleteTarget(p)}
+                          title="حذف الباقة"
+                        >
+                          <Trash2 className="size-3.5" />
+                          <span>حذف</span>
                         </Button>
                       )}
                     </div>
@@ -310,6 +343,16 @@ export function PackagesPage() {
         onConfirm={() => {
           if (deactivateTarget) void doToggle(deactivateTarget, false);
           setDeactivateTarget(null);
+        }}
+      />
+      <ConfirmDialog
+        open={deleteTarget !== null}
+        title="حذف باقة العضوية"
+        message={deleteTarget ? `هل أنت متأكد من حذف الباقة «${deleteTarget.name}»؟` : ""}
+        onClose={() => setDeleteTarget(null)}
+        onConfirm={() => {
+          if (deleteTarget) void doDelete(deleteTarget);
+          setDeleteTarget(null);
         }}
       />
     </div>

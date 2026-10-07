@@ -8,6 +8,7 @@ import {
   CircleUser,
   HardDriveDownload,
   LogOut,
+  Menu,
   Search,
   Settings,
   ShieldAlert,
@@ -31,6 +32,8 @@ import type {
 import { cn } from "@/utils/cn";
 import { Avatar } from "@/components/ui/avatar";
 import { Dropdown, DropdownDivider, DropdownItem } from "@/components/ui/dropdown";
+import { SyncStatusIndicator } from "./sync-status-indicator";
+import { DocNoSearch } from "./doc-no-search";
 
 const NOTIF_ICONS: Record<AppNotificationType, React.ReactNode> = {
   expiry: <CalendarClock />,
@@ -48,7 +51,7 @@ const NOTIF_TINTS: Record<NotificationSeverity, string> = {
 
 const RELOAD_INTERVAL_MS = 60_000;
 
-export function Header() {
+export function Header({ onOpenMobileNav }: { onOpenMobileNav?: () => void } = {}) {
   const t = useT();
   const location = useLocation();
   const navigate = useNavigate();
@@ -121,29 +124,48 @@ export function Header() {
   );
 
   return (
-    <header className="sticky top-0 z-[100] flex h-16 shrink-0 items-center gap-3 border-b border-line bg-base/85 px-5 backdrop-blur-md">
-      <h1 className="min-w-0 truncate text-[15px] font-bold">{title}</h1>
+    <header className="sticky top-0 z-[100] flex h-14 sm:h-16 shrink-0 items-center gap-2 sm:gap-3 border-b border-line bg-base/85 px-3 sm:px-5 backdrop-blur-md">
+      {onOpenMobileNav && (
+        <button
+          type="button"
+          aria-label={t("nav.openMenu")}
+          onClick={onOpenMobileNav}
+          className="grid size-9 shrink-0 place-items-center rounded-xl border border-white/5 bg-panel-elevated/60 text-subtle transition-colors hover:bg-white/10 hover:text-ink lg:hidden"
+        >
+          <Menu className="size-5" />
+        </button>
+      )}
 
-      <div className="relative ms-2 hidden w-72 lg:block">
-        <Search aria-hidden className="pointer-events-none absolute inset-y-0 start-0 my-auto ms-3.5 size-4 text-faint" />
-        <input
-          type="search"
-          placeholder={t("common.searchPlaceholder")}
-          className="h-9 w-full rounded-xl border border-line bg-panel ps-10 pe-12 text-sm outline-none transition-colors placeholder:text-faint focus:border-neon/60 focus:ring-2 focus:ring-neon/15 [&::-webkit-search-cancel-button]:hidden"
-        />
-        <kbd className="pointer-events-none absolute inset-y-0 end-0 my-auto me-3 grid h-6 place-items-center rounded-md border border-line bg-surface px-1.5 font-sans text-[10px] font-semibold text-faint">
-          Ctrl K
-        </kbd>
+      <div className="flex items-center gap-2">
+        <span className="text-xs font-medium text-slate-400 hidden sm:inline">{t("nav.home")}</span>
+        <span className="text-xs text-slate-600 hidden sm:inline">/</span>
+        <h1 className="min-w-0 truncate text-sm sm:text-base font-extrabold text-white tracking-wide">{title}</h1>
       </div>
+
+      {hasPermission("reports.view") ? (
+        <DocNoSearch />
+      ) : (
+        <div className="relative ms-2 hidden w-72 lg:block">
+          <Search aria-hidden className="pointer-events-none absolute inset-y-0 start-0 my-auto ms-3.5 size-4 text-faint" />
+          <input
+            type="search"
+            placeholder={t("common.searchPlaceholder")}
+            className="h-9 w-full rounded-xl border border-line bg-surface/90 ps-10 pe-14 text-sm outline-none transition-all placeholder:text-faint focus:border-primary/60 focus:bg-surface focus:ring-2 focus:ring-primary/20 [&::-webkit-search-cancel-button]:hidden"
+          />
+          <kbd className="pointer-events-none absolute inset-y-0 end-0 my-auto me-2.5 grid h-5.5 place-items-center rounded-md border border-line-strong bg-panel px-1.5 font-sans text-[10px] font-semibold text-slate-400">
+            Ctrl K
+          </kbd>
+        </div>
+      )}
 
       <div className="flex-1" />
 
-      <span className="hidden items-center gap-2 rounded-full border border-line bg-panel px-3 py-1.5 text-xs font-semibold text-subtle md:inline-flex">
-        <span aria-hidden className="size-2 animate-pulse-dot rounded-full bg-neon" />
+      <span className="hidden items-center gap-2 rounded-full border border-line bg-surface/80 px-3 py-1.5 text-xs font-semibold text-slate-300 md:inline-flex">
+        <span aria-hidden className="size-2 rounded-full bg-emerald-500 shadow-[0_0_8px_rgba(16,185,129,0.5)]" />
         {t("header.online")}
       </span>
 
-      {hasPermission("settings.edit") && (
+      {user?.isDeveloper === true && (
         <div className="hidden items-center gap-1.5 rounded-full border border-dashed border-amber/40 bg-amber/5 px-2.5 py-1 md:inline-flex">
           <CalendarDays className="size-3.5 text-amber" />
           <input
@@ -167,6 +189,8 @@ export function Header() {
           )}
         </div>
       )}
+
+      <SyncStatusIndicator />
 
       <Dropdown
         widthClass="w-[340px]"

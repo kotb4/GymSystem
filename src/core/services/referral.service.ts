@@ -1,4 +1,4 @@
-import { nowStamp } from "@/core/dates";
+import { addDaysKey, nowStamp } from "@/core/dates";
 import { errConflict, errNotFound, errValidation } from "@/core/errors";
 import { requirePermission, type ServiceActor } from "@/core/permissions";
 import type { Db, Row } from "@/db/engine";
@@ -230,6 +230,24 @@ export function convertReferral(db: Db, actor: ServiceActor, referralId: string,
       "INSERT INTO referral_rewards (id, referral_id, referrer_id, reward_type, reward_value, status, created_at, granted_at)\nVALUES (?, ?, ?, ?, ?, 'granted', ?, ?)",
       [rewardId, referralId, str(referralRow.referrer_id), settings.rewardType, settings.rewardValue, ts, ts],
     );
+
+    // If reward is free_days and value > 0, automatically extend referrer's active subscription if one exists
+    if (settings.rewardType === "free_days" && settings.rewardValue > 0) {
+      const activeSub = db.first<{ id: string; end_date: string }>(
+        "SELECT id, end_date FROM member_subscriptions WHERE member_id = ? AND status = 'active' ORDER BY end_date DESC LIMIT 1",
+        [str(referralRow.referrer_id)],
+      );
+      if (activeSub && activeSub.end_date) {
+        const newEndDate = addDaysKey(activeSub.end_date, settings.rewardValue);
+        db.run("UPDATE member_subscriptions SET end_date = ?, updated_at = ? WHERE id = ?", [newEndDate, ts, activeSub.id]);
+        recordAudit(db, actor, "SUBSCRIPTION_UPDATED", "member_subscription", activeSub.id, {
+          reason: "referral_reward_free_days",
+          addedDays: settings.rewardValue,
+          previousEndDate: activeSub.end_date,
+          newEndDate,
+        });
+      }
+    }
 
     recordAudit(db, actor, "REFERRAL_CONVERTED", "referral", referralId, {
       referrerId: str(referralRow.referrer_id),

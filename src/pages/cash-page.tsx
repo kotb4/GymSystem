@@ -1,5 +1,6 @@
-﻿import { useEffect, useState, type FormEvent } from "react";
-import { ArrowDownCircle, ArrowUpCircle, LockKeyhole, Wallet } from "lucide-react";
+import { useEffect, useState, type FormEvent } from "react";
+import { ArrowDownCircle, ArrowUpCircle, Clock, LockKeyhole, Trash2, Wallet } from "lucide-react";
+import { useFocusRow } from "@/hooks/use-focus-row";
 import { useAuth } from "@/contexts/auth-context";
 import { useT } from "@/i18n";
 import { useToast } from "@/components/ui/toast";
@@ -21,9 +22,12 @@ import { DataTable, type Column } from "@/components/ui/table";
 import { EmptyState } from "@/components/ui/empty-state";
 import { Pagination } from "@/components/ui/pagination";
 import { ConfirmDialog } from "@/components/ui/confirm-dialog";
+import { StaffShiftsModal } from "@/components/cash/staff-shifts-modal";
 
 export function CashSessionsPanel() {
   const t = useT();
+  // Set when the header reference-number lookup sends us to a cash closing.
+  const focusRowId = useFocusRow();
   const { actor, hasPermission } = useAuth();
   const { toast } = useToast();
 
@@ -38,6 +42,8 @@ export function CashSessionsPanel() {
   const [total, setTotal] = useState(0);
   const [reloadTick, setReloadTick] = useState(0);
   const [confirmAbort, setConfirmAbort] = useState(false);
+  const [deleteSessionTarget, setDeleteSessionTarget] = useState<Row | null>(null);
+  const [shiftsModalOpen, setShiftsModalOpen] = useState(false);
   const reload = () => setReloadTick((v) => v + 1);
 
   const canView = hasPermission("payments.view");
@@ -105,6 +111,21 @@ export function CashSessionsPanel() {
       reload();
     } catch (err) {
       setError(describeError(err, t));
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const onDeleteSession = async () => {
+    if (!deleteSessionTarget) return;
+    setBusy(true);
+    try {
+      await api.cash.removeSession(deleteSessionTarget.id);
+      toast("success", t("cashPage.sessionDeletedToast"));
+      setDeleteSessionTarget(null);
+      reload();
+    } catch (err) {
+      toast("error", describeError(err, t));
     } finally {
       setBusy(false);
     }
@@ -222,6 +243,25 @@ export function CashSessionsPanel() {
           </Badge>
         ),
     },
+    ...(hasPermission("cash.purge")
+      ? [
+          {
+            key: "actions" as const,
+            header: "",
+            align: "end" as const,
+            render: (row: Row) => (
+              <button
+                type="button"
+                aria-label={t("common.delete")}
+                onClick={() => setDeleteSessionTarget(row)}
+                className="grid size-8 place-items-center rounded-lg text-faint transition-colors hover:bg-red/10 hover:text-red"
+              >
+                <Trash2 className="size-4" />
+              </button>
+            ),
+          },
+        ]
+      : []),
   ];
 
   if (!canView) {
@@ -230,6 +270,19 @@ export function CashSessionsPanel() {
 
   return (
     <div className="space-y-5">
+      <div className="flex items-center justify-between">
+        <div>
+          <h2 className="text-xl font-black text-foreground">الخزينة النقدية والورديات</h2>
+          <p className="text-xs text-subtle mt-0.5">متابعة النقدية، تسليم الدرج، وإدارة ورديات الموظفين</p>
+        </div>
+        {hasPermission("shifts.view") && (
+          <Button variant="secondary" onClick={() => setShiftsModalOpen(true)}>
+            <Clock className="size-4" />
+            <span>ورديات الموظفين (تسليم الدرج)</span>
+          </Button>
+        )}
+      </div>
+
       {openTotals ? (
         <>
           <section className="grid gap-4 sm:grid-cols-2 xl:grid-cols-4">
@@ -368,7 +421,7 @@ export function CashSessionsPanel() {
           <EmptyState icon={<Wallet />} title={t("cashPage.historyEmpty")} />
         ) : (
           <>
-            <DataTable columns={columns} data={rows} rowKey={(r) => r.id} />
+            <DataTable columns={columns} data={rows} rowKey={(r) => r.id} highlightRowKey={focusRowId} />
             <Pagination page={page} pageSize={appConfig.pageSize} total={total} onPageChange={setPage} />
           </>
         )}
@@ -381,6 +434,22 @@ export function CashSessionsPanel() {
         message={t("cashPage.deleteSessionConfirm")}
         confirmLabel={t("common.confirm")}
         onConfirm={() => void onDeleteOpenSession()}
+      />
+
+      <ConfirmDialog
+        open={deleteSessionTarget !== null}
+        onClose={() => setDeleteSessionTarget(null)}
+        title={t("cashPage.deleteSessionBtn")}
+        message={t("cashPage.deleteClosedSessionConfirm")}
+        confirmLabel={t("common.delete")}
+        tone="danger"
+        loading={busy}
+        onConfirm={() => void onDeleteSession()}
+      />
+
+      <StaffShiftsModal
+        open={shiftsModalOpen}
+        onClose={() => setShiftsModalOpen(false)}
       />
     </div>
   );

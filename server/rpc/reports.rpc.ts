@@ -8,5 +8,6 @@ export const reports = defineService({
   getPeriodReport: a(financialReportService.getPeriodReport as Fn),
   getStaffActivity: a(staffActivityService.getStaffActivity as Fn),
   getAttendanceAnalytics: a(attendanceAnalyticsService.getAttendanceAnalytics as Fn),
+  getPeakHoursHeatmap: a(attendanceAnalyticsService.getPeakHoursHeatmap as Fn),
   getRetentionInsights: a(activityInsightsService.getRetentionInsights as Fn),
 });

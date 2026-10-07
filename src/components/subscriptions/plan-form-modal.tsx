@@ -1,4 +1,4 @@
-﻿import { useEffect, useState, type FormEvent } from "react";
+import { useEffect, useState, type FormEvent } from "react";
 import { useAuth } from "@/contexts/auth-context";
 import { useT } from "@/i18n";
 import { useToast } from "@/components/ui/toast";
@@ -24,6 +24,7 @@ export function PlanFormModal({ open, onClose, onSaved, plan }: PlanFormModalPro
   const [durationDays, setDurationDays] = useState("30");
   const [price, setPrice] = useState("");
   const [description, setDescription] = useState("");
+  const [invitationsCount, setInvitationsCount] = useState("0");
   const [isActive, setIsActive] = useState(true);
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -34,6 +35,7 @@ export function PlanFormModal({ open, onClose, onSaved, plan }: PlanFormModalPro
     setDurationDays(plan ? String(plan.durationDays) : "30");
     setPrice(plan ? String(plan.price) : "");
     setDescription(plan?.description ?? "");
+    setInvitationsCount(plan?.invitationsCount != null ? String(plan.invitationsCount) : "0");
     setIsActive(plan ? plan.isActive : true);
     setError(null);
   }, [open, plan]);
@@ -44,12 +46,14 @@ export function PlanFormModal({ open, onClose, onSaved, plan }: PlanFormModalPro
     setSubmitting(true);
     setError(null);
     try {
+      const invCount = Number(invitationsCount) || 0;
       if (plan) {
         await api.plans.update(plan.id, {
           name,
           durationDays: Number(durationDays),
           price: Number(price),
           description: description.trim() || null,
+          invitationsCount: invCount,
         });
       } else {
         await api.plans.create({
@@ -57,6 +61,7 @@ export function PlanFormModal({ open, onClose, onSaved, plan }: PlanFormModalPro
           durationDays: Number(durationDays),
           price: Number(price),
           description: description.trim() || null,
+          invitationsCount: invCount,
         });
       }
       toast("success", t("toast.saved"));
@@ -115,6 +120,15 @@ export function PlanFormModal({ open, onClose, onSaved, plan }: PlanFormModalPro
             disabled={submitting}
           />
         </div>
+        <Input
+          label="عدد دعوات الضيوف المجانية (Invitations)"
+          type="number"
+          min={0}
+          dir="ltr"
+          value={invitationsCount}
+          onChange={(e) => setInvitationsCount(e.target.value)}
+          disabled={submitting}
+        />
         <Input
           label={`${t("common.notes")} (${t("common.optional")})`}
           value={description}

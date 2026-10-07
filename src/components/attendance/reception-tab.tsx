@@ -1,14 +1,24 @@
 import { useCallback, useEffect, useRef, useState } from "react";
+import { useNavigate } from "react-router-dom";
 import {
+  CalendarPlus,
+  Camera,
   CheckCircle2,
   CircleUserRound,
+  CreditCard,
   IdCard,
+  MessageSquare,
+  QrCode,
   RotateCcw,
   ScanLine,
   Search,
   ShieldAlert,
+  Sparkles,
+  Trash2,
+  UserRound,
   UserRoundCheck,
 } from "lucide-react";
+import { ReceptionKioskPanel } from "./reception-kiosk-panel";
 import { useT } from "@/i18n";
 import { useToast } from "@/components/ui/toast";
 import { useAuth } from "@/contexts/auth-context";
@@ -22,6 +32,15 @@ import type {
 import type { CheckInResult } from "@/core/services/attendance.service";
 import { diffDaysKeys, todayKey } from "@/core/dates";
 import { formatMinor } from "@/core/money";
+import { QuickWhatsAppModal } from "@/components/messages/quick-whatsapp-modal";
+import { CardQrDeliveryModal } from "@/components/cards/card-qr-delivery-modal";
+import { SubscriptionFormModal } from "@/components/subscriptions/subscription-form-modal";
+import { PaymentFormModal } from "@/components/finance/payment-form-modal";
+import { SettleMemberDuesModal } from "@/components/finance/settle-member-dues-modal";
+import { CameraCapture } from "@/components/ui/camera-capture";
+import { CameraBarcodeScannerModal } from "@/components/ui/camera-barcode-scanner-modal";
+import { Modal } from "@/components/ui/modal";
+import { compressMemberPhoto } from "@/utils/image-compressor";
 
 import { useConfiguredScanner } from "@/hooks/use-configured-scanner";
 import { playErrorBuzz, playSuccessChime } from "@/utils/sound";
@@ -32,6 +51,7 @@ import { Input } from "@/components/ui/input";
 import { Badge } from "@/components/ui/badge";
 import { DataTable, type Column } from "@/components/ui/table";
 import { EmptyState } from "@/components/ui/empty-state";
+import { BranchBadge } from "@/components/ui/branch-badge";
 
 const DEBOUNCE_MS = 300;
 
@@ -40,6 +60,7 @@ interface RecentRow {
   memberName: string;
   memberCode: string;
   checkinAt: string;
+  branchId?: string | null;
 }
 
 export function ReceptionTab() {
@@ -58,6 +79,59 @@ export function ReceptionTab() {
   const [recent, setRecent] = useState<RecentRow[]>([]);
   const [tick, setTick] = useState(0);
 
+  const navigate = useNavigate();
+  const [kioskMode, setKioskMode] = useState(false);
+  const [externalKioskBarcode, setExternalKioskBarcode] = useState<string | null>(null);
+  const [confirmDeleteRecentRow, setConfirmDeleteRecentRow] = useState<RecentRow | null>(null);
+  const [deletingAttendance, setDeletingAttendance] = useState(false);
+
+  const [whatsAppOpen, setWhatsAppOpen] = useState(false);
+  const [subModalOpen, setSubModalOpen] = useState(false);
+  const [payModalOpen, setPayModalOpen] = useState(false);
+  const [qrModalOpen, setQrModalOpen] = useState(false);
+  const [qrCardData, setQrCardData] = useState<{ barcode: string; cardId: string } | null>(null);
+  const [loadingCard, setLoadingCard] = useState(false);
+  const [cameraOpen, setCameraOpen] = useState(false);
+  const [barcodeScannerOpen, setBarcodeScannerOpen] = useState(false);
+  const [photoSaving, setPhotoSaving] = useState(false);
+  const [previewPhotoUrl, setPreviewPhotoUrl] = useState<string | null>(null);
+
+  const handleCapturePhoto = async (file: File) => {
+    if (!selected?.member || !actor) return;
+    setPhotoSaving(true);
+    try {
+      const compressed = await compressMemberPhoto(file, { maxDimension: 512, quality: 0.82 });
+      const { id: fileId } = await api.files.upload("member_photo", compressed);
+      await api.members.setMemberPhoto(selected.member.id, fileId);
+      toast("success", t("members.photoSaved"));
+      setCameraOpen(false);
+      void applyLookup({ memberId: selected.member.id });
+    } catch (err) {
+      toast("error", describeError(err, t));
+    } finally {
+      setPhotoSaving(false);
+    }
+  };
+
+  const openCardQr = async () => {
+    if (!selected?.member) return;
+    setLoadingCard(true);
+    try {
+      const cards = await api.cards.listForMember(selected.member.id);
+      if (cards && cards.length > 0) {
+        const c = cards.find((x) => x.status === "assigned") ?? cards[0];
+        setQrCardData({ barcode: c.barcodeValue, cardId: c.id });
+        setQrModalOpen(true);
+      } else {
+        toast("warning", t("reception.noCardFound"));
+      }
+    } catch (err) {
+      toast("error", describeError(err, t));
+    } finally {
+      setLoadingCard(false);
+    }
+  };
+
   const reloadRecent = useCallback(() => {
     if (!actor || !hasPermission("checkin.view_history")) return;
     let alive = true;
@@ -71,6 +145,7 @@ export function ReceptionTab() {
             memberName: r.memberName,
             memberCode: r.memberCode,
             checkinAt: r.checkinAt,
+            branchId: r.branchId,
           })),
         );
       })
@@ -130,10 +205,57 @@ export function ReceptionTab() {
 
   useConfiguredScanner((barcode) => {
     if (barcode.trim() !== "") {
-      setTerm(barcode);
-      void applyLookup({ barcode });
+      if (kioskMode) {
+        setExternalKioskBarcode(barcode.trim());
+      } else {
+        setTerm(barcode);
+        void applyLookup({ barcode });
+      }
     }
   });
+
+  const handleKioskOpenWhatsApp = async (memberId: string) => {
+    try {
+      const lookup = await api.reception.lookup({ memberId });
+      if (lookup.member) {
+        setSelected(lookup);
+        setWhatsAppOpen(true);
+      }
+    } catch (err) {
+      toast("error", describeError(err, t));
+    }
+  };
+
+  const handleKioskRenewSub = async (memberId: string) => {
+    try {
+      const lookup = await api.reception.lookup({ memberId });
+      if (lookup.member) {
+        setSelected(lookup);
+        setSubModalOpen(true);
+      }
+    } catch (err) {
+      toast("error", describeError(err, t));
+    }
+  };
+
+  const handleKioskPayDebt = async (memberId: string) => {
+    try {
+      const lookup = await api.reception.lookup({ memberId });
+      if (lookup.member) {
+        setSelected(lookup);
+        setPayModalOpen(true);
+      }
+    } catch (err) {
+      toast("error", describeError(err, t));
+    }
+  };
+
+  const handleCameraScan = (barcode: string) => {
+    if (barcode.trim() !== "") {
+      setTerm(barcode.trim());
+      void applyLookup({ barcode: barcode.trim() });
+    }
+  };
 
   const onSubmit = (e: React.FormEvent) => {
     e.preventDefault();
@@ -154,6 +276,10 @@ export function ReceptionTab() {
     setSubmitted(null);
     setErrorText(null);
     setLooking(false);
+    setWhatsAppOpen(false);
+    setSubModalOpen(false);
+    setPayModalOpen(false);
+    setQrModalOpen(false);
     inputRef.current?.focus();
   };
 
@@ -202,14 +328,37 @@ export function ReceptionTab() {
       ),
     },
     {
+      key: "branch",
+      header: t("common.branch"),
+      render: (row) => <BranchBadge branchId={row.branchId} />,
+    },
+    {
       key: "time",
       header: t("common.time"),
       render: (row) => (
-        <span dir="ltr" className="tabnum text-subtle">
+        <span dir="ltr" className="tabnum text-subtle font-mono">
           {row.checkinAt.slice(11, 16)}
         </span>
       ),
     },
+    ...(hasPermission("checkin.delete")
+      ? [
+          {
+            key: "actions",
+            header: "",
+            render: (row: RecentRow) => (
+              <button
+                type="button"
+                onClick={() => setConfirmDeleteRecentRow(row)}
+                className="grid size-7 place-items-center rounded-lg text-subtle transition-colors hover:bg-red/10 hover:text-red"
+                title={t("reception.cancelAttendance")}
+              >
+                <Trash2 className="size-3.5" />
+              </button>
+            ),
+          },
+        ]
+      : []),
   ];
 
   const showResultsList = !selected && results.length > 0;
@@ -217,38 +366,75 @@ export function ReceptionTab() {
   return (
     <div className="grid gap-4 xl:grid-cols-5">
       <div className="space-y-4 xl:col-span-3">
-        <Card>
-          <CardHeader title={t("reception.searchTitle")} />
-          <div className="space-y-4 p-5">
-            <p className="text-[13px] text-subtle">{t("reception.searchHint")}</p>
-            <form onSubmit={onSubmit} className="flex items-end gap-2.5">
-              <div className="flex-1">
-                <Input
-                  ref={inputRef}
-                  value={term}
-                  onChange={(e) => setTerm(e.target.value)}
-                  placeholder={t("reception.searchPh")}
-                  icon={<Search className="size-4" />}
-                  disabled={looking}
-                  autoFocus
-                />
+        {kioskMode ? (
+          <ReceptionKioskPanel
+            onExitKiosk={() => setKioskMode(false)}
+            onOpenProfile={(memberId) => navigate(`/members/${memberId}`)}
+            onOpenWhatsApp={handleKioskOpenWhatsApp}
+            onRenewSub={handleKioskRenewSub}
+            onPayDebt={handleKioskPayDebt}
+            onAttendanceChanged={() => setTick((p) => p + 1)}
+            externalBarcode={externalKioskBarcode}
+            onExternalBarcodeHandled={() => setExternalKioskBarcode(null)}
+          />
+        ) : (
+          <>
+            <Card>
+              <div className="flex items-center justify-between border-b border-line px-5 py-4">
+                <h2 className="text-base font-bold text-foreground">{t("reception.searchTitle")}</h2>
               </div>
-              <Button type="submit" size="lg" disabled={looking || term.trim() === ""}>
-                <ScanLine className="size-4" />
-                {t("reception.checkin")}
-              </Button>
-            </form>
+              <div className="space-y-4 p-5">
+                <p className="text-[13px] text-subtle">{t("reception.searchHint")}</p>
+                <form onSubmit={onSubmit} className="flex flex-wrap items-end gap-2.5">
+                  <div className="min-w-[200px] flex-1">
+                    <Input
+                      ref={inputRef}
+                      value={term}
+                      onChange={(e) => setTerm(e.target.value)}
+                      placeholder={t("reception.searchPh")}
+                      icon={<Search className="size-4" />}
+                      disabled={looking}
+                      autoFocus
+                    />
+                  </div>
+                  <Button
+                    type="button"
+                    variant="secondary"
+                    size="lg"
+                    onClick={() => setBarcodeScannerOpen(true)}
+                    title={t("reception.cameraScanTitle")}
+                    className="gap-2"
+                  >
+                    <Camera className="size-4 text-neon" />
+                    <span>{t("reception.cameraScanBtn")}</span>
+                  </Button>
+                  <Button
+                    type="button"
+                    variant="secondary"
+                    size="lg"
+                    onClick={() => setKioskMode(true)}
+                    title={t("reception.autoKioskTitle")}
+                    className="gap-2 border-neon/40 text-neon hover:bg-neon/10"
+                  >
+                    <Sparkles className="size-4" />
+                    <span>{t("reception.autoKioskBtn")}</span>
+                  </Button>
+                  <Button type="submit" size="lg" disabled={looking || term.trim() === ""}>
+                    <ScanLine className="size-4" />
+                    {t("reception.checkin")}
+                  </Button>
+                </form>
 
-            <button
-              type="button"
-              onClick={resetAll}
-              className="inline-flex items-center gap-1 text-xs font-bold text-neon transition-opacity hover:opacity-80"
-            >
-              <RotateCcw className="size-3.5" />
-              {t("reception.reset")}
-            </button>
-          </div>
-        </Card>
+                <button
+                  type="button"
+                  onClick={resetAll}
+                  className="inline-flex items-center gap-1 text-xs font-bold text-neon transition-opacity hover:opacity-80"
+                >
+                  <RotateCcw className="size-3.5" />
+                  {t("reception.reset")}
+                </button>
+              </div>
+            </Card>
 
         {errorText && (
           <div role="alert" className="rounded-2xl border border-red/30 bg-red/10 px-4 py-3.5 text-sm font-semibold text-red">
@@ -279,7 +465,19 @@ export function ReceptionTab() {
         )}
 
         {selected?.member && (
-          <StatusPanel lookup={selected} checking={checking} onCheckIn={doCheckIn} />
+          <StatusPanel
+            lookup={selected}
+            checking={checking}
+            onCheckIn={doCheckIn}
+            onOpenProfile={() => selected.member && navigate(`/members/${selected.member.id}`)}
+            onOpenWhatsApp={() => setWhatsAppOpen(true)}
+            onOpenCardQr={openCardQr}
+            loadingCard={loadingCard}
+            onRenewSub={() => setSubModalOpen(true)}
+            onPayDebt={() => setPayModalOpen(true)}
+            onTakePhoto={() => setCameraOpen(true)}
+            onPreviewPhoto={(url) => setPreviewPhotoUrl(url)}
+          />
         )}
 
         {!selected && showResultsList && (
@@ -306,6 +504,8 @@ export function ReceptionTab() {
             </div>
           </Card>
         )}
+          </>
+        )}
       </div>
 
       {hasPermission("checkin.view_history") ? (
@@ -318,6 +518,156 @@ export function ReceptionTab() {
           )}
         </Card>
       ) : null}
+
+      {selected?.member && (
+        <>
+          {whatsAppOpen && (
+            <QuickWhatsAppModal
+              open={whatsAppOpen}
+              onClose={() => setWhatsAppOpen(false)}
+              memberId={selected.member.id}
+            />
+          )}
+          {subModalOpen && (
+            <SubscriptionFormModal
+              open={subModalOpen}
+              onClose={() => setSubModalOpen(false)}
+              presetMember={selected.member}
+              onSaved={() => {
+                setSubModalOpen(false);
+                toast("success", t("reception.quickCheckInSuccess"));
+                if (selected.member) void applyLookup({ memberId: selected.member.id });
+              }}
+            />
+          )}
+          {payModalOpen && (
+            (selected.eligibility?.outstandingMinor ?? 0) > 0 ? (
+              <SettleMemberDuesModal
+                open={payModalOpen}
+                onClose={() => setPayModalOpen(false)}
+                member={selected.member}
+                onSaved={() => {
+                  setPayModalOpen(false);
+                  toast("success", t("reception.quickCheckInSuccess"));
+                  if (selected.member) void applyLookup({ memberId: selected.member.id });
+                }}
+              />
+            ) : (
+              <PaymentFormModal
+                open={payModalOpen}
+                onClose={() => setPayModalOpen(false)}
+                presetMember={selected.member}
+                onSaved={() => {
+                  setPayModalOpen(false);
+                  toast("success", t("reception.quickCheckInSuccess"));
+                  if (selected.member) void applyLookup({ memberId: selected.member.id });
+                }}
+              />
+            )
+          )}
+          {qrModalOpen && qrCardData && (
+            <CardQrDeliveryModal
+              open={qrModalOpen}
+              onClose={() => setQrModalOpen(false)}
+              memberName={selected.member.fullName}
+              memberPhone={selected.member.phone}
+              barcodeValue={qrCardData.barcode}
+              cardId={qrCardData.cardId}
+            />
+          )}
+          {cameraOpen && (
+            <CameraCapture
+              open={cameraOpen}
+              onClose={() => setCameraOpen(false)}
+              onCapture={(file) => void handleCapturePhoto(file)}
+              captureBusy={photoSaving}
+            />
+          )}
+          {previewPhotoUrl && (
+            <Modal
+              open={!!previewPhotoUrl}
+              onClose={() => setPreviewPhotoUrl(null)}
+              title={t("members.photoPreview")}
+              widthClass="max-w-md"
+            >
+              <div className="flex flex-col items-center gap-4">
+                <img
+                  src={previewPhotoUrl}
+                  alt={selected.member.fullName}
+                  className="max-h-[65vh] w-auto rounded-2xl border border-line object-contain shadow-lg"
+                />
+                {hasPermission("members.edit") && (
+                  <Button
+                    variant="secondary"
+                    size="sm"
+                    onClick={() => {
+                      setPreviewPhotoUrl(null);
+                      setCameraOpen(true);
+                    }}
+                  >
+                    <Camera className="size-4" />
+                    {t("members.photoChange")}
+                  </Button>
+                )}
+              </div>
+            </Modal>
+          )}
+        </>
+      )}
+
+      {barcodeScannerOpen && (
+        <CameraBarcodeScannerModal
+          open={barcodeScannerOpen}
+          onClose={() => setBarcodeScannerOpen(false)}
+          onScan={handleCameraScan}
+          allowContinuous
+        />
+      )}
+
+      {confirmDeleteRecentRow && (
+        <Modal
+          open={!!confirmDeleteRecentRow}
+          onClose={() => setConfirmDeleteRecentRow(null)}
+          title={t("reception.cancelAttendance")}
+          widthClass="max-w-md"
+        >
+          <div className="space-y-4">
+            <p className="text-sm text-foreground">
+              {t("reception.cancelAttendanceConfirm", { name: confirmDeleteRecentRow.memberName })}
+            </p>
+            <div className="flex justify-end gap-2.5 pt-2">
+              <Button
+                variant="secondary"
+                size="sm"
+                onClick={() => setConfirmDeleteRecentRow(null)}
+                disabled={deletingAttendance}
+              >
+                {t("common.cancel")}
+              </Button>
+              <Button
+                variant="danger"
+                size="sm"
+                onClick={async () => {
+                  setDeletingAttendance(true);
+                  try {
+                    await api.attendance.delete(confirmDeleteRecentRow.id);
+                    toast("success", t("reception.cancelAttendanceSuccess"));
+                    setConfirmDeleteRecentRow(null);
+                    setTick((p) => p + 1);
+                  } catch (err) {
+                    toast("error", describeError(err, t));
+                  } finally {
+                    setDeletingAttendance(false);
+                  }
+                }}
+                loading={deletingAttendance}
+              >
+                {t("reception.cancelAttendance")}
+              </Button>
+            </div>
+          </div>
+        </Modal>
+      )}
     </div>
   );
 }
@@ -370,12 +720,29 @@ function StatusPanel({
   lookup,
   checking,
   onCheckIn,
+  onOpenProfile,
+  onOpenWhatsApp,
+  onOpenCardQr,
+  loadingCard,
+  onRenewSub,
+  onPayDebt,
+  onTakePhoto,
+  onPreviewPhoto,
 }: {
   lookup: ReceptionLookup;
   checking: boolean;
   onCheckIn: () => void;
+  onOpenProfile: () => void;
+  onOpenWhatsApp: () => void;
+  onOpenCardQr: () => void;
+  loadingCard: boolean;
+  onRenewSub: () => void;
+  onPayDebt: () => void;
+  onTakePhoto: () => void;
+  onPreviewPhoto: (url: string) => void;
 }) {
   const t = useT();
+  const { hasPermission } = useAuth();
   const member = lookup.member!;
   const elig = lookup.eligibility;
   const valid = elig?.eligible ?? false;
@@ -389,23 +756,56 @@ function StatusPanel({
       )}
     >
       <div className="flex flex-wrap items-center gap-3.5">
-        {member.photoFileId ? (
-          <img
-            src={api.files.url(member.photoFileId)}
-            alt={member.fullName}
-            className="size-14 shrink-0 rounded-2xl object-cover"
-          />
-        ) : (
-          <span
-            aria-hidden
-            className={cn(
-              "grid size-12 shrink-0 place-items-center rounded-2xl",
-              valid ? "bg-neon/15 text-neon" : "bg-red/15 text-red",
-            )}
-          >
-            <UserRoundCheck className="size-6" />
-          </span>
-        )}
+        <div className="relative shrink-0">
+          {member.photoFileId ? (
+            <div className="group relative">
+              <button
+                type="button"
+                onClick={() => onPreviewPhoto(api.files.url(member.photoFileId!))}
+                className="block overflow-hidden rounded-2xl border-2 border-line/60 shadow-sm transition-transform hover:scale-105"
+                title={t("members.photoPreview")}
+              >
+                <img
+                  src={api.files.url(member.photoFileId)}
+                  alt={member.fullName}
+                  className="size-16 shrink-0 rounded-2xl object-cover sm:size-20"
+                />
+              </button>
+              {hasPermission("members.edit") && (
+                <button
+                  type="button"
+                  onClick={onTakePhoto}
+                  className="absolute -bottom-1 -left-1 grid size-6 place-items-center rounded-lg border border-line bg-surface text-subtle shadow-sm transition-colors hover:text-neon"
+                  title={t("members.photoChange")}
+                >
+                  <Camera className="size-3" />
+                </button>
+              )}
+            </div>
+          ) : (
+            <div className="relative">
+              <span
+                aria-hidden
+                className={cn(
+                  "grid size-16 shrink-0 place-items-center rounded-2xl sm:size-20",
+                  valid ? "bg-neon/15 text-neon" : "bg-red/15 text-red",
+                )}
+              >
+                <UserRoundCheck className="size-8" />
+              </span>
+              {hasPermission("members.edit") && (
+                <button
+                  type="button"
+                  onClick={onTakePhoto}
+                  className="absolute -bottom-1 -left-1 grid size-7 place-items-center rounded-xl border border-line bg-surface text-neon shadow-sm transition-colors hover:bg-neon/10"
+                  title={t("members.takePhoto")}
+                >
+                  <Camera className="size-3.5" />
+                </button>
+              )}
+            </div>
+          )}
+        </div>
         <div className="min-w-0 flex-1">
           <p className="truncate text-lg font-extrabold">{member.fullName}</p>
           <p className="text-[13px] text-subtle">
@@ -424,6 +824,13 @@ function StatusPanel({
           </Badge>
         </div>
       </div>
+
+      {member.notes && member.notes.trim() !== "" && (
+        <div className="mt-3.5 flex items-start gap-2.5 rounded-xl border border-amber/30 bg-amber/10 px-3.5 py-2.5 text-xs text-amber">
+          <span className="font-bold shrink-0">{t("members.notes")}:</span>
+          <p className="whitespace-pre-line leading-relaxed font-medium text-amber-200">{member.notes}</p>
+        </div>
+      )}
 
       {elig ? (
         <dl className="mt-4 grid grid-cols-2 gap-x-6 gap-y-2.5 border-t border-line/60 pt-4 text-[13px] sm:grid-cols-3">
@@ -464,6 +871,85 @@ function StatusPanel({
           />
         </dl>
       )}
+
+      {/* Dues Breakdown Banner if Member Has Outstanding Balance */}
+      {elig && elig.outstandingMinor > 0 && (
+        <div className="mt-3.5 flex flex-wrap items-center justify-between gap-2 rounded-xl border border-red/30 bg-red/10 px-3.5 py-2.5 text-xs text-red">
+          <div className="flex items-center gap-2">
+            <CreditCard className="size-4 shrink-0 text-red" />
+            <span className="font-bold">{t("pay.settleTotalOwed")}:</span>
+            <span dir="ltr" className="font-mono font-extrabold text-sm">{formatMinor(elig.outstandingMinor)}</span>
+          </div>
+          {hasPermission("payments.create") && (
+            <button
+              type="button"
+              onClick={onPayDebt}
+              className="inline-flex items-center gap-1 rounded-lg bg-red/20 px-2.5 py-1 text-xs font-bold text-red hover:bg-red/30 transition-colors"
+            >
+              <span>{t("reception.payOutstanding")}</span>
+              <span>←</span>
+            </button>
+          )}
+        </div>
+      )}
+
+      {/* Quick Actions Bar */}
+      <div className="mt-4 flex flex-wrap items-center gap-2 border-t border-line/60 pt-4">
+        <span className="text-xs font-bold text-subtle">{t("reception.quickActions")}:</span>
+        <Button
+          type="button"
+          variant="secondary"
+          size="sm"
+          onClick={onOpenProfile}
+        >
+          <UserRound className="size-3.5" />
+          {t("reception.viewProfile")}
+        </Button>
+        {member.phone && (
+          <Button
+            type="button"
+            variant="secondary"
+            size="sm"
+            onClick={onOpenWhatsApp}
+          >
+            <MessageSquare className="size-3.5 text-emerald-400" />
+            {t("reception.sendWhatsApp")}
+          </Button>
+        )}
+        <Button
+          type="button"
+          variant="secondary"
+          size="sm"
+          onClick={onOpenCardQr}
+          loading={loadingCard}
+        >
+          <QrCode className="size-3.5" />
+          {t("reception.viewCardQr")}
+        </Button>
+        {hasPermission("subscriptions.create") && (!valid || (left != null && left <= 5)) && (
+          <Button
+            type="button"
+            variant="primary"
+            size="sm"
+            onClick={onRenewSub}
+            className="border border-neon/40 bg-neon/15 text-neon hover:bg-neon/25"
+          >
+            <CalendarPlus className="size-3.5" />
+            {t("reception.renewSub")}
+          </Button>
+        )}
+        {hasPermission("payments.create") && elig && elig.outstandingMinor > 0 && (
+          <Button
+            type="button"
+            variant="danger"
+            size="sm"
+            onClick={onPayDebt}
+          >
+            <CreditCard className="size-3.5" />
+            {t("reception.payOutstanding")} ({formatMinor(elig.outstandingMinor)})
+          </Button>
+        )}
+      </div>
 
       <div className="mt-5 flex items-center justify-between gap-3 border-t border-line/60 pt-4">
         <p className={cn("text-[13px] font-semibold", valid ? "text-neon" : "text-red")}>

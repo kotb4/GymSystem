@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useState } from "react";
-import { Dumbbell, MoreHorizontal, Pencil, Plus, Power } from "lucide-react";
+import { Dumbbell, MoreHorizontal, Pencil, Plus, Power, Trash2 } from "lucide-react";
 import { useAuth } from "@/contexts/auth-context";
 import { useT } from "@/i18n";
 import { useToast } from "@/components/ui/toast";
@@ -23,6 +23,7 @@ interface TrainerRowModel {
   fullName: string;
   phone: string | null;
   specialization: string | null;
+  rankTitle: string | null;
   joinedDate: string;
   isActive: boolean;
   activePlans: number;
@@ -33,6 +34,7 @@ export function TrainersTab() {
   const { actor, hasPermission } = useAuth();
   const { toast } = useToast();
   const canManage = hasPermission("trainers.manage");
+  const canPurge = hasPermission("trainers.purge");
 
   const [search, setSearch] = useState("");
   const [rows, setRows] = useState<TrainerRowModel[]>([]);
@@ -40,6 +42,7 @@ export function TrainersTab() {
   const [formOpen, setFormOpen] = useState(false);
   const [editTarget, setEditTarget] = useState<PublicTrainer | null>(null);
   const [toggleTarget, setToggleTarget] = useState<PublicTrainer | null>(null);
+  const [deleteTarget, setDeleteTarget] = useState<PublicTrainer | null>(null);
   const [busy, setBusy] = useState(false);
 
   const reload = useCallback(() => {
@@ -55,6 +58,7 @@ export function TrainersTab() {
             fullName: tr.fullName,
             phone: tr.phone,
             specialization: tr.specialization,
+            rankTitle: tr.rankTitle ?? null,
             joinedDate: tr.joinedDate,
             isActive: tr.isActive,
             activePlans: (tr as unknown as { activePlans?: number }).activePlans ?? 0,
@@ -86,6 +90,21 @@ export function TrainersTab() {
     }
   };
 
+  const onDeleteTrainer = async () => {
+    if (!actor || !deleteTarget) return;
+    setBusy(true);
+    try {
+      await api.trainers.delete(deleteTarget.id);
+      toast("success", t("trainers.deletedToast"));
+      setDeleteTarget(null);
+      reload();
+    } catch (err) {
+      toast("error", describeError(err, t));
+    } finally {
+      setBusy(false);
+    }
+  };
+
   const columns: Column<TrainerRowModel>[] = [
     {
       key: "trainer",
@@ -94,7 +113,14 @@ export function TrainersTab() {
         <span className="flex items-center gap-2.5">
           <Avatar name={row.fullName} size="sm" />
           <span className="min-w-0">
-            <span className="block truncate font-bold">{row.fullName}</span>
+            <span className="flex items-center gap-2">
+              <span className="truncate font-bold">{row.fullName}</span>
+              {row.rankTitle && (
+                <Badge variant="warning" className="text-[10px]">
+                  {row.rankTitle}
+                </Badge>
+              )}
+            </span>
             <span dir="ltr" className="block text-[11px] text-faint">
               {row.phone ?? "—"}
             </span>
@@ -130,7 +156,7 @@ export function TrainersTab() {
     },
   ];
 
-  if (canManage) {
+  if (canManage || canPurge) {
     columns.push({
       key: "actions",
       header: t("common.actions"),
@@ -144,6 +170,7 @@ export function TrainersTab() {
           phone: original.phone,
           email: null,
           specialization: original.specialization,
+          rankTitle: original.rankTitle,
           joinedDate: original.joinedDate,
           isActive: original.isActive,
           notes: null,
@@ -161,21 +188,36 @@ export function TrainersTab() {
               </button>
             }
           >
-            <DropdownItem
-              icon={<Pencil />}
-              label={t("common.edit")}
-              onClick={() => {
-                setEditTarget(model);
-                setFormOpen(true);
-              }}
-            />
-            <DropdownDivider />
-            <DropdownItem
-              icon={<Power />}
-              label={original.isActive ? t("trainers.deactivate") : t("trainers.activate")}
-              danger={original.isActive}
-              onClick={() => setToggleTarget(model)}
-            />
+            {canManage && (
+              <>
+                <DropdownItem
+                  icon={<Pencil />}
+                  label={t("common.edit")}
+                  onClick={() => {
+                    setEditTarget(model);
+                    setFormOpen(true);
+                  }}
+                />
+                <DropdownDivider />
+                <DropdownItem
+                  icon={<Power />}
+                  label={original.isActive ? t("trainers.deactivate") : t("trainers.activate")}
+                  danger={original.isActive}
+                  onClick={() => setToggleTarget(model)}
+                />
+              </>
+            )}
+            {canPurge && (
+              <>
+                {canManage && <DropdownDivider />}
+                <DropdownItem
+                  icon={<Trash2 />}
+                  label={t("trainers.delete")}
+                  danger
+                  onClick={() => setDeleteTarget(model)}
+                />
+              </>
+            )}
           </Dropdown>
         );
       },
@@ -250,6 +292,17 @@ export function TrainersTab() {
         confirmLabel={t(toggleTarget?.isActive ? "trainers.deactivate" : "trainers.activate")}
         loading={busy}
         tone={toggleTarget?.isActive ? "danger" : "primary"}
+      />
+
+      <ConfirmDialog
+        open={deleteTarget !== null}
+        onClose={() => setDeleteTarget(null)}
+        onConfirm={() => void onDeleteTrainer()}
+        title={t("trainers.deleteTitle", { name: deleteTarget?.fullName ?? "" })}
+        message={t("trainers.deleteMessage", { name: deleteTarget?.fullName ?? "" })}
+        confirmLabel={t("common.delete")}
+        loading={busy}
+        tone="danger"
       />
     </Card>
   );

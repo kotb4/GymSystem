@@ -5,6 +5,8 @@ import { createEmployee } from "@/core/services/employees.service";
 import {
   clockIn,
   clockOut,
+  clockInEmployee,
+  clockOutEmployee,
   listAttendance,
   requestLeave,
   decideLeave,
@@ -28,7 +30,12 @@ import {
   setLeaveEntitlements,
   ensureSalariesForMonth,
   employeeMonthlyHours,
+  addAdvance,
+  cancelAdvance,
+  listAdvances,
 } from "@/core/services/employees-hr.service";
+import { paySalary } from "@/core/services/employees.service";
+import { generatePayslipPdf } from "@/core/services/pdf.service";
 import type { Db } from "@/db/engine";
 import { createTestDb } from "./helpers/test-db";
 
@@ -140,6 +147,20 @@ describe("attendance clock in/out", () => {
     const list = listAttendance(db, reception, { month: "2026-08" });
     expect(list).toHaveLength(1);
     expect(list[0].employeeId).toBe(emp.id);
+  });
+
+  it("lets reception check-in and check-out other staff via clockInEmployee and clockOutEmployee", async () => {
+    const cleaner = await seedEmployee(2000000);
+    const inRes = await clockInEmployee(db, reception, { employeeId: cleaner.id, at: "2026-08-01 08:00:00", dateKey: "2026-08-01" });
+    expect(inRes.employeeId).toBe(cleaner.id);
+    expect(inRes.workedMinutes).toBe(0);
+
+    const outRes = await clockOutEmployee(db, reception, { employeeId: cleaner.id, at: "2026-08-01 16:00:00", dateKey: "2026-08-01" });
+    expect(outRes.employeeId).toBe(cleaner.id);
+    expect(outRes.workedMinutes).toBe(480);
+
+    const todayList = listAttendance(db, reception, { dateKey: "2026-08-01" });
+    expect(todayList.some((a) => a.employeeId === cleaner.id)).toBe(true);
   });
 });
 
@@ -447,5 +468,69 @@ describe("monthly worked hours", () => {
     const emp = await seedEmployee();
     expect(() => employeeMonthlyHours(db, reception, { employeeId: emp.id, month: "2026-08" }))
       .toThrow(expect.objectContaining({ code: "FORBIDDEN" }));
+  });
+});
+
+describe("employee advances and payslip PDF", () => {
+  it("records an advance, deducts from monthly salary summary, and auto-settles on paySalary", async () => {
+    const emp = await seedEmployee(500000); // 5000 EGP
+    const adv = await addAdvance(db, manager, {
+      employeeId: emp.id,
+      amountMinor: 100000, // 1000 EGP
+      deductionMonth: "2026-08",
+      notes: "سلفة طارئة",
+    });
+    expect(adv.status).toBe("open");
+    expect(adv.amountMinor).toBe(100000);
+
+    const advList = await listAdvances(db, manager, { employeeId: emp.id });
+    expect(advList).toHaveLength(1);
+    expect(advList[0].notes).toBe("سلفة طارئة");
+
+    const summary = await monthlySalarySummary(db, manager, { employeeId: emp.id, periodMonth: "2026-08" });
+    expect(summary.advancesMinor).toBe(100000);
+    expect(summary.netMinor).toBe(400000); // 5000 - 1000 = 4000 EGP
+
+    const gen = await ensureSalariesForMonth(db, manager, { periodMonth: "2026-08" });
+    expect(gen.created).toBe(1);
+
+    const salRow = db.first<{ id: string; net_amount_minor: number; deduction_minor: number }>(
+      "SELECT id, net_amount_minor, deduction_minor FROM salaries WHERE employee_id = ? AND period_month = ?",
+      [emp.id, "2026-08"],
+    )!;
+    expect(salRow.net_amount_minor).toBe(400000);
+
+    // Pay salary
+    const paid = await paySalary(db, manager, salRow.id);
+    expect(paid.status).toBe("paid");
+
+    // Advance should now be settled
+    const updatedAdv = db.first<{ status: string; repaid_minor: number }>(
+      "SELECT status, repaid_minor FROM employee_advances WHERE id = ?",
+      [adv.id],
+    )!;
+    expect(updatedAdv.status).toBe("settled");
+    expect(updatedAdv.repaid_minor).toBe(100000);
+
+    // Generate Payslip PDF
+    const pdfRes = await generatePayslipPdf(db, manager, salRow.id);
+    expect(pdfRes.base64).toBeTruthy();
+    expect(pdfRes.fileName).toContain("payslip-");
+    expect(pdfRes.slipNo).toBeTruthy();
+  });
+
+  it("cancels an open advance", async () => {
+    const emp = await seedEmployee(300000);
+    const adv = await addAdvance(db, manager, {
+      employeeId: emp.id,
+      amountMinor: 50000,
+      deductionMonth: "2026-08",
+    });
+    const cancelled = await cancelAdvance(db, manager, adv.id);
+    expect(cancelled.status).toBe("cancelled");
+
+    const summary = await monthlySalarySummary(db, manager, { employeeId: emp.id, periodMonth: "2026-08" });
+    expect(summary.advancesMinor).toBe(0);
+    expect(summary.netMinor).toBe(300000);
   });
 });

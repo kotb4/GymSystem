@@ -178,6 +178,22 @@ function copyRuntime() {
   copyTree(npmSrc, npmDst);
   log(`bundled npm runtime (${npmSrc}) → runtime/npm`);
 
+  // Arabic PDF fonts (static Cairo instances). The PDF generator resolves them
+  // relative to the app dir, so they must sit beside the exe. Never ship the
+  // variable font: PDFKit's subsetter mangles it (ADR-040).
+  const fontsSrc = path.join(ROOT, "assets", "fonts");
+  const requiredFonts = ["Cairo-Regular.ttf", "Cairo-Bold.ttf"];
+  const fontsDst = path.join(OUT_DIR, "assets", "fonts");
+  mkdirSync(fontsDst, { recursive: true });
+  for (const name of requiredFonts) {
+    const src = path.join(fontsSrc, name);
+    if (!existsSync(src)) {
+      throw new Error(`PDF font missing: ${src} — run "npm run build:fonts" or restore assets/fonts`);
+    }
+    copyFileSync(src, path.join(fontsDst, name));
+  }
+  log(`arabic PDF fonts copied → assets/fonts (${requiredFonts.join(", ")})`);
+
   const gatewaySrc = path.join(ROOT, "whatsapp-gateway");
   if (!existsSync(gatewaySrc)) return;
   const gatewayDst = path.join(OUT_DIR, "gateway");
@@ -248,6 +264,48 @@ function main() {
   copyRuntime();
 
   log("step 6/6: done");
+  const branch2Exe = path.join(OUT_DIR, "GymSystem-Branch2.exe");
+  try {
+    copyFileSync(path.join(OUT_DIR, EXE_NAME), branch2Exe);
+    log(`→ ${branch2Exe} (Branch 2 standalone executable)`);
+  } catch (copyErr) {
+    log(`warning: could not copy branch 2 executable: ${String(copyErr)}`);
+  }
+
+  const runB1Bat = `@echo off
+rem ============================================================
+rem  GymSystem - Primary Branch Launcher (Port 8890)
+rem ============================================================
+setlocal
+cd /d "%~dp0"
+start "" "GymSystem.exe"
+exit /b 0
+`;
+  const runB2Bat = `@echo off
+rem ============================================================
+rem  GymSystem - Branch 2 Launcher (Port 8895)
+rem ============================================================
+setlocal
+cd /d "%~dp0"
+if exist "GymSystem-Branch2.exe" (
+  start "" "GymSystem-Branch2.exe"
+) else (
+  set GYMSYSTEM_PORT=8895
+  set GYMSYSTEM_DATA_DIR=%LOCALAPPDATA%\\GymSystem_Branch2
+  start "" "GymSystem.exe"
+)
+exit /b 0
+`;
+  try {
+    writeFileSync(path.join(OUT_DIR, "تشغيل الفرع الرئيسي.bat"), runB1Bat, "utf8");
+    writeFileSync(path.join(OUT_DIR, "تشغيل الفرع الثاني.bat"), runB2Bat, "utf8");
+    writeFileSync(path.join(OUT_DIR, "Start-Branch1.bat"), runB1Bat, "utf8");
+    writeFileSync(path.join(OUT_DIR, "Start-Branch2.bat"), runB2Bat, "utf8");
+    log("→ generated launcher scripts (تشغيل الفرع الرئيسي.bat, تشغيل الفرع الثاني.bat)");
+  } catch (batErr) {
+    log(`warning: could not write launcher scripts: ${String(batErr)}`);
+  }
+
   log(`→ ${path.join(OUT_DIR, EXE_NAME)}`);
   if (existsSync(path.join(OUT_DIR, "runtime", "node.exe"))) {
     log(`→ ${path.join(OUT_DIR, "runtime", "node.exe")} (portable node)`);

@@ -1,4 +1,4 @@
-﻿import { useEffect, useState } from "react";
+import { useEffect, useState } from "react";
 import { useNavigate, useSearchParams } from "react-router-dom";
 import {
   CircleOff,
@@ -9,6 +9,7 @@ import {
   Send,
   ShieldBan,
   ShieldCheck,
+  Trash2,
   Undo2,
 } from "lucide-react";
 import { useAuth } from "@/contexts/auth-context";
@@ -38,7 +39,7 @@ import { CardQrDeliveryModal } from "@/components/cards/card-qr-delivery-modal";
 const STATUS_OPTIONS: Array<CardStatus | "all"> = ["all", "assigned", "available", "lost", "blocked"];
 const KIND_OPTIONS = ["all", "virtual", "physical"] as const;
 
-type ConfirmKind = "unassign" | "lost" | null;
+type ConfirmKind = "unassign" | "lost" | "delete" | null;
 
 export function CardsPage() {
   const t = useT();
@@ -150,9 +151,28 @@ export function CardsPage() {
     if (!actor || !target || !confirmKind) return;
     setBusy(true);
     try {
-      if (confirmKind === "unassign") await api.cards.unassign(target.id);
-      else await api.cards.reportLost(target.id);
-      toast("success", confirmKind === "unassign" ? t("cards.unassignedToast") : t("cards.lostToast"));
+      if (confirmKind === "unassign") {
+        await api.cards.unassign(target.id);
+        toast("success", t("cards.unassignedToast"));
+      } else if (confirmKind === "lost") {
+        await api.cards.reportLost(target.id);
+        toast("success", t("cards.lostToast"));
+      } else {
+        // force: the whole point of this action is being able to remove a
+        // printed card even while it is still assigned to a member.
+        const result = await api.cards.delete(target.id, true);
+        if (result.detachedAttendance > 0) {
+          toast(
+            "success",
+            t("cards.deletedToastWithAttendance", { count: result.detachedAttendance }),
+          );
+        } else {
+          toast(
+            "success",
+            result.unassigned ? t("cards.deletedToastUnassigned") : t("cards.deletedToast"),
+          );
+        }
+      }
       setConfirmKind(null);
       reload();
       setPage(1);
@@ -268,7 +288,12 @@ export function CardsPage() {
     },
   ];
 
-  if (hasPermission("cards.unassign") || hasPermission("cards.report_lost") || hasPermission("cards.block")) {
+  if (
+    hasPermission("cards.unassign") ||
+    hasPermission("cards.report_lost") ||
+    hasPermission("cards.block") ||
+    hasPermission("cards.delete")
+  ) {
     columns.push({
       key: "actions",
       header: t("common.actions"),
@@ -300,6 +325,18 @@ export function CardsPage() {
             {hasPermission("cards.send") && original.status === "assigned" && original.memberId && (
               <IconAction label={t("cards.sendQr")} onClick={() => setQrCard(original)}>
                 <Send className="size-4" />
+              </IconAction>
+            )}
+            {hasPermission("cards.delete") && (
+              <IconAction
+                label={t("cards.actionDelete")}
+                danger
+                onClick={() => {
+                  setTarget(original);
+                  setConfirmKind("delete");
+                }}
+              >
+                <Trash2 className="size-4" />
               </IconAction>
             )}
           </div>
@@ -524,8 +561,30 @@ export function CardsPage() {
       <ConfirmDialog
         open={confirmKind !== null}
         onClose={() => setConfirmKind(null)}
-        title={confirmKind === "unassign" ? t("cards.actionUnassign") : t("cards.actionLost")}
-        message={confirmKind === "unassign" ? t("cards.unassignMsg") : t("cards.lostMsg")}
+        title={
+          confirmKind === "unassign"
+            ? t("cards.actionUnassign")
+            : confirmKind === "lost"
+              ? t("cards.actionLost")
+              : t("cards.deleteTitle")
+        }
+        confirmLabel={confirmKind === "delete" ? t("cards.deleteConfirm") : undefined}
+        message={
+          confirmKind === "unassign" ? (
+            t("cards.unassignMsg")
+          ) : confirmKind === "lost" ? (
+            t("cards.lostMsg")
+          ) : (
+            <span className="space-y-2">
+              <span className="block">
+                {target?.status === "assigned" && target.memberName
+                  ? t("cards.deleteMsgAssigned", { member: target.memberName })
+                  : t("cards.deleteMsg")}
+              </span>
+              <span className="block text-[12px] text-faint">{t("cards.deleteAttendanceNote")}</span>
+            </span>
+          )
+        }
         loading={busy}
         onConfirm={() => void runConfirm()}
       />

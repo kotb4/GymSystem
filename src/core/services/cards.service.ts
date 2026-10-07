@@ -104,6 +104,35 @@ export function ensureVirtualCard(
   return getCardById(db, id)!;
 }
 
+/**
+ * Creates or re-attaches a virtual card for a member (e.g. after it was unassigned).
+ */
+export async function createVirtualCard(
+  db: Db,
+  actor: ServiceActor,
+  memberId: string,
+): Promise<PublicCard> {
+  requirePermission(actor, "cards.assign");
+  const member = getMemberRowById(db, memberId);
+  if (!member) throw errNotFound("errors.memberNotFound");
+  if (member.status === "archived") throw errValidation("errors.memberArchived");
+
+  return db.transaction(() => {
+    const card = ensureVirtualCard(db, {
+      memberId: member.id,
+      memberCode: member.member_code,
+      actorId: actor.userId,
+    });
+    recordAudit(db, actor, "CARD_ASSIGNED", "card", card.id, {
+      barcode: card.barcode_value,
+      kind: "virtual",
+      memberCode: member.member_code,
+      memberName: member.full_name,
+    });
+    return toCard(card);
+  });
+}
+
 export function nextBarcodePreview(db: Db): string {
   const current = Number(db.scalar("SELECT value FROM counters WHERE name = 'card_barcode'") ?? 100);
   return `GYM-${String(current + 1).padStart(6, "0")}`;
@@ -396,4 +425,100 @@ export async function registerCardsBulk(
 
   result.registered = toInsert;
   return result;
+}
+
+export interface DeleteCardResult {
+  /** True when the card was released from its member as part of the delete. */
+  unassigned: boolean;
+  /** Attendance rows kept but detached from the deleted card. */
+  detachedAttendance: number;
+}
+
+export interface DeleteCardOptions {
+  /**
+   * Force mode — lets a printed card be removed even while assigned to a
+   * member and/or already used for check-in. The card row is still deleted
+   * (hard delete); `force` only relaxes the two guards below.
+   */
+  force?: boolean;
+}
+
+/**
+ * Hard-deletes a physical card. Virtual cards (auto-generated member cards)
+ * are always protected — they ARE the member's check-in identity.
+ *
+ * Default (safe) mode refuses cards that are assigned to a member or that
+ * already have attendance history. `force: true` releases the card from its
+ * member and detaches historical attendance rows (setting `attendance.card_id`
+ * to NULL) instead of refusing, so a lost/worn printed card can be replaced
+ * without discarding check-in history.
+ */
+export async function deleteCard(
+  db: Db,
+  actor: ServiceActor,
+  cardId: string,
+  opts: DeleteCardOptions = {},
+): Promise<DeleteCardResult> {
+  requirePermission(actor, "cards.delete");
+
+  const card = getCardById(db, cardId);
+  if (!card) throw errNotFound("errors.cardNotFound");
+
+  if (card.kind === "virtual") {
+    throw errConflict("errors.cardVirtualCannotDelete");
+  }
+
+  // `force` arrives straight off the RPC boundary, so only an explicit boolean
+  // true enables the destructive path; anything else falls back to safe mode.
+  const force = opts != null && opts.force === true;
+  if (!force) {
+    if (card.status === "assigned") {
+      throw errConflict("errors.cardAssignedCannotDelete");
+    }
+    // Protect cards that have attendance history (used for check-in at least once)
+    const usageCount = db.count(
+      "SELECT COUNT(*) FROM attendance WHERE card_id = ?",
+      [cardId],
+    );
+    if (usageCount > 0) {
+      throw errConflict("errors.cardHasAttendanceCannotDelete");
+    }
+  }
+
+  return db.transaction(() => {
+    const unassigned = card.status === "assigned";
+    if (unassigned) {
+      const stamp = nowStamp();
+      db.run(
+        "UPDATE cards SET status = 'available', member_id = NULL, unassigned_at = ?, updated_at = ? WHERE id = ?",
+        [stamp, stamp, cardId],
+      );
+      recordAudit(db, actor, "CARD_UNASSIGNED", "card", cardId, {
+        barcode: card.barcode_value,
+        reason: "card_deleted",
+      });
+    }
+
+    // Keep the check-in history but drop the link to the card being deleted —
+    // attendance rows survive (member, time, subscription) so reports stay
+    // intact; only "which physical card" is lost, which is inherent to
+    // deleting that card.
+    const detachedAttendance = db.run(
+      "UPDATE attendance SET card_id = NULL WHERE card_id = ?",
+      [cardId],
+    ).changes;
+
+    // Remove any pending delivery records first (FK-safe order)
+    db.run("DELETE FROM card_deliveries WHERE card_id = ?", [cardId]);
+    db.run("DELETE FROM cards WHERE id = ?", [cardId]);
+    recordAudit(db, actor, "CARD_DELETED", "card", cardId, {
+      barcode: card.barcode_value,
+      kind: card.kind,
+      status: card.status,
+      unassigned,
+      detachedAttendance,
+    });
+
+    return { unassigned, detachedAttendance };
+  });
 }

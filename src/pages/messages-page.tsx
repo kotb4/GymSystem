@@ -1,5 +1,18 @@
-import { useCallback, useEffect, useState } from "react";
-import { ExternalLink, MessageSquare, Send, Settings2 } from "lucide-react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import {
+  Calendar,
+  Clock,
+  Copy,
+  ExternalLink,
+  FileText,
+  History,
+  MessageSquare,
+  Send,
+  Settings2,
+  ShieldCheck,
+  Sparkles,
+  Users,
+} from "lucide-react";
 import { useAuth } from "@/contexts/auth-context";
 import { useT } from "@/i18n";
 import { useToast } from "@/components/ui/toast";
@@ -54,6 +67,20 @@ const EMPTY_KEY: Record<MessageSegment, string> = {
   custom: "messages.emptyAbsent",
 };
 
+const PLACEHOLDERS = [
+  { tag: "{اسم العميل}", desc: "اسم العضو بالكامل" },
+  { tag: "{رقم العضوية}", desc: "كود العضوية" },
+  { tag: "{اسم الجيم}", desc: "اسم الصالة" },
+  { tag: "{اسم الخطة}", desc: "باقة الاشتراك" },
+  { tag: "{تاريخ الانتهاء}", desc: "تاريخ نهاية الاشتراك" },
+  { tag: "{الأيام المتبقية}", desc: "الأيام المتبقية للتجديد" },
+  { tag: "{المبلغ}", desc: "المبلغ المدفوع" },
+  { tag: "{المبلغ المتبقي}", desc: "المتبقي المالي إن وجد" },
+  { tag: "{عدد أيام الغياب}", desc: "أيام الانقطاع" },
+  { tag: "{الحصص المتبقية}", desc: "رصيد الحصص" },
+  { tag: "{الخصم}", desc: "قيمة الخصم" },
+];
+
 function statusBadge(status: PublicMessageRow["status"]): BadgeVariant {
   switch (status) {
     case "sent":
@@ -90,7 +117,11 @@ export function MessagesPage() {
   const canSend = hasPermission("messages.send");
   const canEditSettings = hasPermission("settings.edit");
 
+  const [mainTab, setMainTab] = useState<"campaigns" | "templates" | "safety" | "history">("campaigns");
   const [segment, setSegment] = useState<MessageSegment>("absent");
+  const [searchQuery, setSearchQuery] = useState("");
+  const [historySearch, setHistorySearch] = useState("");
+
   const [rows, setRows] = useState<MessageRecipient[]>([]);
   const [history, setHistory] = useState<PublicMessageRow[]>([]);
   const [loading, setLoading] = useState(true);
@@ -115,6 +146,8 @@ export function MessagesPage() {
   const [composeDiscount, setComposeDiscount] = useState("");
   const [composeTemplate, setComposeTemplate] = useState<string | null>(null);
   const [savingConfig, setSavingConfig] = useState(false);
+
+  const composeTextareaRef = useRef<HTMLTextAreaElement>(null);
 
   const load = useCallback(async () => {
     setLoading(true);
@@ -150,18 +183,43 @@ export function MessagesPage() {
   const loadHistory = useCallback(async () => {
     if (!canSend) return;
     try {
-      setHistory(await api.messages.listHistory(30));
+      setHistory(await api.messages.listHistory(100));
     } catch {
       // history is informational; silent failure
     }
   }, [canSend]);
 
   useEffect(() => { void load(); }, [load]);
-  useEffect(() => { setRows([]); setLoading(true); void loadRows(segment).finally(() => setLoading(false)); }, [segment, loadRows]);
+  useEffect(() => {
+    setRows([]);
+    setLoading(true);
+    void loadRows(segment).finally(() => setLoading(false));
+  }, [segment, loadRows]);
   useEffect(() => { void loadHistory(); }, [loadHistory]);
 
-  const tabs = SEGMENTS.map((s) => ({ value: s, label: t(TAB_KEY[s]) }));
   const visible = rows;
+
+  const filteredRecipients = useMemo(() => {
+    const q = searchQuery.trim().toLowerCase();
+    if (!q) return visible;
+    return visible.filter(
+      (r) =>
+        r.memberName.toLowerCase().includes(q) ||
+        r.memberCode.toLowerCase().includes(q) ||
+        (r.phone && r.phone.includes(q))
+    );
+  }, [visible, searchQuery]);
+
+  const filteredHistory = useMemo(() => {
+    const q = historySearch.trim().toLowerCase();
+    if (!q) return history;
+    return history.filter(
+      (h) =>
+        (h.member_name && h.member_name.toLowerCase().includes(q)) ||
+        (h.member_code && h.member_code.toLowerCase().includes(q)) ||
+        h.body.toLowerCase().includes(q)
+    );
+  }, [history, historySearch]);
 
   const fillComposeBody = (tmpl: string, target: MessageRecipient, discount: string) =>
     fillMessagePlaceholders(tmpl, {
@@ -230,23 +288,27 @@ export function MessagesPage() {
   };
 
   const handleSendAll = async () => {
-    if (!body.trim()) {
-      toast("error", t("errors.messageBodyRequired"));
-      return;
-    }
     setBatchSending(true);
     try {
-      const summary = await api.messages.sendSegment({ segment, body });
-      toast(
-        "success",
-        t("messages.msgBatchSent", {
-          sent: summary.sent,
-          failed: summary.failed,
-          noPhone: summary.skippedNoPhone,
-          cooldown: summary.skippedCooldown ?? 0,
-          notConfig: summary.notConfigured,
-        }),
-      );
+      const currentTemplate =
+        body.trim() ||
+        (segment === "birthday"
+          ? birthdayTemplate
+          : segment === "absent"
+            ? absentTemplate
+            : expiryTemplate);
+
+      const res = await api.messages.sendSegment({
+        segment,
+        body: currentTemplate,
+      });
+      toast("success", t("messages.msgBatchSent", {
+        sent: res.sent,
+        failed: res.failed,
+        noPhone: res.skippedNoPhone,
+        cooldown: res.skippedCooldown,
+        notConfig: res.notConfigured,
+      }));
       setConfirmSendAll(false);
       setComposeTarget(null);
       await loadRows(segment);
@@ -283,6 +345,27 @@ export function MessagesPage() {
     }
   };
 
+  const copyPlaceholder = (tag: string) => {
+    void navigator.clipboard.writeText(tag);
+    toast("success", `${t("messages.variableCopied")}: ${tag}`);
+  };
+
+  const insertPlaceholderInCompose = (tag: string) => {
+    if (composeTextareaRef.current) {
+      const el = composeTextareaRef.current;
+      const start = el.selectionStart;
+      const end = el.selectionEnd;
+      const next = body.substring(0, start) + tag + body.substring(end);
+      setBody(next);
+      window.setTimeout(() => {
+        el.focus();
+        el.setSelectionRange(start + tag.length, start + tag.length);
+      }, 0);
+    } else {
+      setBody((prev) => prev + " " + tag);
+    }
+  };
+
   const detailText = (r: MessageRecipient): string => {
     if (r.segment === "absent") {
       return r.lastVisitAt && r.daysSinceLastVisit > 0
@@ -303,7 +386,7 @@ export function MessagesPage() {
       header: t("messages.labelMember"),
       render: (r) => (
         <div>
-          <span className="font-semibold">{r.memberName}</span>
+          <span className="font-semibold text-ink">{r.memberName}</span>
           <span dir="ltr" className="mt-0.5 block text-xs text-faint tabnum">{r.memberCode}</span>
         </div>
       ),
@@ -312,12 +395,20 @@ export function MessagesPage() {
       key: "phone",
       header: t("messages.labelPhone"),
       render: (r) =>
-        r.phone ? <span dir="ltr" className="tabnum text-[13px]">{r.phone}</span> : <span className="text-faint">—</span>,
+        r.phone ? (
+          <span dir="ltr" className="tabnum font-mono text-[13px] text-subtle">{r.phone}</span>
+        ) : (
+          <span className="text-faint">—</span>
+        ),
     },
     {
       key: "detail",
       header: t("messages.labelDetail"),
-      render: (r) => <Badge variant="info">{detailText(r)}</Badge>,
+      render: (r) => (
+        <Badge variant={segment === "birthday" ? "warning" : segment === "absent" ? "danger" : "info"}>
+          {detailText(r)}
+        </Badge>
+      ),
     },
     {
       key: "extra",
@@ -336,171 +427,406 @@ export function MessagesPage() {
       render: (r) =>
         canSend ? (
           <Button size="sm" variant="secondary" onClick={() => openCompose(r)}>
-            <Send className="size-4" />
+            <Send className="size-3.5" />
             {t("messages.btnSend")}
           </Button>
         ) : null,
     },
   ];
 
+  const mainTabs = [
+    { value: "campaigns", label: t("messages.mainTabCampaigns") },
+    ...(canEditSettings ? [{ value: "templates", label: t("messages.mainTabTemplates") }] : []),
+    ...(canEditSettings ? [{ value: "safety", label: t("messages.mainTabSafety") }] : []),
+    ...(canSend ? [{ value: "history", label: t("messages.mainTabHistory") }] : []),
+  ];
+
   return (
     <div className="space-y-4">
+      {/* Top Header & Main Tabs */}
       <Card>
-        <CardBody>
-          <div className="flex flex-wrap items-center justify-between gap-3">
-            <Tabs items={tabs} value={segment} onChange={(v) => setSegment(v as MessageSegment)} />
-            {canSend && (
-              <Button
-                variant="ghost"
-                onClick={() => {
-                  setBody("");
-                  setConfirmSendAll(true);
-                }}
-                disabled={visible.length === 0 || batchSending}
-              >
-                <Send className="size-4" />
-                {t("messages.btnSendAll")}
-              </Button>
-            )}
-          </div>
-
-          <div className="mt-4">
-            {loading ? (
-              <div className="grid min-h-48 place-items-center">
-                <span aria-hidden className="size-6 animate-spin rounded-full border-2 border-line-strong border-t-neon" />
+        <CardHeader
+          title={
+            <div className="flex items-center gap-2.5">
+              <div className="grid size-9 place-items-center rounded-xl bg-neon/10 text-neon">
+                <MessageSquare className="size-5" />
               </div>
-            ) : visible.length === 0 ? (
-              <EmptyState
-                icon={<MessageSquare />}
-                title={t(EMPTY_KEY[segment])}
-                description={t("messages.emptyDescription")}
-              />
-            ) : (
-              <DataTable
-                columns={cols}
-                data={visible}
-                rowKey={(r) => r.memberId}
-                className="rounded-xl border border-line bg-surface"
-              />
-            )}
-          </div>
-        </CardBody>
-      </Card>
-
-      {canEditSettings && (
-        <Card>
-          <CardHeader title={t("messages.configTitle")} />
-          <CardBody>
-            <div className="grid grid-cols-1 gap-4 md:grid-cols-3">
-              <Input
-                label={t("messages.configAbsentDays")}
-                value={absentDays}
-                onChange={(e) => setAbsentDays(e.target.value)}
-                type="number"
-                min={1}
-                max={365}
-                dir="ltr"
-              />
-              <label className="mt-4 block text-[13px] font-semibold text-subtle">
-                {t("messages.configAbsentTemplate")}
-              </label>
-              <textarea
-                value={absentTemplate}
-                onChange={(e) => setAbsentTemplate(e.target.value)}
-                placeholder={t("messages.configAbsentTemplatePlaceholder")}
-                rows={3}
-                className="mt-1.5 w-full rounded-xl border bg-panel px-3.5 py-3 text-sm text-ink placeholder:text-faint outline-none transition-colors duration-150 focus:border-neon/60 focus:ring-2 focus:ring-neon/15"
-              />
-              <Input
-                label={t("messages.configBirthdayDays")}
-                value={birthdayDays}
-                onChange={(e) => setBirthdayDays(e.target.value)}
-                type="number"
-                min={1}
-                max={365}
-                dir="ltr"
-              />
-              <label className="mt-4 block text-[13px] font-semibold text-subtle">
-                {t("messages.configBirthdayTemplate")}
-              </label>
-              <textarea
-                value={birthdayTemplate}
-                onChange={(e) => setBirthdayTemplate(e.target.value)}
-                placeholder={t("messages.configBirthdayTemplatePlaceholder")}
-                rows={3}
-                className="mt-1.5 w-full rounded-xl border bg-panel px-3.5 py-3 text-sm text-ink placeholder:text-faint outline-none transition-colors duration-150 focus:border-neon/60 focus:ring-2 focus:ring-neon/15"
-              />
-              <Input
-                label={t("messages.configExpiryDays")}
-                value={expiryDays}
-                onChange={(e) => setExpiryDays(e.target.value)}
-                type="number"
-                min={1}
-                max={365}
-                dir="ltr"
-              />
-              <label className="mt-4 block text-[13px] font-semibold text-subtle">
-                {t("messages.configExpiryTemplate")}
-              </label>
-              <textarea
-                value={expiryTemplate}
-                onChange={(e) => setExpiryTemplate(e.target.value)}
-                placeholder={t("messages.configExpiryTemplatePlaceholder")}
-                rows={3}
-                className="mt-1.5 w-full rounded-xl border bg-panel px-3.5 py-3 text-sm text-ink placeholder:text-faint outline-none transition-colors duration-150 focus:border-neon/60 focus:ring-2 focus:ring-neon/15"
-              />
-              <label className="mt-4 block text-[13px] font-semibold text-subtle">
-                {t("messages.configWelcomeTemplate")}
-              </label>
-              <textarea
-                value={welcomeTemplate}
-                onChange={(e) => setWelcomeTemplate(e.target.value)}
-                placeholder={t("messages.configWelcomeTemplatePlaceholder")}
-                rows={3}
-                className="mt-1.5 w-full rounded-xl border bg-panel px-3.5 py-3 text-sm text-ink placeholder:text-faint outline-none transition-colors duration-150 focus:border-neon/60 focus:ring-2 focus:ring-neon/15"
-              />
-              <label className="mt-4 block text-[13px] font-semibold text-subtle">
-                {t("messages.configPaymentTemplate")}
-              </label>
-              <textarea
-                value={paymentTemplate}
-                onChange={(e) => setPaymentTemplate(e.target.value)}
-                placeholder={t("messages.configPaymentTemplatePlaceholder")}
-                rows={3}
-                className="mt-1.5 w-full rounded-xl border bg-panel px-3.5 py-3 text-sm text-ink placeholder:text-faint outline-none transition-colors duration-150 focus:border-neon/60 focus:ring-2 focus:ring-neon/15"
-              />
-              <div className="mt-4 grid gap-4 sm:grid-cols-3">
-                <Input
-                  label={t("messages.configPacingMin")}
-                  value={pacingMin}
-                  onChange={(e) => setPacingMin(e.target.value)}
-                  type="number"
-                  min={2}
-                  max={60}
-                  dir="ltr"
-                />
-                <Input
-                  label={t("messages.configPacingMax")}
-                  value={pacingMax}
-                  onChange={(e) => setPacingMax(e.target.value)}
-                  type="number"
-                  min={3}
-                  max={120}
-                  dir="ltr"
-                />
-                <Input
-                  label={t("messages.configCooldownDays")}
-                  value={cooldownDays}
-                  onChange={(e) => setCooldownDays(e.target.value)}
-                  type="number"
-                  min={0}
-                  max={90}
-                  dir="ltr"
-                />
+              <div>
+                <h1 className="text-lg font-extrabold text-ink">{t("messages.pageTitle")}</h1>
+                <p className="text-xs text-subtle">{t("messages.emptyDescription")}</p>
               </div>
             </div>
-            <div className="mt-4 flex items-center gap-2.5">
-              <Button onClick={handleSaveConfig} loading={savingConfig} icon={<Settings2 className="size-4" />}>
+          }
+        />
+        <div className="px-5 pb-1 pt-2">
+          <Tabs items={mainTabs} value={mainTab} onChange={(v) => setMainTab(v as typeof mainTab)} />
+        </div>
+      </Card>
+
+      {/* ────────────────── Tab 1: Campaigns & Recipients ────────────────── */}
+      {mainTab === "campaigns" && (
+        <Card>
+          <CardBody className="space-y-4">
+            {/* Segment Selector Pills */}
+            <div className="flex flex-wrap items-center justify-between gap-3 border-b border-line pb-4">
+              <div className="flex flex-wrap gap-2">
+                {SEGMENTS.map((s) => {
+                  const active = segment === s;
+                  return (
+                    <button
+                      key={s}
+                      type="button"
+                      onClick={() => setSegment(s)}
+                      className={`inline-flex items-center gap-2 rounded-xl border px-4 py-2 text-sm font-bold transition-colors ${
+                        active
+                          ? "border-neon bg-neon/10 text-neon"
+                          : "border-line bg-panel text-subtle hover:border-line-strong hover:text-ink"
+                      }`}
+                    >
+                      <span>{t(TAB_KEY[s])}</span>
+                      {active && (
+                        <Badge variant="neutral" className="tabnum font-mono text-xs">
+                          {rows.length}
+                        </Badge>
+                      )}
+                    </button>
+                  );
+                })}
+              </div>
+
+              {canSend && (
+                <Button
+                  variant="primary"
+                  onClick={() => {
+                    setBody("");
+                    setConfirmSendAll(true);
+                  }}
+                  disabled={visible.length === 0 || batchSending}
+                  icon={<Send className="size-4" />}
+                >
+                  {t("messages.btnSendAll")} ({visible.length})
+                </Button>
+              )}
+            </div>
+
+            {/* Filter / Search Bar */}
+            <div className="flex flex-wrap items-center justify-between gap-3">
+              <div className="w-full sm:max-w-xs">
+                <Input
+                  placeholder={t("messages.searchPlaceholder")}
+                  value={searchQuery}
+                  onChange={(e) => setSearchQuery(e.target.value)}
+                />
+              </div>
+              <span className="text-xs text-faint tabnum">
+                {filteredRecipients.length} / {visible.length}
+              </span>
+            </div>
+
+            {/* Recipients Table */}
+            <div>
+              {loading ? (
+                <div className="grid min-h-48 place-items-center">
+                  <span aria-hidden className="size-6 animate-spin rounded-full border-2 border-line-strong border-t-neon" />
+                </div>
+              ) : filteredRecipients.length === 0 ? (
+                <EmptyState
+                  icon={<MessageSquare />}
+                  title={t(EMPTY_KEY[segment])}
+                  description={t("messages.emptyDescription")}
+                />
+              ) : (
+                <DataTable
+                  columns={cols}
+                  data={filteredRecipients}
+                  rowKey={(r) => r.memberId}
+                  className="rounded-xl border border-line bg-surface"
+                />
+              )}
+            </div>
+          </CardBody>
+        </Card>
+      )}
+
+      {/* ────────────────── Tab 2: Templates & Cheat Sheet ────────────────── */}
+      {mainTab === "templates" && canEditSettings && (
+        <div className="space-y-4">
+          {/* Smart Placeholders Cheat Sheet */}
+          <Card className="border-neon/25 bg-neon/[0.02]">
+            <CardBody className="space-y-2.5">
+              <div className="flex items-center gap-2">
+                <Sparkles className="size-4 text-neon" />
+                <h3 className="text-sm font-bold text-ink">{t("messages.placeholdersTitle")}</h3>
+              </div>
+              <p className="text-xs text-subtle">{t("messages.placeholdersHelp")}</p>
+              <div className="flex flex-wrap gap-2 pt-1">
+                {PLACEHOLDERS.map((p) => (
+                  <button
+                    key={p.tag}
+                    type="button"
+                    onClick={() => copyPlaceholder(p.tag)}
+                    title={p.desc}
+                    className="group inline-flex items-center gap-1.5 rounded-lg border border-line bg-panel px-2.5 py-1 text-xs font-mono font-semibold text-ink transition-colors hover:border-neon hover:text-neon"
+                  >
+                    <span>{p.tag}</span>
+                    <span className="text-[10px] text-faint group-hover:text-neon/80 font-sans">
+                      ({p.desc})
+                    </span>
+                    <Copy className="size-3 text-faint group-hover:text-neon" />
+                  </button>
+                ))}
+              </div>
+            </CardBody>
+          </Card>
+
+          {/* Template Cards Grid */}
+          <div className="grid grid-cols-1 gap-4 lg:grid-cols-2">
+            {/* Card 1: Absent Reminder */}
+            <Card>
+              <CardHeader
+                title={
+                  <div className="flex items-center gap-2">
+                    <Clock className="size-4 text-amber" />
+                    <span>{t("messages.configAbsentTemplate")}</span>
+                  </div>
+                }
+              />
+              <CardBody className="space-y-3.5">
+                <Input
+                  label={t("messages.configAbsentDays")}
+                  value={absentDays}
+                  onChange={(e) => setAbsentDays(e.target.value)}
+                  type="number"
+                  min={1}
+                  max={365}
+                  dir="ltr"
+                />
+                <div>
+                  <div className="flex items-center justify-between pb-1.5">
+                    <label className="text-[13px] font-semibold text-subtle">
+                      {t("messages.composeBodyLabel")}
+                    </label>
+                    <span className="text-[11px] text-faint tabnum">
+                      {absentTemplate.length} {t("messages.charCount")}
+                    </span>
+                  </div>
+                  <textarea
+                    value={absentTemplate}
+                    onChange={(e) => setAbsentTemplate(e.target.value)}
+                    placeholder={t("messages.configAbsentTemplatePlaceholder")}
+                    rows={4}
+                    className="w-full rounded-xl border border-line bg-panel p-3.5 text-sm text-ink placeholder:text-faint outline-none transition-colors duration-150 focus:border-neon/60 focus:ring-2 focus:ring-neon/15"
+                  />
+                </div>
+              </CardBody>
+            </Card>
+
+            {/* Card 2: Birthday Greeting */}
+            <Card>
+              <CardHeader
+                title={
+                  <div className="flex items-center gap-2">
+                    <Calendar className="size-4 text-cyan" />
+                    <span>{t("messages.configBirthdayTemplate")}</span>
+                  </div>
+                }
+              />
+              <CardBody className="space-y-3.5">
+                <Input
+                  label={t("messages.configBirthdayDays")}
+                  value={birthdayDays}
+                  onChange={(e) => setBirthdayDays(e.target.value)}
+                  type="number"
+                  min={1}
+                  max={365}
+                  dir="ltr"
+                />
+                <div>
+                  <div className="flex items-center justify-between pb-1.5">
+                    <label className="text-[13px] font-semibold text-subtle">
+                      {t("messages.composeBodyLabel")}
+                    </label>
+                    <span className="text-[11px] text-faint tabnum">
+                      {birthdayTemplate.length} {t("messages.charCount")}
+                    </span>
+                  </div>
+                  <textarea
+                    value={birthdayTemplate}
+                    onChange={(e) => setBirthdayTemplate(e.target.value)}
+                    placeholder={t("messages.configBirthdayTemplatePlaceholder")}
+                    rows={4}
+                    className="w-full rounded-xl border border-line bg-panel p-3.5 text-sm text-ink placeholder:text-faint outline-none transition-colors duration-150 focus:border-neon/60 focus:ring-2 focus:ring-neon/15"
+                  />
+                </div>
+              </CardBody>
+            </Card>
+
+            {/* Card 3: Expiry Warning */}
+            <Card>
+              <CardHeader
+                title={
+                  <div className="flex items-center gap-2">
+                    <Clock className="size-4 text-red" />
+                    <span>{t("messages.configExpiryTemplate")}</span>
+                  </div>
+                }
+              />
+              <CardBody className="space-y-3.5">
+                <Input
+                  label={t("messages.configExpiryDays")}
+                  value={expiryDays}
+                  onChange={(e) => setExpiryDays(e.target.value)}
+                  type="number"
+                  min={1}
+                  max={365}
+                  dir="ltr"
+                />
+                <div>
+                  <div className="flex items-center justify-between pb-1.5">
+                    <label className="text-[13px] font-semibold text-subtle">
+                      {t("messages.composeBodyLabel")}
+                    </label>
+                    <span className="text-[11px] text-faint tabnum">
+                      {expiryTemplate.length} {t("messages.charCount")}
+                    </span>
+                  </div>
+                  <textarea
+                    value={expiryTemplate}
+                    onChange={(e) => setExpiryTemplate(e.target.value)}
+                    placeholder={t("messages.configExpiryTemplatePlaceholder")}
+                    rows={4}
+                    className="w-full rounded-xl border border-line bg-panel p-3.5 text-sm text-ink placeholder:text-faint outline-none transition-colors duration-150 focus:border-neon/60 focus:ring-2 focus:ring-neon/15"
+                  />
+                </div>
+              </CardBody>
+            </Card>
+
+            {/* Card 4: Welcome New Member */}
+            <Card>
+              <CardHeader
+                title={
+                  <div className="flex items-center gap-2">
+                    <Users className="size-4 text-emerald-400" />
+                    <span>{t("messages.configWelcomeTemplate")}</span>
+                  </div>
+                }
+              />
+              <CardBody className="space-y-3.5">
+                <div>
+                  <div className="flex items-center justify-between pb-1.5">
+                    <label className="text-[13px] font-semibold text-subtle">
+                      {t("messages.composeBodyLabel")}
+                    </label>
+                    <span className="text-[11px] text-faint tabnum">
+                      {welcomeTemplate.length} {t("messages.charCount")}
+                    </span>
+                  </div>
+                  <textarea
+                    value={welcomeTemplate}
+                    onChange={(e) => setWelcomeTemplate(e.target.value)}
+                    placeholder={t("messages.configWelcomeTemplatePlaceholder")}
+                    rows={5}
+                    className="w-full rounded-xl border border-line bg-panel p-3.5 text-sm text-ink placeholder:text-faint outline-none transition-colors duration-150 focus:border-neon/60 focus:ring-2 focus:ring-neon/15"
+                  />
+                </div>
+              </CardBody>
+            </Card>
+
+            {/* Card 5: Payment Receipt */}
+            <Card className="lg:col-span-2">
+              <CardHeader
+                title={
+                  <div className="flex items-center gap-2">
+                    <FileText className="size-4 text-neon" />
+                    <span>{t("messages.configPaymentTemplate")}</span>
+                  </div>
+                }
+              />
+              <CardBody className="space-y-3.5">
+                <div>
+                  <div className="flex items-center justify-between pb-1.5">
+                    <label className="text-[13px] font-semibold text-subtle">
+                      {t("messages.composeBodyLabel")}
+                    </label>
+                    <span className="text-[11px] text-faint tabnum">
+                      {paymentTemplate.length} {t("messages.charCount")}
+                    </span>
+                  </div>
+                  <textarea
+                    value={paymentTemplate}
+                    onChange={(e) => setPaymentTemplate(e.target.value)}
+                    placeholder={t("messages.configPaymentTemplatePlaceholder")}
+                    rows={4}
+                    className="w-full rounded-xl border border-line bg-panel p-3.5 text-sm text-ink placeholder:text-faint outline-none transition-colors duration-150 focus:border-neon/60 focus:ring-2 focus:ring-neon/15"
+                  />
+                </div>
+              </CardBody>
+            </Card>
+          </div>
+
+          {/* Save Bar */}
+          <div className="flex justify-end pt-2">
+            <Button
+              onClick={handleSaveConfig}
+              loading={savingConfig}
+              icon={<Settings2 className="size-4" />}
+              size="lg"
+            >
+              {t("messages.configSave")}
+            </Button>
+          </div>
+        </div>
+      )}
+
+      {/* ────────────────── Tab 3: Safety & Anti-Ban Engine ────────────────── */}
+      {mainTab === "safety" && canEditSettings && (
+        <Card>
+          <CardHeader
+            title={
+              <div className="flex items-center gap-2">
+                <ShieldCheck className="size-5 text-emerald-400" />
+                <span>{t("messages.safetyCardTitle")}</span>
+              </div>
+            }
+            description={t("messages.safetyCardDesc")}
+          />
+          <CardBody className="space-y-6">
+            <div className="grid grid-cols-1 gap-5 md:grid-cols-3">
+              <Input
+                label={t("messages.configPacingMin")}
+                value={pacingMin}
+                onChange={(e) => setPacingMin(e.target.value)}
+                type="number"
+                min={2}
+                max={60}
+                dir="ltr"
+              />
+              <Input
+                label={t("messages.configPacingMax")}
+                value={pacingMax}
+                onChange={(e) => setPacingMax(e.target.value)}
+                type="number"
+                min={3}
+                max={120}
+                dir="ltr"
+              />
+              <Input
+                label={t("messages.configCooldownDays")}
+                value={cooldownDays}
+                onChange={(e) => setCooldownDays(e.target.value)}
+                type="number"
+                min={0}
+                max={90}
+                dir="ltr"
+              />
+            </div>
+
+            <div className="flex justify-end border-t border-line pt-4">
+              <Button
+                onClick={handleSaveConfig}
+                loading={savingConfig}
+                icon={<Settings2 className="size-4" />}
+              >
                 {t("messages.configSave")}
               </Button>
             </div>
@@ -508,12 +834,29 @@ export function MessagesPage() {
         </Card>
       )}
 
-      {canSend && (
+      {/* ────────────────── Tab 4: History Log ────────────────── */}
+      {mainTab === "history" && canSend && (
         <Card>
-          <CardHeader title={t("messages.historyTitle")} />
+          <CardHeader
+            title={
+              <div className="flex items-center gap-2">
+                <History className="size-5 text-neon" />
+                <span>{t("messages.historyTitle")}</span>
+              </div>
+            }
+            action={
+              <div className="w-56">
+                <Input
+                  placeholder={t("messages.searchPlaceholder")}
+                  value={historySearch}
+                  onChange={(e) => setHistorySearch(e.target.value)}
+                />
+              </div>
+            }
+          />
           <CardBody>
-            {history.length === 0 ? (
-              <p className="py-6 text-center text-sm text-subtle">{t("messages.historyEmpty")}</p>
+            {filteredHistory.length === 0 ? (
+              <p className="py-10 text-center text-sm text-subtle">{t("messages.historyEmpty")}</p>
             ) : (
               <DataTable
                 columns={[
@@ -522,7 +865,7 @@ export function MessagesPage() {
                     header: t("messages.labelMember"),
                     render: (r) => (
                       <div>
-                        <span className="font-semibold">{r.member_name}</span>
+                        <span className="font-semibold text-ink">{r.member_name}</span>
                         <span dir="ltr" className="mt-0.5 block text-xs text-faint tabnum">{r.member_code}</span>
                       </div>
                     ),
@@ -530,7 +873,7 @@ export function MessagesPage() {
                   {
                     key: "body",
                     header: t("messages.composeBodyLabel"),
-                    render: (r) => <span className="line-clamp-1 max-w-72 text-[13px] text-subtle">{r.body}</span>,
+                    render: (r) => <span className="line-clamp-2 max-w-sm text-[13px] text-subtle">{r.body}</span>,
                   },
                   {
                     key: "status",
@@ -543,7 +886,7 @@ export function MessagesPage() {
                     render: (r) => <span dir="ltr" className="tabnum text-[13px] text-subtle">{r.created_at}</span>,
                   },
                 ]}
-                data={history.slice(0, 10)}
+                data={filteredHistory}
                 rowKey={(r) => r.id}
                 className="rounded-xl border border-line bg-surface"
               />
@@ -552,6 +895,7 @@ export function MessagesPage() {
         </Card>
       )}
 
+      {/* ────────────────── Compose Modal ────────────────── */}
       <Modal
         open={!!composeTarget}
         onClose={() => setComposeTarget(null)}
@@ -559,29 +903,62 @@ export function MessagesPage() {
         widthClass="max-w-lg"
       >
         {composeTarget && (
-          <div className="space-y-1.5">
-            <p className="text-sm font-semibold text-ink">{composeTarget.memberName}</p>
-            <p dir="ltr" className="tabnum text-xs text-subtle">{composeTarget.phone ?? "—"}</p>
+          <div className="space-y-4">
+            <div className="flex items-center justify-between rounded-xl border border-line bg-panel p-3">
+              <div>
+                <p className="text-sm font-bold text-ink">{composeTarget.memberName}</p>
+                <p dir="ltr" className="tabnum text-xs text-faint">{composeTarget.memberCode}</p>
+              </div>
+              <span dir="ltr" className="font-mono text-xs font-semibold text-subtle">
+                {composeTarget.phone ?? "—"}
+              </span>
+            </div>
+
             <Input
               label={t("messages.composeDiscountLabel")}
               value={composeDiscount}
               onChange={(e) => onComposeDiscountChange(e.target.value)}
               placeholder={t("messages.composeDiscountPlaceholder")}
               dir="ltr"
-              className="tabnum mt-0.5"
             />
-            <label className="mt-4 block text-[13px] font-semibold text-subtle">
-              {t("messages.composeBodyLabel")}
-            </label>
-            <textarea
-              value={body}
-              onChange={(e) => setBody(e.target.value)}
-              placeholder={t("messages.composeBodyPlaceholder")}
-              rows={5}
-              className="mt-1.5 w-full rounded-xl border bg-panel px-3.5 py-3 text-sm text-ink placeholder:text-faint outline-none transition-colors duration-150 focus:border-neon/60 focus:ring-2 focus:ring-neon/15"
-            />
+
+            <div>
+              <div className="flex items-center justify-between pb-1.5">
+                <label className="text-[13px] font-semibold text-subtle">
+                  {t("messages.composeBodyLabel")}
+                </label>
+                <span className="text-[11px] text-faint tabnum">
+                  {body.length} {t("messages.charCount")}
+                </span>
+              </div>
+
+              {/* Clickable placeholder tags toolbar */}
+              <div className="mb-2 flex flex-wrap gap-1.5">
+                {PLACEHOLDERS.slice(0, 6).map((p) => (
+                  <button
+                    key={p.tag}
+                    type="button"
+                    onClick={() => insertPlaceholderInCompose(p.tag)}
+                    className="rounded border border-line bg-panel px-2 py-0.5 text-[11px] font-mono text-subtle hover:border-neon hover:text-neon"
+                    title={p.desc}
+                  >
+                    {p.tag}
+                  </button>
+                ))}
+              </div>
+
+              <textarea
+                ref={composeTextareaRef}
+                value={body}
+                onChange={(e) => setBody(e.target.value)}
+                placeholder={t("messages.composeBodyPlaceholder")}
+                rows={5}
+                className="w-full rounded-xl border border-line bg-panel p-3.5 text-sm text-ink placeholder:text-faint outline-none transition-colors duration-150 focus:border-neon/60 focus:ring-2 focus:ring-neon/15"
+              />
+            </div>
           </div>
         )}
+
         <div className="mt-6 flex flex-wrap items-center justify-between gap-2.5">
           <div className="flex items-center gap-2">
             <Button onClick={handleSend} loading={sending} disabled={sending}>
@@ -608,6 +985,7 @@ export function MessagesPage() {
         </div>
       </Modal>
 
+      {/* Confirm Send All Dialog */}
       <ConfirmDialog
         open={confirmSendAll}
         onClose={() => setConfirmSendAll(false)}

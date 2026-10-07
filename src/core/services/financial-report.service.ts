@@ -1,9 +1,20 @@
 import { requirePermission, type ServiceActor } from "@/core/permissions";
 import type { Db } from "@/db/engine";
+import { listRegisteredBranches } from "./sync.service";
 
 export interface ReportDetailedPage<T> {
   items: T[];
   total: number;
+}
+
+export interface BranchFinancialSummary {
+  branchId: string;
+  branchName: string;
+  revenueMinor: number;
+  refundsMinor: number;
+  expensesMinor: number;
+  netResultMinor: number;
+  paymentCount: number;
 }
 
 export interface PeriodReportQuery {
@@ -12,6 +23,7 @@ export interface PeriodReportQuery {
   refundsPage?: number;
   voidsPage?: number;
   pageSize?: number;
+  branchId?: string;
 }
 
 function clampPage(value: number | undefined): number {
@@ -35,6 +47,7 @@ export interface PeriodReport {
   byPlan: Array<{ planId: string; planName: string; revenueMinor: number; count: number }>;
   expensesByCategory: Array<{ categoryId: string; nameAr: string; amountMinor: number; count: number }>;
   daily: Array<{ dateKey: string; revenueMinor: number; expensesMinor: number }>;
+  byBranch: BranchFinancialSummary[];
   detailedPayments: ReportDetailedPage<{
     id: string; paidAt: string; memberName: string; memberCode: string;
     planName: string; netMinor: number; paidMinor: number; remainingMinor: number;
@@ -75,21 +88,30 @@ export function getPeriodReport(
   const refundsPage = pageOf(query?.refundsPage);
   const voidsPage = pageOf(query?.voidsPage);
 
+  const targetBranch = query?.branchId && query.branchId !== "all" ? query.branchId : undefined;
+  const payBranchClause = targetBranch ? " AND COALESCE(p.branch_id, 'main') = ?" : "";
+  const expBranchClause = targetBranch ? " AND COALESCE(e.branch_id, 'main') = ?" : "";
+  const payBranchParams = targetBranch ? [targetBranch] : [];
+  const expBranchParams = targetBranch ? [targetBranch] : [];
+
   const totals = db.first<{ revenue: number; pay_count: number }>(
     `SELECT COALESCE(SUM(p.paid_amount_minor), 0) AS revenue, COUNT(*) AS pay_count
      FROM payments p
-     WHERE p.status IN ('partial', 'paid', 'refunded') AND p.paid_at BETWEEN ? AND ?
+     WHERE p.status IN ('partial', 'paid', 'refunded') AND p.paid_at BETWEEN ? AND ?${payBranchClause}
      AND (p.subscription_id IS NULL OR p.subscription_id NOT IN (SELECT id FROM member_subscriptions WHERE status = 'cancelled'))`,
-    [from, to],
+    [from, to, ...payBranchParams],
   );
   const refunds = db.first<{ total: number }>(
-    `SELECT COALESCE(SUM(amount_minor), 0) AS total FROM payment_refunds WHERE created_at BETWEEN ? AND ?`,
-    [from, to],
+    `SELECT COALESCE(SUM(pr.amount_minor), 0) AS total
+     FROM payment_refunds pr
+     JOIN payments p ON p.id = pr.payment_id
+     WHERE pr.created_at BETWEEN ? AND ?${payBranchClause}`,
+    [from, to, ...payBranchParams],
   );
   const expenses = db.first<{ total: number }>(
     `SELECT COALESCE(SUM(CASE WHEN e.status = 'active' THEN e.amount_minor ELSE 0 END), 0) AS total
-     FROM expenses e WHERE e.expense_date BETWEEN ? AND ?`,
-    [fromKey, toKey],
+     FROM expenses e WHERE e.expense_date BETWEEN ? AND ?${expBranchClause}`,
+    [fromKey, toKey, ...expBranchParams],
   );
 
   const revenueMinor = Number(totals?.revenue ?? 0);
@@ -105,10 +127,10 @@ export function getPeriodReport(
   }>(
     `SELECT p.method_code, pm.label_ar AS label_ar, COALESCE(SUM(p.paid_amount_minor), 0) AS revenue, COUNT(*) AS cnt
      FROM payments p JOIN payment_methods pm ON pm.code = p.method_code
-     WHERE p.status IN ('partial', 'paid', 'refunded') AND p.paid_at BETWEEN ? AND ?
+     WHERE p.status IN ('partial', 'paid', 'refunded') AND p.paid_at BETWEEN ? AND ?${payBranchClause}
      AND (p.subscription_id IS NULL OR p.subscription_id NOT IN (SELECT id FROM member_subscriptions WHERE status = 'cancelled'))
      GROUP BY p.method_code ORDER BY revenue DESC`,
-    [from, to],
+    [from, to, ...payBranchParams],
   );
 
   const byPlanRows = db.all<{ plan_id: string; plan_name: string | null; revenue: number; cnt: number }>(
@@ -116,10 +138,10 @@ export function getPeriodReport(
      FROM payments p
      JOIN member_subscriptions s ON s.id = p.subscription_id
      JOIN membership_plans pl ON pl.id = s.plan_id
-     WHERE p.status IN ('partial', 'paid', 'refunded') AND p.paid_at BETWEEN ? AND ?
+     WHERE p.status IN ('partial', 'paid', 'refunded') AND p.paid_at BETWEEN ? AND ?${payBranchClause}
      AND s.status != 'cancelled'
      GROUP BY s.plan_id ORDER BY revenue DESC`,
-    [from, to],
+    [from, to, ...payBranchParams],
   );
 
   const expenseCategoryRows = db.all<{
@@ -130,31 +152,33 @@ export function getPeriodReport(
   }>(
     `SELECT e.category_id, c.name_ar AS name_ar, COALESCE(SUM(e.amount_minor), 0) AS total, COUNT(*) AS cnt
      FROM expenses e JOIN expense_categories c ON c.id = e.category_id
-     WHERE e.status = 'active' AND e.expense_date BETWEEN ? AND ?
+     WHERE e.status = 'active' AND e.expense_date BETWEEN ? AND ?${expBranchClause}
      GROUP BY e.category_id ORDER BY total DESC`,
-    [fromKey, toKey],
+    [fromKey, toKey, ...expBranchParams],
   );
 
   const dailyRevenue = db.all<{ day: string; total: number }>(
-    `SELECT substr(paid_at, 1, 10) AS day, COALESCE(SUM(paid_amount_minor), 0) AS total
-     FROM payments
-     WHERE status IN ('partial', 'paid', 'refunded') AND paid_at BETWEEN ? AND ?
-     AND (subscription_id IS NULL OR subscription_id NOT IN (SELECT id FROM member_subscriptions WHERE status = 'cancelled'))
+    `SELECT substr(p.paid_at, 1, 10) AS day, COALESCE(SUM(p.paid_amount_minor), 0) AS total
+     FROM payments p
+     WHERE p.status IN ('partial', 'paid', 'refunded') AND p.paid_at BETWEEN ? AND ?${payBranchClause}
+     AND (p.subscription_id IS NULL OR p.subscription_id NOT IN (SELECT id FROM member_subscriptions WHERE status = 'cancelled'))
      GROUP BY day`,
-    [from, to],
+    [from, to, ...payBranchParams],
   );
   const dailyRefunds = db.all<{ day: string; total: number }>(
-    `SELECT substr(created_at, 1, 10) AS day, COALESCE(SUM(amount_minor), 0) AS total
-     FROM payment_refunds WHERE created_at BETWEEN ? AND ?
+    `SELECT substr(pr.created_at, 1, 10) AS day, COALESCE(SUM(pr.amount_minor), 0) AS total
+     FROM payment_refunds pr
+     JOIN payments p ON p.id = pr.payment_id
+     WHERE pr.created_at BETWEEN ? AND ?${payBranchClause}
      GROUP BY day`,
-    [from, to],
+    [from, to, ...payBranchParams],
   );
   const dailyExpenses = db.all<{ day: string; total: number }>(
-    `SELECT expense_date AS day, COALESCE(SUM(amount_minor), 0) AS total
-     FROM expenses
-     WHERE status = 'active' AND expense_date BETWEEN ? AND ?
+    `SELECT e.expense_date AS day, COALESCE(SUM(e.amount_minor), 0) AS total
+     FROM expenses e
+     WHERE e.status = 'active' AND e.expense_date BETWEEN ? AND ?${expBranchClause}
      GROUP BY day`,
-    [fromKey, toKey],
+    [fromKey, toKey, ...expBranchParams],
   );
 
   const revenueByDay = new Map(dailyRevenue.map((r) => [r.day, Number(r.total)]));
@@ -190,18 +214,18 @@ export function getPeriodReport(
      JOIN payment_methods pm ON pm.code = p.method_code
      LEFT JOIN member_subscriptions s ON s.id = p.subscription_id
      LEFT JOIN membership_plans pl ON pl.id = s.plan_id
-     WHERE p.status IN ('partial', 'paid', 'refunded', 'voided') AND p.paid_at BETWEEN ? AND ?
+     WHERE p.status IN ('partial', 'paid', 'refunded', 'voided') AND p.paid_at BETWEEN ? AND ?${payBranchClause}
      AND (p.subscription_id IS NULL OR p.subscription_id NOT IN (SELECT id FROM member_subscriptions WHERE status = 'cancelled'))
      ORDER BY p.paid_at DESC
      LIMIT ? OFFSET ?`,
-    [from, to, pageSize, offsetOf(paymentsPage)],
+    [from, to, ...payBranchParams, pageSize, offsetOf(paymentsPage)],
   );
   const detailedPaymentsTotal = Number(
     db.scalar(
       `SELECT COUNT(*) FROM payments p
-       WHERE p.status IN ('partial', 'paid', 'refunded', 'voided') AND p.paid_at BETWEEN ? AND ?
+       WHERE p.status IN ('partial', 'paid', 'refunded', 'voided') AND p.paid_at BETWEEN ? AND ?${payBranchClause}
        AND (p.subscription_id IS NULL OR p.subscription_id NOT IN (SELECT id FROM member_subscriptions WHERE status = 'cancelled'))`,
-      [from, to],
+      [from, to, ...payBranchParams],
     ) ?? 0,
   );
 
@@ -214,13 +238,13 @@ export function getPeriodReport(
      FROM expenses e
      JOIN expense_categories c ON c.id = e.category_id
      JOIN payment_methods pm ON pm.code = e.method_code
-     WHERE e.expense_date BETWEEN ? AND ?
+     WHERE e.expense_date BETWEEN ? AND ?${expBranchClause}
      ORDER BY e.expense_date DESC
      LIMIT ? OFFSET ?`,
-    [fromKey, toKey, pageSize, offsetOf(expensesPage)],
+    [fromKey, toKey, ...expBranchParams, pageSize, offsetOf(expensesPage)],
   );
   const detailedExpensesTotal = Number(
-    db.scalar("SELECT COUNT(*) FROM expenses WHERE expense_date BETWEEN ? AND ?", [fromKey, toKey]) ?? 0,
+    db.scalar(`SELECT COUNT(*) FROM expenses e WHERE e.expense_date BETWEEN ? AND ?${expBranchClause}`, [fromKey, toKey, ...expBranchParams]) ?? 0,
   );
 
   const detailedRefunds = db.all<{
@@ -233,13 +257,18 @@ export function getPeriodReport(
      JOIN payments p ON p.id = pr.payment_id
      JOIN members m ON m.id = p.member_id
      JOIN payment_methods pm ON pm.code = p.method_code
-     WHERE pr.created_at BETWEEN ? AND ?
+     WHERE pr.created_at BETWEEN ? AND ?${payBranchClause}
      ORDER BY pr.created_at DESC
      LIMIT ? OFFSET ?`,
-    [from, to, pageSize, offsetOf(refundsPage)],
+    [from, to, ...payBranchParams, pageSize, offsetOf(refundsPage)],
   );
   const detailedRefundsTotal = Number(
-    db.scalar("SELECT COUNT(*) FROM payment_refunds WHERE created_at BETWEEN ? AND ?", [from, to]) ?? 0,
+    db.scalar(
+      `SELECT COUNT(*) FROM payment_refunds pr
+       JOIN payments p ON p.id = pr.payment_id
+       WHERE pr.created_at BETWEEN ? AND ?${payBranchClause}`,
+      [from, to, ...payBranchParams],
+    ) ?? 0,
   );
 
   const detailedVoids = db.all<{
@@ -251,14 +280,61 @@ export function getPeriodReport(
      FROM payments p
      JOIN members m ON m.id = p.member_id
      JOIN payment_methods pm ON pm.code = p.method_code
-     WHERE p.status = 'voided' AND p.voided_at BETWEEN ? AND ?
+     WHERE p.status = 'voided' AND p.voided_at BETWEEN ? AND ?${payBranchClause}
      ORDER BY p.voided_at DESC
      LIMIT ? OFFSET ?`,
-    [from, to, pageSize, offsetOf(voidsPage)],
+    [from, to, ...payBranchParams, pageSize, offsetOf(voidsPage)],
   );
   const detailedVoidsTotal = Number(
-    db.scalar("SELECT COUNT(*) FROM payments WHERE status = 'voided' AND voided_at BETWEEN ? AND ?", [from, to]) ?? 0,
+    db.scalar(`SELECT COUNT(*) FROM payments p WHERE p.status = 'voided' AND p.voided_at BETWEEN ? AND ?${payBranchClause}`, [from, to, ...payBranchParams]) ?? 0,
   );
+
+  const branchesList = listRegisteredBranches(db);
+  const byBranch: BranchFinancialSummary[] = branchesList.map((b) => {
+    const bRevenue = Number(
+      db.scalar(
+        `SELECT COALESCE(SUM(p.paid_amount_minor), 0) FROM payments p
+         WHERE p.status IN ('partial', 'paid', 'refunded') AND p.paid_at BETWEEN ? AND ?
+         AND COALESCE(p.branch_id, 'main') = ?
+         AND (p.subscription_id IS NULL OR p.subscription_id NOT IN (SELECT id FROM member_subscriptions WHERE status = 'cancelled'))`,
+        [from, to, b.branchId],
+      ) ?? 0,
+    );
+    const bPayCount = Number(
+      db.scalar(
+        `SELECT COUNT(*) FROM payments p
+         WHERE p.status IN ('partial', 'paid', 'refunded') AND p.paid_at BETWEEN ? AND ?
+         AND COALESCE(p.branch_id, 'main') = ?
+         AND (p.subscription_id IS NULL OR p.subscription_id NOT IN (SELECT id FROM member_subscriptions WHERE status = 'cancelled'))`,
+        [from, to, b.branchId],
+      ) ?? 0,
+    );
+    const bRefunds = Number(
+      db.scalar(
+        `SELECT COALESCE(SUM(pr.amount_minor), 0) FROM payment_refunds pr
+         JOIN payments p ON p.id = pr.payment_id
+         WHERE pr.created_at BETWEEN ? AND ? AND COALESCE(p.branch_id, 'main') = ?`,
+        [from, to, b.branchId],
+      ) ?? 0,
+    );
+    const bExpenses = Number(
+      db.scalar(
+        `SELECT COALESCE(SUM(CASE WHEN e.status = 'active' THEN e.amount_minor ELSE 0 END), 0)
+         FROM expenses e WHERE e.expense_date BETWEEN ? AND ? AND COALESCE(e.branch_id, 'main') = ?`,
+        [fromKey, toKey, b.branchId],
+      ) ?? 0,
+    );
+
+    return {
+      branchId: b.branchId,
+      branchName: b.branchName,
+      revenueMinor: bRevenue,
+      refundsMinor: bRefunds,
+      expensesMinor: bExpenses,
+      netResultMinor: bRevenue - bRefunds - bExpenses,
+      paymentCount: bPayCount,
+    };
+  });
 
   return {
     revenueMinor,
@@ -286,6 +362,7 @@ export function getPeriodReport(
       count: Number(r.cnt),
     })),
     daily,
+    byBranch,
     detailedPayments: {
       items: detailedPayments.map((r) => ({
         id: r.id,

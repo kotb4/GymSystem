@@ -1,4 +1,5 @@
 import * as membersService from "../../src/core/services/members.service";
+import * as bulkImportService from "../../src/core/services/bulk-import.service";
 import { requirePermission } from "../../src/core/permissions";
 import type { Db } from "../../src/db/engine";
 import type { ServiceActor } from "../../src/core/permissions";
@@ -97,4 +98,5 @@ export const members = defineService({
     }) as Fn,
     actor: true,
   },
+  bulkImportMembers: a(bulkImportService.bulkImportMembers as Fn),
 });

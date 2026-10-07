@@ -1,8 +1,10 @@
 import { useState } from "react";
-import { useSearchParams } from "react-router-dom";
+import { Link, useSearchParams } from "react-router-dom";
+import { Gift, MessagesSquare, Share2 } from "lucide-react";
 import { useAuth } from "@/contexts/auth-context";
 import { useT } from "@/i18n";
-import { Card, CardHeader } from "@/components/ui/card";
+import { Card } from "@/components/ui/card";
+import { Button } from "@/components/ui/button";
 import { Tabs } from "@/components/ui/tabs";
 import { LeadsTab } from "@/pages/leads-tab";
 import { TrialsTab } from "@/pages/trials-tab";
@@ -27,12 +29,40 @@ export function CrmPage() {
   return (
     <div className="space-y-4">
       <Card>
-        <CardHeader
-          title={t("crmPage.title")}
-          description={t("crmPage.leadsTrialsSubtitle")}
-        />
+        <div className="flex flex-col gap-4 p-5 sm:flex-row sm:items-center sm:justify-between">
+          <div>
+            <h2 className="text-xl font-extrabold">{t("crmPage.title")}</h2>
+            <p className="text-[13px] text-subtle">{t("crmPage.leadsTrialsSubtitle")}</p>
+          </div>
+          <div className="flex flex-wrap items-center gap-2">
+            {hasPermission("messages.view") && (
+              <Link to="/messages">
+                <Button variant="secondary" size="sm">
+                  <MessagesSquare className="size-4 text-emerald-400" />
+                  {t("nav.messages")}
+                </Button>
+              </Link>
+            )}
+            {hasPermission("loyalty.manage") && (
+              <Link to="/loyalty">
+                <Button variant="secondary" size="sm">
+                  <Gift className="size-4" />
+                  {t("nav.loyalty")}
+                </Button>
+              </Link>
+            )}
+            {hasPermission("referrals.view") && (
+              <Link to="/referrals">
+                <Button variant="secondary" size="sm">
+                  <Share2 className="size-4" />
+                  {t("nav.referrals")}
+                </Button>
+              </Link>
+            )}
+          </div>
+        </div>
         {tabItems.length > 1 && (
-          <div className="px-5 pb-1">
+          <div className="border-t border-line/60 px-5 py-3">
             <Tabs items={tabItems} value={tab} onChange={setTab} />
           </div>
         )}

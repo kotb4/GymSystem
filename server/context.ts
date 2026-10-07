@@ -5,7 +5,7 @@ import { shouldSeedDemo, seedDemoData } from "../src/db/seed";
 import { loadPermissionsCache } from "../src/core/services/permissions.service";
 import { NodeSqliteDriver } from "./driver";
 import { resolveAppDirs, type AppDirs } from "./config";
-import { existsSync, renameSync, unlinkSync, createWriteStream } from "node:fs";
+import { existsSync, renameSync, unlinkSync, createWriteStream, rmSync, readdirSync, statSync } from "node:fs";
 import type { WriteStream } from "node:fs";
 import path from "node:path";
 import { setFilesRoot, sweepPendingDeletes } from "./files.service";
@@ -61,6 +61,25 @@ export function flushLogging(callback?: () => void): void {
     callback();
   }
 }
+
+export function clearServerLogs(): { success: boolean; freedBytes: number } {
+  let freedBytes = 0;
+  try {
+    const dirs = context?.dirs ?? resolveAppDirs();
+    const logFile = path.join(dirs.logsDir, "server.log");
+    flushLogging();
+    if (existsSync(logFile)) {
+      freedBytes = statSync(logFile).size;
+      unlinkSync(logFile);
+    }
+    initLogging(dirs.logsDir);
+    logLine(`Server logs cleared by developer. Freed ${freedBytes} bytes.`);
+    return { success: true, freedBytes };
+  } catch (error) {
+    return { success: false, freedBytes: 0 };
+  }
+}
+
 
 export function logLine(message: string): void {
   const line = `${new Date().toISOString()} ${message}\n`;
@@ -187,4 +206,87 @@ export function adoptDatabaseFile(candidatePath: string): void {
 
   openDatabase();
   setMaintenanceMode(false);
+}
+
+/**
+ * Developer Emergency Data Wipe:
+ * Closes database and logging, completely purges Database/, Files/, Backups/ contents,
+ * cleans up root contents, then re-opens a squeaky-clean empty database.
+ */
+export function purgeEntireDataDirectory(): { success: boolean; dataDir: string } {
+  const ctx = context;
+  if (!ctx) throw new Error("database not opened yet");
+
+  setMaintenanceMode(true);
+  try {
+    ctx.driver.close();
+  } catch {
+    /* best effort */
+  }
+  flushLogging();
+  context = null;
+
+  const { dirs } = ctx;
+
+  try {
+    // 1. Purge Files directory
+    if (existsSync(dirs.filesDir)) {
+      try {
+        rmSync(dirs.filesDir, { recursive: true, force: true });
+      } catch {
+        /* best effort */
+      }
+    }
+
+    // 2. Purge Backups directory
+    if (existsSync(dirs.backupsDir)) {
+      try {
+        rmSync(dirs.backupsDir, { recursive: true, force: true });
+      } catch {
+        /* best effort */
+      }
+    }
+
+    // 3. Purge Database directory & sqlite sidecars
+    if (existsSync(dirs.databaseDir)) {
+      try {
+        rmSync(dirs.databaseDir, { recursive: true, force: true });
+      } catch {
+        /* best effort */
+      }
+    }
+
+    // 4. Clean any residual loose files in root except config
+    if (existsSync(dirs.root)) {
+      for (const entry of readdirSync(dirs.root)) {
+        if (entry.toLowerCase() === "config") continue;
+        const target = path.join(dirs.root, entry);
+        try {
+          rmSync(target, { recursive: true, force: true });
+        } catch {
+          /* best effort */
+        }
+      }
+    }
+  } catch (error) {
+    logLine(`purgeEntireDataDirectory failed partially: ${String(error)}`);
+  }
+
+  // Re-open clean database with default migrations
+  openDatabase();
+  setMaintenanceMode(false);
+
+  return { success: true, dataDir: dirs.root };
+}
+
+/** Close current database handle and reset context module singleton. */
+export function closeDatabase(): void {
+  if (!context) return;
+  try {
+    context.driver.close();
+  } catch {
+    /* best effort */
+  }
+  flushLogging();
+  context = null;
 }

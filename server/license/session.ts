@@ -355,7 +355,7 @@ const FULL_LOCK_ALLOWLIST: ReadonlySet<string> = new Set([
   "auth.needsSetup",
 ]);
 
-const READONLY_ALLOWLIST: ReadonlySet<string> = new Set([
+export const READONLY_ALLOWLIST: ReadonlySet<string> = new Set([
   "license.status",
   "license.activate",
   "license.deactivate",
@@ -390,6 +390,10 @@ const READONLY_ALLOWLIST: ReadonlySet<string> = new Set([
   "cards.nextBarcodePreview",
   "cards.listCards",
   "cards.listMemberCards",
+  // Producing/listing a receipt is a read-side action, so it stays available in
+  // read-only / expired sessions. Sending (a write) is intentionally excluded.
+  "pdf.generatePaymentReceipt",
+  "pdf.listPdfDeliveries",
   "plans.listPlans",
   "packages.listPackages",
   "packages.getPackage",
@@ -534,6 +538,62 @@ export interface DeveloperActionResult {
   status: LicensePublicStatus;
 }
 
+export function resetClockTamper(targetDatabase?: Db | null): void {
+  const now = Date.now();
+  current.lastActive = now;
+  if (dir) persistCurrent();
+  const targetDb = targetDatabase ?? db;
+  if (targetDb) {
+    try {
+      targetDb.run("UPDATE license_activation SET last_active = ? WHERE hwid = ?", [
+        now,
+        currentHwid,
+      ]);
+      recordAudit(targetDb, { userId: "developer", username: "developer" }, "DEVELOPER_ACTION_EXECUTED", "license", currentHwid, {
+        action: "reset_clock",
+      });
+    } catch {
+      /* best effort */
+    }
+  }
+}
+
+export function grantEmergencyGrace(days = 7, targetDatabase?: Db | null): { days: number; expiresAt: number } {
+  const baseTime = Math.max(Date.now(), current.payload?.expiresAt ?? Date.now());
+  const newExpiresAt = baseTime + days * 24 * 60 * 60 * 1000;
+  if (current.payload) {
+    current.payload.expiresAt = newExpiresAt;
+  } else {
+    current.payload = {
+      hwid: currentHwid,
+      gym: "Emergency Access",
+      issuedAt: Date.now(),
+      expiresAt: newExpiresAt,
+      tier: "full",
+    };
+    current.filePresent = true;
+    current.signatureValid = true;
+  }
+  if (dir) persistCurrent();
+  const targetDb = targetDatabase ?? db;
+  if (targetDb) {
+    try {
+      targetDb.run("UPDATE license_activation SET expires_at = ? WHERE hwid = ?", [
+        newExpiresAt,
+        currentHwid,
+      ]);
+      recordAudit(targetDb, { userId: "developer", username: "developer" }, "DEVELOPER_ACTION_EXECUTED", "license", currentHwid, {
+        action: "emergency_grace",
+        days,
+        expiresAt: newExpiresAt,
+      });
+    } catch {
+      /* best effort */
+    }
+  }
+  return { days, expiresAt: newExpiresAt };
+}
+
 /**
  * Execute a cryptographically signed developer emergency action token.
  * Validates Ed25519 signature, checks target HWID and expiration, then executes
@@ -568,22 +628,7 @@ export async function executeDeveloperAction(
 
   switch (payload.action) {
     case "reset_clock": {
-      const now = Date.now();
-      current.lastActive = now;
-      if (dir) persistCurrent();
-      if (database) {
-        try {
-          database.run("UPDATE license_activation SET last_active = ? WHERE hwid = ?", [
-            now,
-            currentHwid,
-          ]);
-          recordAudit(database, actorRef, "DEVELOPER_ACTION_EXECUTED", "license", currentHwid, {
-            action: "reset_clock",
-          });
-        } catch {
-          /* best effort */
-        }
-      }
+      resetClockTamper(database);
       return {
         action: "reset_clock",
         success: true,
@@ -634,37 +679,7 @@ export async function executeDeveloperAction(
 
     case "emergency_grace": {
       const days = Number(payload.params?.graceDays ?? 7);
-      const baseTime = Math.max(Date.now(), current.payload?.expiresAt ?? Date.now());
-      const newExpiresAt = baseTime + days * 24 * 60 * 60 * 1000;
-      if (current.payload) {
-        current.payload.expiresAt = newExpiresAt;
-      } else {
-        current.payload = {
-          hwid: currentHwid,
-          gym: "Emergency Access",
-          issuedAt: Date.now(),
-          expiresAt: newExpiresAt,
-          tier: "full",
-        };
-        current.filePresent = true;
-        current.signatureValid = true;
-      }
-      if (dir) persistCurrent();
-      if (database) {
-        try {
-          database.run("UPDATE license_activation SET expires_at = ? WHERE hwid = ?", [
-            newExpiresAt,
-            currentHwid,
-          ]);
-          recordAudit(database, actorRef, "DEVELOPER_ACTION_EXECUTED", "license", currentHwid, {
-            action: "emergency_grace",
-            days,
-            expiresAt: newExpiresAt,
-          });
-        } catch {
-          /* best effort */
-        }
-      }
+      grantEmergencyGrace(days, database);
       return {
         action: "emergency_grace",
         success: true,

@@ -1,0 +1,18 @@
+services:
+  - type: web
+    name: gymsystem-demo
+    env: docker
+    plan: free
+    region: frankfurt
+    dockerfilePath: ./demo-standalone/Dockerfile
+    envVars:
+      - key: GYMSYSTEM_HOST
+        value: 0.0.0.0
+      - key: GYMSYSTEM_PORT
+        value: 8890
+      - key: GYMSYSTEM_NO_OPEN
+        value: "1"
+      - key: GYM_SEED_DEMO
+        value: "1"
+      - key: NODE_ENV
+        value: production

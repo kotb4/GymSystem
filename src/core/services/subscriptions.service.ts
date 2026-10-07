@@ -1,4 +1,4 @@
-﻿import {
+import {
   addDaysKey,
   calcSubscriptionEndDate,
   diffDaysKeys,
@@ -20,6 +20,7 @@ import { getPlanRow } from "./plans.service";
 import { getPackageRow, type PackageRow } from "./packages.service";
 import { applyEarnRule } from "./loyalty.service";
 import { insertLedgerEntry } from "./payments.service";
+import { getLocalBranchId } from "@/core/branch";
 
 export type SubscriptionRowStatus = "active" | "suspended" | "cancelled";
 export type EffectiveSubscriptionStatus = "active" | "upcoming" | "expired" | "suspended" | "cancelled" | "frozen";
@@ -39,6 +40,7 @@ export interface SubscriptionRow extends Row {
   resume_date: string | null;
   notes: string | null;
   created_by: string | null;
+  branch_id: string | null;
   created_at: string;
   updated_at: string;
   package_id: string | null;
@@ -51,6 +53,9 @@ export interface SubscriptionRow extends Row {
   package_freeze_allowance_days: number;
   package_allowed_freezes: number;
   package_pt_sessions: number;
+  invitations_total: number | null;
+  invitations_used: number | null;
+  promo_code_id: string | null;
 }
 
 export type SubscriptionKind = "time" | "sessions" | "open";
@@ -68,10 +73,14 @@ export interface Subscription extends Row {
   kind: SubscriptionKind;
   sessionsTotal: number | null;
   sessionsUsed: number;
+  invitationsTotal: number;
+  invitationsUsed: number;
+  promoCodeId: string | null;
   frozenAt: string | null;
   frozenDays: number;
   resumeDate: string | null;
   notes: string | null;
+  branchId: string | null;
   createdAt: string;
 }
 
@@ -83,6 +92,7 @@ export interface CreateSubscriptionInput {
   notes?: string | null;
   /** When set, the package's full config is snapshotted onto the new row. */
   packageId?: string;
+  promoCodeId?: string | null;
 }
 
 export interface EffectiveStatusInput {
@@ -125,10 +135,14 @@ function toSubscription(
     kind,
     sessionsTotal: row.sessions_total == null ? null : Number(row.sessions_total),
     sessionsUsed: Number(row.sessions_used ?? 0),
+    invitationsTotal: Math.max(0, Number(row.invitations_total ?? 0)),
+    invitationsUsed: Math.max(0, Number(row.invitations_used ?? 0)),
+    promoCodeId: row.promo_code_id ?? null,
     frozenAt: row.frozen_at ?? null,
     frozenDays: Number(row.frozen_days ?? 0),
     resumeDate: row.resume_date ?? null,
     notes: row.notes,
+    branchId: row.branch_id ?? "main",
     createdAt: row.created_at,
   };
 }
@@ -146,7 +160,7 @@ function planNameFor(db: Db, planId: string): { name: string; kind: Subscription
   return row ? { name: row.name, kind: (row.kind ?? "time") as SubscriptionKind } : null;
 }
 
-function getSubscriptionRow(db: Db, subscriptionId: string): SubscriptionRow | null {
+export function getSubscriptionRow(db: Db, subscriptionId: string): SubscriptionRow | null {
 return db.first<SubscriptionRow>(
 "SELECT * FROM member_subscriptions WHERE id = ?",
 [subscriptionId],
@@ -209,7 +223,9 @@ export async function createSubscription(
   const price =
     input.price !== undefined && Number.isFinite(input.price)
       ? Math.max(0, input.price)
-      : Number(plan.price);
+      : packageRow != null
+        ? Math.round(Number(packageRow.price)) / 100
+        : Number(plan.price);
   const kind = (plan.kind ?? "time") as "time" | "sessions" | "open";
   const unlimitedVisits = packageRow != null && Number(packageRow.unlimited_visits) === 1;
   const sessionsTotal =
@@ -224,7 +240,7 @@ export async function createSubscription(
   // so a concurrent create for the same member can never pass the overlap check
   // between the check query and the INSERT that both request A and B would
   // otherwise race through.
-  await db.transaction(async () => {
+  return db.transaction(() => {
     const overlap = findOverlap(db, input.memberId, startDate, endDate);
     if (overlap) {
       throw errConflict("errors.subscriptionOverlap", {
@@ -233,11 +249,12 @@ export async function createSubscription(
       });
     }
 
+    const invitationsTotal = Math.max(0, Number(plan.invitations_count ?? 0));
     db.run(
-      `INSERT INTO member_subscriptions (id, member_id, plan_id, start_date, end_date, price, status, sessions_total, sessions_used, notes, created_by, created_at, updated_at,
-        package_id, package_name, package_model, package_duration_days, package_price, package_visit_limit, package_unlimited_visits, package_freeze_allowance_days, package_allowed_freezes, package_pt_sessions)
-VALUES (?, ?, ?, ?, ?, ?, 'active', ?, 0, ?, ?, ?, ?,
-        ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+      `INSERT INTO member_subscriptions (id, member_id, plan_id, start_date, end_date, price, status, sessions_total, sessions_used, invitations_total, invitations_used, promo_code_id, notes, created_by, created_at, updated_at,
+        package_id, package_name, package_model, package_duration_days, package_price, package_visit_limit, package_unlimited_visits, package_freeze_allowance_days, package_allowed_freezes, package_pt_sessions, branch_id)
+VALUES (?, ?, ?, ?, ?, ?, 'active', ?, 0, ?, 0, ?, ?, ?, ?, ?,
+        ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
       [
         id,
         input.memberId,
@@ -246,6 +263,8 @@ VALUES (?, ?, ?, ?, ?, ?, 'active', ?, 0, ?, ?, ?, ?,
         endDate,
         price,
         sessionsTotal,
+        invitationsTotal,
+        input.promoCodeId ?? null,
         input.notes?.trim() || null,
         actor.userId,
         nowStamp(),
@@ -260,18 +279,20 @@ VALUES (?, ?, ?, ?, ?, ?, 'active', ?, 0, ?, ?, ?, ?,
         packageRow ? Number(packageRow.freeze_allowance_days ?? 0) : 0,
         packageRow ? Number(packageRow.allowed_freezes ?? 0) : 0,
         packageRow ? Number(packageRow.pt_sessions ?? 0) : 0,
+        getLocalBranchId(db),
       ],
     );
     recordAudit(db, actor, "SUBSCRIPTION_CREATED", "subscription", id, {
       memberCode: member.member_code,
       planName: plan.name,
       startDate,
+      invitationsTotal,
       endDate,
       ...(packageRow ? { packageId: packageRow.id } : {}),
     });
-  });
 
-  return toSubscription(getSubscriptionRow(db, id)!, plan.name, todayKey(), (plan.kind ?? "time") as SubscriptionKind);
+    return toSubscription(getSubscriptionRow(db, id)!, plan.name, todayKey(), (plan.kind ?? "time") as SubscriptionKind);
+  });
 }
 
 export interface UpdateSubscriptionPatch {
@@ -441,6 +462,7 @@ export interface SubscriptionListQuery {
   pageSize?: number;
   effective?: "all" | EffectiveSubscriptionStatus;
   memberId?: string;
+  search?: string;
 }
 
 export interface SubscriptionWithMember extends Subscription {
@@ -479,6 +501,11 @@ export function listSubscriptions(
   if (query.memberId) {
     conditions.push("s.member_id = ?");
     params.push(query.memberId);
+  }
+  if (query.search && query.search.trim() !== "") {
+    const term = `%${query.search.trim().toLowerCase()}%`;
+    conditions.push("(LOWER(m.full_name) LIKE ? OR LOWER(m.member_code) LIKE ? OR m.phone LIKE ?)");
+    params.push(term, term, term);
   }
 
   const scope = departmentScopeCondition(actor, "m");

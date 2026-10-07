@@ -22,6 +22,7 @@ export const PERMS = [
   "cards.report_lost",
   "cards.block",
   "cards.send",
+  "cards.delete",
   "plans.view",
   "plans.create",
   "plans.edit",
@@ -80,6 +81,8 @@ export const PERMS = [
   "employees.purge",
   "store.purge",
   "cash.purge",
+  "classes.purge",
+  "trainers.purge",
   "hr.view",
   "hr.manage",
   "hr.approve_leaves",
@@ -100,6 +103,12 @@ export const PERMS = [
   "loyalty.manage",
   "messages.view",
   "messages.send",
+  "pdf.receipt",
+  "invitations.manage",
+  "shifts.view",
+  "shifts.manage",
+  "promo.view",
+  "promo.manage",
 ] as const;
 
 export type Permission = (typeof PERMS)[number];
@@ -120,6 +129,7 @@ const MANAGER_PERMS: readonly Permission[] = [
   "cards.report_lost",
   "cards.block",
   "cards.send",
+  "cards.delete",
   "plans.view",
   "plans.create",
   "plans.edit",
@@ -159,8 +169,10 @@ const MANAGER_PERMS: readonly Permission[] = [
   "classes.view",
   "classes.manage",
   "classes.checkin",
+  "classes.purge",
   "trainers.view",
   "trainers.manage",
+  "trainers.purge",
   "training.manage",
   "employees.view",
   "employees.manage",
@@ -193,6 +205,12 @@ const MANAGER_PERMS: readonly Permission[] = [
   "loyalty.manage",
   "messages.view",
   "messages.send",
+  "pdf.receipt",
+  "invitations.manage",
+  "shifts.view",
+  "shifts.manage",
+  "promo.view",
+  "promo.manage",
 ];
 
 const RECEPTION_PERMS: readonly Permission[] = [
@@ -226,6 +244,11 @@ const RECEPTION_PERMS: readonly Permission[] = [
   "referrals.view",
   "loyalty.view",
   "messages.view",
+  "pdf.receipt",
+  "invitations.manage",
+  "shifts.view",
+  "shifts.manage",
+  "promo.view",
 ];
 
 const TRAINER_PERMS: readonly Permission[] = [
@@ -252,6 +275,7 @@ export interface ServiceActor extends ActorLike {
   username: string;
   /** Department scoping for data isolation; 'general' sees everything allowed by role. */
   department?: DepartmentScope;
+  isDeveloper?: boolean;
 }
 
 let dbGrants: Record<string, ReadonlySet<Permission>> | null = null;

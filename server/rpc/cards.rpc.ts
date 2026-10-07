@@ -12,6 +12,8 @@ export const cards = defineService({
   listCards: a(cardsService.listCards as Fn),
   listMemberCards: a(cardsService.listMemberCards as Fn),
   registerCardsBulk: a(cardsService.registerCardsBulk as Fn),
+  deleteCard: a(cardsService.deleteCard as Fn),
+  createVirtualCard: a(cardsService.createVirtualCard as Fn),
   queueCardDelivery: a(cardDeliveryService.queueCardDelivery as Fn),
   sendPendingCardDeliveries: a(cardDeliveryService.sendPendingCardDeliveries as Fn),
   listCardDeliveries: a(cardDeliveryService.listCardDeliveries as Fn),

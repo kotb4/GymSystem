@@ -21,6 +21,26 @@ Shared context layout:
 
 ---
 
+## ⚡ Agent Quick-Start & 5 Golden Rules
+
+If you are a new AI agent (Claude Code, Cursor, OpenCode, Antigravity, or other) starting in this repository, follow these 5 golden rules:
+
+1. **Local SQLite is the Single Source of Truth**: All data lives on disk in SQLite (`%LOCALAPPDATA%\GymSystem\Database\gym.db`). The React frontend stores NO business data. All business logic executes strictly in Node.js backend services (`src/core/services/*.service.ts`) called via `/api/rpc`.
+2. **Migrations are Append-Only (v1..v41)**: Never modify or delete existing migrations in `src/db/migrations.ts`. To change or extend the database schema, append a new version.
+3. **Multi-Branch & Distributed Sync**:
+   - Primary branch runs on port `8890` (`branch_role = 'primary'`). Replicas run on port `8895+` (`branch_role = 'replica'`).
+   - Sync endpoints (`/api/sync/ping`, `/api/sync/push`, `/api/sync/pull`) require `x-sync-secret`. Session cookies are isolated per port (`gymsystem_session` vs `gymsystem_session_<port>`).
+   - Entity codes and member numbers are prefixed per branch (`counters` table scoped by branch prefix).
+4. **Mandatory Verification Protocol**:
+   - Always run `npm test` (all 596 tests must pass).
+   - Run `npm run typecheck` and `npm run typecheck:server`.
+   - Run `npm run sync:docs` to ensure documentation counts match real source code.
+5. **Packaged Executable & Safety Mandate**:
+   - Always build the executable with `npm run build:exe` before concluding tasks so `dist-exe/GymSystem.exe` is fresh.
+   - **CRITICAL SAFETY**: NEVER shut down the user's computer, kill external OS processes, or push to git without explicit user confirmation.
+
+---
+
 ## 1. Project Overview
 
 Yassen Mohamed Kotb | 01288536381 (`yassen`) is a fully Arabic, RTL-first, offline gym-management application for Windows.
@@ -47,7 +67,7 @@ SQLite (WAL) at %LOCALAPPDATA%\GymSystem\Database\gym.db  + Files\ + Backups\ + 
 | Purpose | Command |
 | --- | --- |
 | Frontend dev server (proxies `/api` → 8890) | `npm run dev` |
-| Build + run backend (127.0.0.1:8890) | `npm run dev:server` |
+| Build + run backend (0.0.0.0:8890) | `npm run dev:server` |
 | Both at once (Windows) | `dev.bat` |
 | Full build (typecheck client + server, vite build, esbuild server bundle) | `npm run build` |
 | Typecheck frontend | `npm run typecheck` |
@@ -91,21 +111,21 @@ server/                     Local backend (owns the database)
 src/
   api/                      Frontend client: fetch/RPC wrappers + shared types
   core/
-    services/               ALL business logic (36 files, backend-only)
-    permissions.ts          Roles, 93 permissions, DB-backed grant cache
-    audit-actions.ts        Audit action enum (165 actions)
+    services/               ALL business logic (48 files, backend-only)
+    permissions.ts          Roles, 102 permissions, DB-backed grant cache
+    audit-actions.ts        Audit action enum (188 actions)
     errors.ts               AppError codes + i18n messageKeys
     dates.ts money.ts       Shared primitives (date keys, minor units)
   db/
     engine.ts               Db wrapper: run/all/first/scalar/count/transaction/onDirty
-    migrations.ts           Versioned migrations v1..v33 (applied at every boot)
+    migrations.ts           Versioned migrations v1..v49 (applied at every boot)
     seed.ts                 Optional demo seeding
-  pages/                    29 route pages
+  pages/                    30 route pages
   components/               ui/ layout/ members/ finance/ subscriptions/ cards/ users/ charts/
   contexts/auth-context.tsx Session state + hasPermission()
   routes/                   Route table + permission-gated NAV_ROUTES
   i18n/ar.ts                Arabic dictionary (flat-key lookup)
-tests/                      Vitest suites (30 files, node env), createTestDb() helper
+tests/                      Vitest suites (67 files, node env), createTestDb() helper
 scripts/                    build-server.mjs, e2e-smoke.ps1, e2e-audit.ps1,
                             check-rpc-consistency.cjs, windows/start-gymsystem.bat
 ```
@@ -132,15 +152,26 @@ Browser (React)
 - Authorization: `requirePermission(actor, perm)` inside EVERY mutating service. The UI hiding buttons is cosmetic only. Owner always passes all checks. Non-owner roles resolve grants from an in-memory cache loaded from the `role_permissions` table (refreshed at boot and on every committed write via `db.onDirty`); editable through the Permissions page.
 - Department scoping: members/users carry `department ∈ {general, men, women}`; services enforce `assertDepartmentAccess` so men-section staff cannot touch women-section records.
 
-### Major modules
-
 Members (+trash/restore/purge, photos), Plans & Subscriptions (time/sessions/open kinds, freeze history, renew, cancel), Cards & barcode check-in/out (every member auto-gets a virtual card; QR delivery to WhatsApp via optional local gateway, batched send), Payments/refunds/voids + financial ledger, Expenses (+filesystem attachments ≤2 MB) & categories, dual cash boxes (gym/store) with counted-vs-expected discrepancy, financial reports & dashboard, Store/POS (products, stock movements, sales, credit debts, repayments, profit), Classes (sessions, bookings, capacity, session-consuming plans), Trainers & training plans (auto-sweep of expired plans), Employees & salaries (monthly/daily/per_class/custom; pay→expense+ledger), InBody body assessments + custom fitness tests, Leads & trials tracking, Notifications digest, Backups/restore/legacy IndexedDB import, Settings, Users management, Audit log, Permissions editor.
+
+### Multi-Branch Synchronization Architecture
+
+- **Primary Branch (`B1`, default port `8890`):** Acts as the central hub. `branch_info.branch_role = 'primary'`, listens on `0.0.0.0:8890`. Holds registration records of all branches (`registered_branches`).
+- **Replica Branch (`B2`, port `8895+`):** Operates offline-capable locally. `branch_info.branch_role = 'replica'`. Pulls config/plans/members from Primary and pushes local registrations/attendance/sales.
+- **Sync Endpoints & Security:** `/api/sync/ping`, `/api/sync/push`, `/api/sync/pull` verified by constant-time secret comparison via header `x-sync-secret`.
+- **Branch Prefixing & ID Scoping:** Every branch has a unique `branch_prefix` (e.g. `B1`, `B2`). Member codes (`B1-MEM-000001`), card barcodes (`B1-CRD-000001`), and transactions (`store_sales.branch_id`) are scoped to prevent ID collisions during multi-branch merges.
+- **Session Isolation:** Cookie name is isolated per port: `gymsystem_session` (port 8890) vs `gymsystem_session_<port>` (e.g. 8895) to allow running Primary and Replica simultaneously on one developer machine without auth conflicts.
+
+### Developer Console & Licensing System
+
+- **Developer Role:** System developer access protected by developer credentials and emergency bypass (`/developer`).
+- **Hardware Binding & Licensing:** Offline cryptographically signed licenses with HWID (Hardware ID) binding, grace periods, and emergency override capability. All managed in `src/core/services/developer.service.ts` and `src/core/services/license.service.ts`.
 
 ## 4. Database Rules
 
 - **Technology:** SQLite via `node:sqlite`, synchronous, WAL mode. One writer process (the backend). NEVER open the live DB from tooling while the server runs.
 - **Access layer:** all SQL goes through `src/db/engine.ts` (`Db`). Raw `db.run/all/first/scalar/count/insert/exec` — no ORM. Server uses `NodeSqliteDriver`; tests use their own driver via `createTestDb()`.
-- **Migrations:** append-only array in `src/db/migrations.ts` (currently v1..v33). Each runs once, tracked in `schema_migrations`, applied inside a transaction at boot. To change schema you MUST add a new version entry. Never edit old migrations; never write destructive statements without explicit human approval.
+- **Migrations:** append-only array in `src/db/migrations.ts` (currently v1..v49). Each runs once, tracked in `schema_migrations`, applied inside a transaction at boot. To change schema you MUST add a new version entry. Never edit old migrations; never write destructive statements without explicit human approval.
 - **Integrity:** heavy use of CHECK constraints (money non-negative, status enums, `net = base - discount` style arithmetic), UNIQUE indexes (partial unique phone/barcode), FKs with referential enforcement ON. Money columns are `*_minor` INTEGER (piastres; 100 = 1 EGP). Dates are `YYYY-MM-DD` keys; timestamps ISO strings.
 - **Transactions:** any multi-statement invariant MUST run inside `db.transaction(() => {...})` (payments, cancels, purge, salary payment, store sale, backup adopt…). Follow that rule for new features.
 - **financial_ledger:** append-only cash truth with `UNIQUE(ref_table, ref_id, entry_type)`. Exactly one ledger entry per logical event; reversals must check existence first (double-reversal guard exists in payments/subscriptions services — keep it).
@@ -199,6 +230,7 @@ Mandatory for every AI agent in this repo:
 14. Run relevant verification after implementation (typecheck + targeted tests + full `npm test` + `npm run build` for wide changes).
 15. Never claim success without actually executing verification.
 16. **Owner mandate (updated 2026-09-24):** after completing modifications/tasks, the agent MUST automatically build the executable `dist-exe/GymSystem.exe` (`npm run build:exe`) so the packaged executable is always up-to-date and ready for testing. (Note: `git push` to GitHub and Inno Setup installer compilation `npm run build:installer` still require explicit owner approval in chat).
+17. **Host OS Safety Mandate:** NEVER shut down, restart, or power off the user's computer under any circumstances unless explicitly commanded by the user in the prompt. Never kill processes outside of development server processes initiated by the current task.
 
 ## 8. Required AI Workflow
 

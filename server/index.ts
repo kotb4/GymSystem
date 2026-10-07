@@ -94,7 +94,9 @@ function waitReady(url: string, tries = 20): Promise<void> {
 }
 
 /** Open the app in a standalone Edge window (App Mode); falls back to the default browser. */
-async function openAppWindow(url: string = `http://${HOST}:${PORT}/`): Promise<void> {
+async function openAppWindow(
+  url: string = `http://${HOST === "0.0.0.0" || HOST === "::" ? "127.0.0.1" : HOST}:${PORT}/`
+): Promise<void> {
   try {
     await waitReady(url);
   } catch (error) {

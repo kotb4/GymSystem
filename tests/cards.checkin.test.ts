@@ -15,7 +15,11 @@ import {
 } from "@/core/services/members.service";
 import { createPlan } from "@/core/services/plans.service";
 import { createSubscription } from "@/core/services/subscriptions.service";
-import { recordCheckIn } from "@/core/services/attendance.service";
+import {
+  deleteAttendance,
+  recordCheckIn,
+  restoreAttendance,
+} from "@/core/services/attendance.service";
 import type { Db } from "@/db/engine";
 import type { ServiceActor } from "@/core/permissions";
 import { createTestDb } from "./helpers/test-db";
@@ -274,6 +278,63 @@ it("surfaces outstanding money at check-in", async () => {
       [member.id],
     )!;
     expect(Number(used.sessions_used)).toBe(1);
+  });
+
+  it("deleteAttendance restores session count and restoreAttendance re-consumes it", async () => {
+    const member = await createMember(db, owner, { fullName: "حضور-استرجاع" });
+    const plan = await createPlan(db, owner, {
+      name: "باقة-حضور",
+      durationDays: 30,
+      price: 200,
+      kind: "sessions",
+      sessionsCount: 10,
+    });
+    await createSubscription(db, owner, { memberId: member.id, planId: plan.id });
+    await assignCardByBarcode(db, reception, { barcodeValue: "GYM-SESS-99", memberId: member.id });
+
+    const checkIn = await recordCheckIn(db, reception, { barcode: "GYM-SESS-99" });
+    expect(checkIn.kind).toBe("success");
+    if (checkIn.kind !== "success") return;
+    expect(checkIn.memberId).toBe(member.id);
+
+    let used = db.first<{ sessions_used: number }>(
+      "SELECT sessions_used FROM member_subscriptions WHERE member_id = ?",
+      [member.id],
+    )!;
+    expect(Number(used.sessions_used)).toBe(1);
+
+    // Receptionist lacks checkin.delete by default
+    expect(() => deleteAttendance(db, reception, checkIn.attendanceId)).toThrow();
+
+    // Owner has checkin.delete -> deletes checkin and restores session credit
+    deleteAttendance(db, owner, checkIn.attendanceId);
+
+    used = db.first<{ sessions_used: number }>(
+      "SELECT sessions_used FROM member_subscriptions WHERE member_id = ?",
+      [member.id],
+    )!;
+    expect(Number(used.sessions_used)).toBe(0);
+
+    const attRow = db.first<{ deleted_at: string | null }>(
+      "SELECT deleted_at FROM attendance WHERE id = ?",
+      [checkIn.attendanceId],
+    )!;
+    expect(attRow.deleted_at).toBeTruthy();
+
+    // Restore attendance re-consumes the session
+    restoreAttendance(db, owner, checkIn.attendanceId);
+
+    used = db.first<{ sessions_used: number }>(
+      "SELECT sessions_used FROM member_subscriptions WHERE member_id = ?",
+      [member.id],
+    )!;
+    expect(Number(used.sessions_used)).toBe(1);
+
+    const attRowRestored = db.first<{ deleted_at: string | null }>(
+      "SELECT deleted_at FROM attendance WHERE id = ?",
+      [checkIn.attendanceId],
+    )!;
+    expect(attRowRestored.deleted_at).toBeNull();
   });
 });
 

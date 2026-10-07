@@ -978,6 +978,804 @@ CREATE INDEX IF NOT EXISTS idx_backups_created ON backups_log(created_at);`,
         }
       },
     },
+    {
+      // ---- v36: offline-first multi-branch sync engine ----
+      version: 36,
+      statements: [
+        "CREATE TABLE IF NOT EXISTS branch_info (\n" +
+          "  branch_id TEXT PRIMARY KEY,\n" +
+          "  branch_name TEXT NOT NULL,\n" +
+          "  branch_role TEXT NOT NULL CHECK (branch_role IN ('primary', 'replica')),\n" +
+          "  branch_prefix TEXT NOT NULL DEFAULT '',\n" +
+          "  remote_url TEXT,\n" +
+          "  sync_secret TEXT NOT NULL,\n" +
+          "  auto_sync_enabled INTEGER NOT NULL DEFAULT 1 CHECK (auto_sync_enabled IN (0, 1)),\n" +
+          "  sync_interval_seconds INTEGER NOT NULL DEFAULT 60 CHECK (sync_interval_seconds >= 10),\n" +
+          "  last_push_at TEXT,\n" +
+          "  last_pull_at TEXT,\n" +
+          "  last_error TEXT,\n" +
+          "  updated_at TEXT NOT NULL\n" +
+          ")",
+        "CREATE TABLE IF NOT EXISTS sync_control (\n" +
+          "  id INTEGER PRIMARY KEY CHECK (id = 1),\n" +
+          "  is_applying_remote INTEGER NOT NULL DEFAULT 0\n" +
+          ")",
+        "INSERT OR IGNORE INTO sync_control (id, is_applying_remote) VALUES (1, 0)",
+        "CREATE TABLE IF NOT EXISTS sync_outbox (\n" +
+          "  id INTEGER PRIMARY KEY AUTOINCREMENT,\n" +
+          "  entity_type TEXT NOT NULL,\n" +
+          "  entity_id TEXT NOT NULL,\n" +
+          "  operation TEXT NOT NULL CHECK (operation IN ('insert', 'update', 'delete')),\n" +
+          "  payload_json TEXT,\n" +
+          "  occurred_at TEXT NOT NULL,\n" +
+          "  status TEXT NOT NULL DEFAULT 'pending' CHECK (status IN ('pending', 'synced', 'failed')),\n" +
+          "  attempts INTEGER NOT NULL DEFAULT 0,\n" +
+          "  last_attempt_at TEXT,\n" +
+          "  last_error TEXT\n" +
+          ")",
+        "CREATE INDEX IF NOT EXISTS idx_sync_outbox_status_id ON sync_outbox(status, id)",
+        "CREATE TABLE IF NOT EXISTS sync_inbox_log (\n" +
+          "  id INTEGER PRIMARY KEY AUTOINCREMENT,\n" +
+          "  remote_branch_id TEXT NOT NULL,\n" +
+          "  entity_type TEXT NOT NULL,\n" +
+          "  entity_id TEXT NOT NULL,\n" +
+          "  operation TEXT NOT NULL,\n" +
+          "  applied_at TEXT NOT NULL,\n" +
+          "  result TEXT NOT NULL\n" +
+          ")",
+        "CREATE INDEX IF NOT EXISTS idx_sync_inbox_applied ON sync_inbox_log(applied_at)",
+      ],
+      callback: (db: Db) => {
+        db.run(
+          "INSERT OR IGNORE INTO branch_info (branch_id, branch_name, branch_role, branch_prefix, sync_secret, auto_sync_enabled, sync_interval_seconds, updated_at) " +
+            "VALUES ('main', 'الفرع الرئيسي', 'primary', 'B1', 'gym-sec-' || lower(hex(randomblob(16))), 1, 60, datetime('now'))",
+        );
+
+        const tableExists = (table: string) =>
+          db.count("SELECT COUNT(*) FROM sqlite_master WHERE type = 'table' AND name = ?", [table]) > 0;
+
+        if (tableExists("members")) {
+          db.exec(
+            "CREATE TRIGGER IF NOT EXISTS trg_sync_members_ai AFTER INSERT ON members\n" +
+              "WHEN (SELECT COALESCE(is_applying_remote, 0) FROM sync_control WHERE id = 1) = 0\n" +
+              "BEGIN\n" +
+              "  INSERT INTO sync_outbox (entity_type, entity_id, operation, occurred_at)\n" +
+              "  VALUES ('members', NEW.id, 'insert', datetime('now'));\n" +
+              "END;\n" +
+              "CREATE TRIGGER IF NOT EXISTS trg_sync_members_au AFTER UPDATE ON members\n" +
+              "WHEN (SELECT COALESCE(is_applying_remote, 0) FROM sync_control WHERE id = 1) = 0\n" +
+              "BEGIN\n" +
+              "  INSERT INTO sync_outbox (entity_type, entity_id, operation, occurred_at)\n" +
+              "  VALUES ('members', NEW.id, 'update', datetime('now'));\n" +
+              "END;",
+          );
+        }
+
+        if (tableExists("cards")) {
+          db.exec(
+            "CREATE TRIGGER IF NOT EXISTS trg_sync_cards_ai AFTER INSERT ON cards\n" +
+              "WHEN (SELECT COALESCE(is_applying_remote, 0) FROM sync_control WHERE id = 1) = 0\n" +
+              "BEGIN\n" +
+              "  INSERT INTO sync_outbox (entity_type, entity_id, operation, occurred_at)\n" +
+              "  VALUES ('cards', NEW.id, 'insert', datetime('now'));\n" +
+              "END;\n" +
+              "CREATE TRIGGER IF NOT EXISTS trg_sync_cards_au AFTER UPDATE ON cards\n" +
+              "WHEN (SELECT COALESCE(is_applying_remote, 0) FROM sync_control WHERE id = 1) = 0\n" +
+              "BEGIN\n" +
+              "  INSERT INTO sync_outbox (entity_type, entity_id, operation, occurred_at)\n" +
+              "  VALUES ('cards', NEW.id, 'update', datetime('now'));\n" +
+              "END;",
+          );
+        }
+
+        if (tableExists("member_subscriptions")) {
+          db.exec(
+            "CREATE TRIGGER IF NOT EXISTS trg_sync_subs_ai AFTER INSERT ON member_subscriptions\n" +
+              "WHEN (SELECT COALESCE(is_applying_remote, 0) FROM sync_control WHERE id = 1) = 0\n" +
+              "BEGIN\n" +
+              "  INSERT INTO sync_outbox (entity_type, entity_id, operation, occurred_at)\n" +
+              "  VALUES ('member_subscriptions', NEW.id, 'insert', datetime('now'));\n" +
+              "END;\n" +
+              "CREATE TRIGGER IF NOT EXISTS trg_sync_subs_au AFTER UPDATE ON member_subscriptions\n" +
+              "WHEN (SELECT COALESCE(is_applying_remote, 0) FROM sync_control WHERE id = 1) = 0\n" +
+              "BEGIN\n" +
+              "  INSERT INTO sync_outbox (entity_type, entity_id, operation, occurred_at)\n" +
+              "  VALUES ('member_subscriptions', NEW.id, 'update', datetime('now'));\n" +
+              "END;",
+          );
+        }
+
+        if (tableExists("attendance")) {
+          db.exec(
+            "CREATE TRIGGER IF NOT EXISTS trg_sync_attendance_ai AFTER INSERT ON attendance\n" +
+              "WHEN (SELECT COALESCE(is_applying_remote, 0) FROM sync_control WHERE id = 1) = 0\n" +
+              "BEGIN\n" +
+              "  INSERT INTO sync_outbox (entity_type, entity_id, operation, occurred_at)\n" +
+              "  VALUES ('attendance', NEW.id, 'insert', datetime('now'));\n" +
+              "END;",
+          );
+        }
+
+        if (tableExists("payments")) {
+          db.exec(
+            "CREATE TRIGGER IF NOT EXISTS trg_sync_payments_ai AFTER INSERT ON payments\n" +
+              "WHEN (SELECT COALESCE(is_applying_remote, 0) FROM sync_control WHERE id = 1) = 0\n" +
+              "BEGIN\n" +
+              "  INSERT INTO sync_outbox (entity_type, entity_id, operation, occurred_at)\n" +
+              "  VALUES ('payments', NEW.id, 'insert', datetime('now'));\n" +
+              "END;",
+          );
+        }
+      },
+    },
+    {
+      version: 37,
+      statements: [],
+      callback: (db: Db) => {
+        // ---- hidden developer account & system flag ----
+        const userCols = new Set(
+          db.all<{ name: string }>("PRAGMA table_info(users)").map((c) => c.name),
+        );
+        if (userCols.size > 0 && !userCols.has("is_developer")) {
+          db.exec("ALTER TABLE users ADD COLUMN is_developer INTEGER NOT NULL DEFAULT 0");
+        }
+        db.exec("CREATE INDEX IF NOT EXISTS idx_users_is_developer ON users(is_developer)");
+      },
+    },
+    {
+      version: 38,
+      statements: [],
+      callback: (db: Db) => {
+        // ---- owner and user phone column for remote link delivery & notifications ----
+        const userCols = new Set(
+          db.all<{ name: string }>("PRAGMA table_info(users)").map((c) => c.name),
+        );
+        if (userCols.size > 0 && !userCols.has("phone")) {
+          db.exec("ALTER TABLE users ADD COLUMN phone TEXT");
+        }
+      },
+    },
+    {
+      version: 39,
+      statements: [],
+      callback: (db: Db) => {
+        // ---- multi-branch reporting & branch tracking ----
+        const tableExists = (table: string) =>
+          db.count("SELECT COUNT(*) FROM sqlite_master WHERE type = 'table' AND name = ?", [table]) > 0;
+
+        const addColIfMissing = (table: string, col: string, def: string) => {
+          if (!tableExists(table)) return;
+          const cols = new Set(
+            db.all<{ name: string }>(`PRAGMA table_info(${table})`).map((c) => c.name),
+          );
+          if (cols.size > 0 && !cols.has(col)) {
+            db.exec(`ALTER TABLE ${table} ADD COLUMN ${col} ${def}`);
+          }
+        };
+
+        addColIfMissing("payments", "branch_id", "TEXT DEFAULT 'main'");
+        addColIfMissing("expenses", "branch_id", "TEXT DEFAULT 'main'");
+        addColIfMissing("attendance", "branch_id", "TEXT DEFAULT 'main'");
+        addColIfMissing("members", "branch_id", "TEXT DEFAULT 'main'");
+        addColIfMissing("member_subscriptions", "branch_id", "TEXT DEFAULT 'main'");
+
+        db.exec(
+          "CREATE TABLE IF NOT EXISTS registered_branches (\n" +
+            "  branch_id TEXT PRIMARY KEY,\n" +
+            "  branch_name TEXT NOT NULL,\n" +
+            "  branch_role TEXT NOT NULL DEFAULT 'replica',\n" +
+            "  is_active INTEGER NOT NULL DEFAULT 1,\n" +
+            "  created_at TEXT NOT NULL,\n" +
+            "  updated_at TEXT NOT NULL\n" +
+            ")",
+        );
+
+        // Seed registered_branches from branch_info
+        if (tableExists("branch_info")) {
+          db.exec(
+            "INSERT OR IGNORE INTO registered_branches (branch_id, branch_name, branch_role, is_active, created_at, updated_at)\n" +
+              "SELECT branch_id, branch_name, branch_role, 1, updated_at, updated_at FROM branch_info",
+          );
+        } else {
+          db.exec(
+            "INSERT OR IGNORE INTO registered_branches (branch_id, branch_name, branch_role, is_active, created_at, updated_at)\n" +
+              "VALUES ('main', 'الفرع الرئيسي', 'primary', 1, datetime('now'), datetime('now'))",
+          );
+        }
+
+        // Backfill existing rows with current branch_id if null
+        const currentBranchId = tableExists("branch_info")
+          ? (db.scalar("SELECT branch_id FROM branch_info LIMIT 1") as string | null) || "main"
+          : "main";
+
+        if (tableExists("payments")) {
+          db.exec("CREATE INDEX IF NOT EXISTS idx_payments_branch ON payments(branch_id)");
+          db.run("UPDATE payments SET branch_id = ? WHERE branch_id IS NULL", [currentBranchId]);
+        }
+        if (tableExists("expenses")) {
+          db.exec("CREATE INDEX IF NOT EXISTS idx_expenses_branch ON expenses(branch_id)");
+          db.run("UPDATE expenses SET branch_id = ? WHERE branch_id IS NULL", [currentBranchId]);
+        }
+        if (tableExists("attendance")) {
+          db.exec("CREATE INDEX IF NOT EXISTS idx_attendance_branch ON attendance(branch_id)");
+          db.run("UPDATE attendance SET branch_id = ? WHERE branch_id IS NULL", [currentBranchId]);
+        }
+        if (tableExists("members")) {
+          db.exec("CREATE INDEX IF NOT EXISTS idx_members_branch ON members(branch_id)");
+          db.run("UPDATE members SET branch_id = ? WHERE branch_id IS NULL", [currentBranchId]);
+        }
+        if (tableExists("member_subscriptions")) {
+          db.exec("CREATE INDEX IF NOT EXISTS idx_member_subscriptions_branch ON member_subscriptions(branch_id)");
+          db.run("UPDATE member_subscriptions SET branch_id = ? WHERE branch_id IS NULL", [currentBranchId]);
+        }
+      },
+    },
+    {
+      version: 40,
+      statements: [],
+      callback: (db: Db) => {
+        const tableExists = (table: string) =>
+          db.count("SELECT COUNT(*) FROM sqlite_master WHERE type = 'table' AND name = ?", [table]) > 0;
+
+        const addColIfMissing = (table: string, col: string, def: string) => {
+          if (!tableExists(table)) return;
+          const cols = new Set(
+            db.all<{ name: string }>(`PRAGMA table_info(${table})`).map((c) => c.name),
+          );
+          if (cols.size > 0 && !cols.has(col)) {
+            db.exec(`ALTER TABLE ${table} ADD COLUMN ${col} ${def}`);
+          }
+        };
+
+        addColIfMissing("registered_branches", "branch_prefix", "TEXT NOT NULL DEFAULT ''");
+        addColIfMissing("registered_branches", "last_seen_at", "TEXT");
+      },
+    },
+    {
+      version: 41,
+      statements: [],
+      callback: (db: Db) => {
+        const tableExists = (table: string) =>
+          db.count("SELECT COUNT(*) FROM sqlite_master WHERE type = 'table' AND name = ?", [table]) > 0;
+
+        const addColIfMissing = (table: string, col: string, def: string) => {
+          if (!tableExists(table)) return;
+          const cols = new Set(
+            db.all<{ name: string }>(`PRAGMA table_info(${table})`).map((c) => c.name),
+          );
+          if (cols.size > 0 && !cols.has(col)) {
+            db.exec(`ALTER TABLE ${table} ADD COLUMN ${col} ${def}`);
+          }
+        };
+
+        addColIfMissing("store_sales", "branch_id", "TEXT DEFAULT 'main'");
+
+        const currentBranchId = tableExists("branch_info")
+          ? (db.scalar("SELECT branch_id FROM branch_info LIMIT 1") as string | null) || "main"
+          : "main";
+
+        if (tableExists("store_sales")) {
+          db.exec("CREATE INDEX IF NOT EXISTS idx_store_sales_branch ON store_sales(branch_id)");
+          db.run("UPDATE store_sales SET branch_id = ? WHERE branch_id IS NULL", [currentBranchId]);
+        }
+      },
+    },
+    {
+      version: 42,
+      statements: [
+        "CREATE TABLE IF NOT EXISTS pdf_deliveries (\n  id TEXT PRIMARY KEY,\n  doc_type TEXT NOT NULL,\n  ref_table TEXT NOT NULL,\n  ref_id TEXT NOT NULL,\n  member_id TEXT REFERENCES members(id),\n  member_name TEXT,\n  phone TEXT,\n  channel TEXT NOT NULL,\n  status TEXT NOT NULL,\n  error TEXT,\n  file_name TEXT,\n  file_size INTEGER,\n  file_hash TEXT,\n  sent_at TEXT,\n  created_by TEXT REFERENCES users(id),\n  created_at TEXT NOT NULL\n)",
+        "CREATE INDEX IF NOT EXISTS idx_pdf_deliveries_status ON pdf_deliveries(status)",
+        "CREATE INDEX IF NOT EXISTS idx_pdf_deliveries_member ON pdf_deliveries(member_id)",
+        "CREATE INDEX IF NOT EXISTS idx_pdf_deliveries_ref ON pdf_deliveries(ref_table, ref_id)",
+        "CREATE INDEX IF NOT EXISTS idx_pdf_deliveries_created ON pdf_deliveries(created_at)",
+      ],
+      // `payments` and `counters` may be absent in a partial/legacy skeleton
+      // (the upgrade tests replay migrations 21.. on a trimmed v20 schema), so
+      // add the column and the counter defensively — same pattern as v41.
+      callback: (db: Db) => {
+        const tableExists = (table: string) =>
+          db.count("SELECT COUNT(*) FROM sqlite_master WHERE type = 'table' AND name = ?", [table]) > 0;
+
+        if (tableExists("counters")) {
+          db.run("INSERT INTO counters (name, value) VALUES ('receipt_no', 0) ON CONFLICT(name) DO NOTHING");
+        }
+
+        if (!tableExists("payments")) return;
+        const cols = new Set(
+          db.all<{ name: string }>("PRAGMA table_info(payments)").map((c) => c.name),
+        );
+        if (cols.size > 0 && !cols.has("receipt_no")) {
+          db.exec("ALTER TABLE payments ADD COLUMN receipt_no TEXT");
+          db.exec("CREATE INDEX IF NOT EXISTS idx_payments_receipt_no ON payments(receipt_no)");
+        }
+      },
+    },
+    {
+      version: 43,
+      // Every customer-facing operation gets a printable, searchable reference
+      // number ("reference number" / مرجع). payments already had `receipt_no`
+      // (v42) and store_sales/store_returns have `sale_no`/`return_no`; this
+      // adds the missing ones so an operator can always look up a printed
+      // document by the number the customer reads back to them.
+      // All DDL is done in the callback so it can be conditional per table.
+      statements: [],
+      callback: (db: Db) => {
+        const tableExists = (table: string) =>
+          db.count("SELECT COUNT(*) FROM sqlite_master WHERE type = 'table' AND name = ?", [table]) > 0;
+        const columnNames = (table: string) =>
+          new Set(db.all<{ name: string }>(`PRAGMA table_info(${table})`).map((c) => c.name));
+
+        // Defensive: partial/legacy skeletons may be missing any of these.
+        const targets: { table: string; column: string; index: string }[] = [
+          { table: "payment_refunds", column: "refund_no", index: "idx_payment_refunds_refund_no" },
+          { table: "store_debt_payments", column: "payment_no", index: "idx_store_debt_payments_no" },
+          { table: "cash_sessions", column: "closing_no", index: "idx_cash_sessions_closing_no" },
+          { table: "attendance", column: "visit_no", index: "idx_attendance_visit_no" },
+        ];
+
+        for (const t of targets) {
+          if (!tableExists(t.table)) continue;
+          const cols = columnNames(t.table);
+          if (cols.size === 0) continue;
+          if (!cols.has(t.column)) {
+            db.exec(`ALTER TABLE ${t.table} ADD COLUMN ${t.column} TEXT`);
+          }
+          // Partial unique index: many legacy rows are NULL, and SQLite treats
+          // each NULL as distinct, so this only enforces uniqueness of real
+          // numbers without backfilling history.
+          db.exec(
+            `CREATE UNIQUE INDEX IF NOT EXISTS ${t.index} ON ${t.table}(${t.column}) WHERE ${t.column} IS NOT NULL`,
+          );
+        }
+
+        if (tableExists("counters")) {
+          for (const name of [
+            "refund_no",
+            "store_debt_payment_no",
+            "cash_closing_no",
+            "attendance_no",
+          ]) {
+            db.run("INSERT INTO counters (name, value) VALUES (?, 0) ON CONFLICT(name) DO NOTHING", [name]);
+          }
+        }
+      },
+    },
+    {
+      version: 44,
+      statements: [],
+      callback: (db: Db) => {
+        const tableExists = (table: string) =>
+          db.count("SELECT COUNT(*) FROM sqlite_master WHERE type = 'table' AND name = ?", [table]) > 0;
+
+        if (tableExists("membership_plans") && tableExists("packages")) {
+          db.run(
+            `UPDATE membership_plans
+             SET price = ROUND(price / 100.0, 2)
+             WHERE id IN (SELECT synthetic_plan_id FROM packages WHERE synthetic_plan_id IS NOT NULL)
+               AND price >= 1000`,
+          );
+        }
+
+        if (tableExists("member_subscriptions")) {
+          db.run(
+            `UPDATE member_subscriptions
+             SET price = ROUND(price / 100.0, 2)
+             WHERE package_id IS NOT NULL
+               AND price >= 1000`,
+          );
+        }
+      },
+    },
+    {
+      version: 45,
+      statements: [],
+      callback: (db: Db) => {
+        const tableExists = (table: string) =>
+          db.count("SELECT COUNT(*) FROM sqlite_master WHERE type = 'table' AND name = ?", [table]) > 0;
+        const columnNames = (table: string) =>
+          new Set(db.all<{ name: string }>(`PRAGMA table_info(${table})`).map((c) => c.name));
+
+        if (!tableExists("employee_advances")) {
+          db.exec(`
+            CREATE TABLE employee_advances (
+              id TEXT PRIMARY KEY,
+              employee_id TEXT NOT NULL REFERENCES employees(id),
+              amount_minor INTEGER NOT NULL CHECK (amount_minor > 0),
+              repaid_minor INTEGER NOT NULL DEFAULT 0 CHECK (repaid_minor >= 0 AND repaid_minor <= amount_minor),
+              deduction_month TEXT NOT NULL,
+              notes TEXT,
+              status TEXT NOT NULL DEFAULT 'open' CHECK (status IN ('open', 'settled', 'cancelled')),
+              settled_at TEXT,
+              created_by TEXT NOT NULL REFERENCES users(id),
+              created_at TEXT NOT NULL,
+              updated_at TEXT NOT NULL,
+              branch_id TEXT
+            );
+            CREATE INDEX idx_advances_emp ON employee_advances(employee_id);
+            CREATE INDEX idx_advances_month ON employee_advances(deduction_month);
+            CREATE INDEX idx_advances_status ON employee_advances(status);
+          `);
+        }
+
+        if (tableExists("employees")) {
+          const cols = columnNames("employees");
+          if (!cols.has("shift_start")) {
+            db.exec("ALTER TABLE employees ADD COLUMN shift_start TEXT");
+          }
+          if (!cols.has("shift_end")) {
+            db.exec("ALTER TABLE employees ADD COLUMN shift_end TEXT");
+          }
+          if (!cols.has("commission_pct")) {
+            db.exec("ALTER TABLE employees ADD COLUMN commission_pct REAL DEFAULT 0");
+          }
+        }
+      },
+    },
+    {
+      version: 46,
+      statements: [],
+      callback: (db: Db) => {
+        const tableExists = (table: string) =>
+          db.count("SELECT COUNT(*) FROM sqlite_master WHERE type = 'table' AND name = ?", [table]) > 0;
+        const columnNames = (table: string) =>
+          new Set(db.all<{ name: string }>(`PRAGMA table_info(${table})`).map((c) => c.name));
+
+        // 1. Guest Invitations on Plans, Packages and Subscriptions
+        if (tableExists("membership_plans")) {
+          const cols = columnNames("membership_plans");
+          if (!cols.has("invitations_count")) {
+            db.exec("ALTER TABLE membership_plans ADD COLUMN invitations_count INTEGER DEFAULT 0");
+          }
+        }
+
+        if (tableExists("packages")) {
+          const cols = columnNames("packages");
+          if (!cols.has("invitations_count")) {
+            db.exec("ALTER TABLE packages ADD COLUMN invitations_count INTEGER DEFAULT 0");
+          }
+        }
+
+        if (tableExists("member_subscriptions")) {
+          const cols = columnNames("member_subscriptions");
+          if (!cols.has("invitations_total")) {
+            db.exec("ALTER TABLE member_subscriptions ADD COLUMN invitations_total INTEGER DEFAULT 0");
+          }
+          if (!cols.has("invitations_used")) {
+            db.exec("ALTER TABLE member_subscriptions ADD COLUMN invitations_used INTEGER DEFAULT 0");
+          }
+          if (!cols.has("promo_code_id")) {
+            db.exec("ALTER TABLE member_subscriptions ADD COLUMN promo_code_id TEXT");
+          }
+        }
+
+        if (tableExists("store_sales")) {
+          const cols = columnNames("store_sales");
+          if (!cols.has("promo_code_id")) {
+            db.exec("ALTER TABLE store_sales ADD COLUMN promo_code_id TEXT");
+          }
+        }
+
+        if (!tableExists("guest_invitations")) {
+          db.exec(`
+            CREATE TABLE guest_invitations (
+              id TEXT PRIMARY KEY,
+              subscription_id TEXT NOT NULL REFERENCES member_subscriptions(id) ON DELETE CASCADE,
+              member_id TEXT NOT NULL REFERENCES members(id) ON DELETE CASCADE,
+              guest_name TEXT NOT NULL,
+              guest_phone TEXT,
+              notes TEXT,
+              created_by TEXT REFERENCES users(id),
+              created_at TEXT NOT NULL,
+              branch_id TEXT
+            );
+            CREATE INDEX idx_guest_inv_sub ON guest_invitations(subscription_id);
+            CREATE INDEX idx_guest_inv_member ON guest_invitations(member_id);
+          `);
+        }
+
+        // 2. Staff Shifts
+        if (!tableExists("staff_shifts")) {
+          db.exec(`
+            CREATE TABLE staff_shifts (
+              id TEXT PRIMARY KEY,
+              user_id TEXT NOT NULL REFERENCES users(id),
+              opened_at TEXT NOT NULL,
+              opening_cash_minor INTEGER NOT NULL DEFAULT 0,
+              closed_at TEXT,
+              closed_by TEXT REFERENCES users(id),
+              expected_cash_minor INTEGER NOT NULL DEFAULT 0,
+              counted_cash_minor INTEGER,
+              difference_minor INTEGER,
+              notes TEXT,
+              status TEXT NOT NULL DEFAULT 'open' CHECK (status IN ('open', 'closed')),
+              created_at TEXT NOT NULL,
+              updated_at TEXT NOT NULL,
+              branch_id TEXT
+            );
+            CREATE INDEX idx_shifts_user ON staff_shifts(user_id);
+            CREATE INDEX idx_shifts_status ON staff_shifts(status);
+            CREATE INDEX idx_shifts_opened ON staff_shifts(opened_at);
+          `);
+        }
+
+        // 3. Promo Codes
+        if (!tableExists("promo_codes")) {
+          db.exec(`
+            CREATE TABLE promo_codes (
+              id TEXT PRIMARY KEY,
+              code TEXT NOT NULL UNIQUE,
+              discount_type TEXT NOT NULL CHECK (discount_type IN ('percentage', 'fixed')),
+              discount_value INTEGER NOT NULL CHECK (discount_value > 0),
+              min_spend_minor INTEGER NOT NULL DEFAULT 0,
+              max_uses INTEGER,
+              times_used INTEGER NOT NULL DEFAULT 0,
+              valid_from TEXT,
+              valid_to TEXT,
+              is_active INTEGER NOT NULL DEFAULT 1,
+              notes TEXT,
+              created_by TEXT REFERENCES users(id),
+              created_at TEXT NOT NULL,
+              updated_at TEXT NOT NULL
+            );
+            CREATE INDEX idx_promo_code ON promo_codes(code);
+            CREATE INDEX idx_promo_active ON promo_codes(is_active);
+          `);
+        }
+
+        // 4. Renewal Reminder Logs (prevent duplicate reminders on same day/period)
+        if (!tableExists("renewal_reminder_logs")) {
+          db.exec(`
+            CREATE TABLE renewal_reminder_logs (
+              id TEXT PRIMARY KEY,
+              subscription_id TEXT NOT NULL REFERENCES member_subscriptions(id) ON DELETE CASCADE,
+              member_id TEXT NOT NULL REFERENCES members(id) ON DELETE CASCADE,
+              phone TEXT NOT NULL,
+              expiry_date TEXT NOT NULL,
+              sent_channel TEXT NOT NULL DEFAULT 'whatsapp',
+              status TEXT NOT NULL DEFAULT 'sent',
+              sent_at TEXT NOT NULL,
+              created_by TEXT REFERENCES users(id)
+            );
+            CREATE INDEX idx_reminder_sub ON renewal_reminder_logs(subscription_id);
+            CREATE INDEX idx_reminder_date ON renewal_reminder_logs(sent_at);
+          `);
+        }
+      },
+    },
+    {
+      version: 47,
+      statements: [],
+      callback: (db: Db) => {
+        const tableExists = (table: string) =>
+          db.count("SELECT COUNT(*) FROM sqlite_master WHERE type = 'table' AND name = ?", [table]) > 0;
+        const columnNames = (table: string) =>
+          new Set(db.all<{ name: string }>(`PRAGMA table_info(${table})`).map((c) => c.name));
+
+        if (tableExists("packages")) {
+          const cols = columnNames("packages");
+          if (!cols.has("invitations_count")) {
+            db.exec("ALTER TABLE packages ADD COLUMN invitations_count INTEGER DEFAULT 0");
+          }
+        }
+
+        if (tableExists("membership_plans")) {
+          const cols = columnNames("membership_plans");
+          if (!cols.has("invitations_count")) {
+            db.exec("ALTER TABLE membership_plans ADD COLUMN invitations_count INTEGER DEFAULT 0");
+          }
+        }
+
+        if (tableExists("member_subscriptions")) {
+          const cols = columnNames("member_subscriptions");
+          if (!cols.has("invitations_total")) {
+            db.exec("ALTER TABLE member_subscriptions ADD COLUMN invitations_total INTEGER DEFAULT 0");
+          }
+          if (!cols.has("invitations_used")) {
+            db.exec("ALTER TABLE member_subscriptions ADD COLUMN invitations_used INTEGER DEFAULT 0");
+          }
+          if (!cols.has("promo_code_id")) {
+            db.exec("ALTER TABLE member_subscriptions ADD COLUMN promo_code_id TEXT");
+          }
+        }
+
+        if (tableExists("store_sales")) {
+          const cols = columnNames("store_sales");
+          if (!cols.has("promo_code_id")) {
+            db.exec("ALTER TABLE store_sales ADD COLUMN promo_code_id TEXT");
+          }
+        }
+
+        if (!tableExists("guest_invitations")) {
+          db.exec(`
+            CREATE TABLE guest_invitations (
+              id TEXT PRIMARY KEY,
+              subscription_id TEXT NOT NULL REFERENCES member_subscriptions(id) ON DELETE CASCADE,
+              member_id TEXT NOT NULL REFERENCES members(id) ON DELETE CASCADE,
+              guest_name TEXT NOT NULL,
+              guest_phone TEXT,
+              notes TEXT,
+              created_by TEXT REFERENCES users(id),
+              created_at TEXT NOT NULL,
+              branch_id TEXT
+            );
+            CREATE INDEX idx_guest_inv_sub ON guest_invitations(subscription_id);
+            CREATE INDEX idx_guest_inv_member ON guest_invitations(member_id);
+          `);
+        }
+
+        if (!tableExists("staff_shifts")) {
+          db.exec(`
+            CREATE TABLE staff_shifts (
+              id TEXT PRIMARY KEY,
+              user_id TEXT NOT NULL REFERENCES users(id),
+              opened_at TEXT NOT NULL,
+              opening_cash_minor INTEGER NOT NULL DEFAULT 0,
+              closed_at TEXT,
+              closed_by TEXT REFERENCES users(id),
+              expected_cash_minor INTEGER NOT NULL DEFAULT 0,
+              counted_cash_minor INTEGER,
+              difference_minor INTEGER,
+              notes TEXT,
+              status TEXT NOT NULL DEFAULT 'open' CHECK (status IN ('open', 'closed')),
+              created_at TEXT NOT NULL,
+              updated_at TEXT NOT NULL,
+              branch_id TEXT
+            );
+            CREATE INDEX idx_shifts_user ON staff_shifts(user_id);
+            CREATE INDEX idx_shifts_status ON staff_shifts(status);
+            CREATE INDEX idx_shifts_opened ON staff_shifts(opened_at);
+          `);
+        }
+
+        if (!tableExists("promo_codes")) {
+          db.exec(`
+            CREATE TABLE promo_codes (
+              id TEXT PRIMARY KEY,
+              code TEXT NOT NULL UNIQUE,
+              discount_type TEXT NOT NULL CHECK (discount_type IN ('percentage', 'fixed')),
+              discount_value INTEGER NOT NULL CHECK (discount_value > 0),
+              min_spend_minor INTEGER NOT NULL DEFAULT 0,
+              max_uses INTEGER,
+              times_used INTEGER NOT NULL DEFAULT 0,
+              valid_from TEXT,
+              valid_to TEXT,
+              is_active INTEGER NOT NULL DEFAULT 1,
+              notes TEXT,
+              created_by TEXT REFERENCES users(id),
+              created_at TEXT NOT NULL,
+              updated_at TEXT NOT NULL
+            );
+            CREATE INDEX idx_promo_code ON promo_codes(code);
+            CREATE INDEX idx_promo_active ON promo_codes(is_active);
+          `);
+        }
+
+        if (!tableExists("renewal_reminder_logs")) {
+          db.exec(`
+            CREATE TABLE renewal_reminder_logs (
+              id TEXT PRIMARY KEY,
+              subscription_id TEXT NOT NULL REFERENCES member_subscriptions(id) ON DELETE CASCADE,
+              member_id TEXT NOT NULL REFERENCES members(id) ON DELETE CASCADE,
+              phone TEXT NOT NULL,
+              expiry_date TEXT NOT NULL,
+              sent_channel TEXT NOT NULL DEFAULT 'whatsapp',
+              status TEXT NOT NULL DEFAULT 'sent',
+              sent_at TEXT NOT NULL,
+              created_by TEXT REFERENCES users(id)
+            );
+            CREATE INDEX idx_reminder_sub ON renewal_reminder_logs(subscription_id);
+            CREATE INDEX idx_reminder_date ON renewal_reminder_logs(sent_at);
+          `);
+        }
+      },
+    },
+    {
+      version: 48,
+      statements: [],
+      callback: (db: Db) => {
+        const tableExists = (table: string) =>
+          db.count("SELECT COUNT(*) FROM sqlite_master WHERE type = 'table' AND name = ?", [table]) > 0;
+        const columnNames = (table: string) =>
+          new Set(db.all<{ name: string }>(`PRAGMA table_info(${table})`).map((c) => c.name));
+
+        if (tableExists("classes")) {
+          const cols = columnNames("classes");
+          if (!cols.has("discipline")) {
+            db.exec("ALTER TABLE classes ADD COLUMN discipline TEXT DEFAULT 'general'");
+          }
+          if (!cols.has("category")) {
+            db.exec("ALTER TABLE classes ADD COLUMN category TEXT DEFAULT 'all'");
+          }
+          if (!cols.has("level")) {
+            db.exec("ALTER TABLE classes ADD COLUMN level TEXT DEFAULT 'all_levels'");
+          }
+        }
+
+        if (tableExists("trainers")) {
+          const cols = columnNames("trainers");
+          if (!cols.has("rank_title")) {
+            db.exec("ALTER TABLE trainers ADD COLUMN rank_title TEXT");
+          }
+        }
+      },
+    },
+    {
+      version: 49,
+      statements: [],
+      fkOff: true,
+      callback: (db: Db) => {
+        const tableExists = (table: string) =>
+          db.count("SELECT COUNT(*) FROM sqlite_master WHERE type = 'table' AND name = ?", [table]) > 0;
+
+        const columnNames = (table: string) =>
+          new Set(db.all<{ name: string }>(`PRAGMA table_info(${table})`).map((c) => c.name));
+
+        db.run("INSERT OR IGNORE INTO permissions (code) VALUES ('classes.purge')");
+        db.run("INSERT OR IGNORE INTO permissions (code) VALUES ('trainers.purge')");
+        db.run("INSERT OR IGNORE INTO role_permissions (role_id, permission_code) VALUES ('manager', 'classes.purge')");
+        db.run("INSERT OR IGNORE INTO role_permissions (role_id, permission_code) VALUES ('manager', 'trainers.purge')");
+
+        if (tableExists("store_sale_items")) {
+          const cols = columnNames("store_sale_items");
+          const hasSnapshot = cols.has("product_name_snapshot");
+          const hasReturned = cols.has("returned_qty");
+          const hasSku = cols.has("product_sku_snapshot");
+
+          db.exec(
+            "CREATE TABLE store_sale_items_v49 (\n" +
+            "  id TEXT PRIMARY KEY,\n" +
+            "  sale_id TEXT NOT NULL REFERENCES store_sales(id),\n" +
+            "  product_id TEXT REFERENCES products(id),\n" +
+            "  product_name_snapshot TEXT NOT NULL DEFAULT '',\n" +
+            "  qty REAL NOT NULL CHECK (qty > 0),\n" +
+            "  unit_price_minor INTEGER NOT NULL CHECK (unit_price_minor >= 0),\n" +
+            "  unit_cost_minor INTEGER NOT NULL DEFAULT 0 CHECK (unit_cost_minor >= 0),\n" +
+            "  line_total_minor INTEGER NOT NULL CHECK (line_total_minor >= 0),\n" +
+            "  returned_qty REAL NOT NULL DEFAULT 0 CHECK (returned_qty >= 0),\n" +
+            "  product_sku_snapshot TEXT\n" +
+            ")"
+          );
+          db.exec(
+            `INSERT INTO store_sale_items_v49 (id, sale_id, product_id, product_name_snapshot, qty, unit_price_minor, unit_cost_minor, line_total_minor, returned_qty, product_sku_snapshot) ` +
+            `SELECT id, sale_id, product_id, ${hasSnapshot ? "product_name_snapshot" : "''"}, qty, unit_price_minor, unit_cost_minor, line_total_minor, ${hasReturned ? "returned_qty" : "0"}, ${hasSku ? "product_sku_snapshot" : "NULL"} FROM store_sale_items`
+          );
+          db.exec("DROP TABLE store_sale_items");
+          db.exec("ALTER TABLE store_sale_items_v49 RENAME TO store_sale_items");
+          db.exec("CREATE INDEX IF NOT EXISTS idx_sale_items_sale ON store_sale_items(sale_id)");
+          db.exec("CREATE INDEX IF NOT EXISTS idx_sale_items_product ON store_sale_items(product_id)");
+        }
+
+        if (tableExists("store_return_items")) {
+          const cols = columnNames("store_return_items");
+          const hasSnapshot = cols.has("product_name_snapshot");
+          const hasSku = cols.has("product_sku_snapshot");
+
+          db.exec(
+            "CREATE TABLE store_return_items_v49 (\n" +
+            "  id TEXT PRIMARY KEY,\n" +
+            "  return_id TEXT NOT NULL REFERENCES store_returns(id),\n" +
+            "  sale_item_id TEXT NOT NULL REFERENCES store_sale_items(id),\n" +
+            "  product_id TEXT REFERENCES products(id),\n" +
+            "  product_name_snapshot TEXT NOT NULL DEFAULT '',\n" +
+            "  qty REAL NOT NULL CHECK (qty > 0),\n" +
+            "  unit_price_minor INTEGER NOT NULL CHECK (unit_price_minor >= 0),\n" +
+            "  unit_cost_minor INTEGER NOT NULL DEFAULT 0 CHECK (unit_cost_minor >= 0),\n" +
+            "  line_total_minor INTEGER NOT NULL CHECK (line_total_minor >= 0),\n" +
+            "  product_sku_snapshot TEXT\n" +
+            ")"
+          );
+          db.exec(
+            `INSERT INTO store_return_items_v49 (id, return_id, sale_item_id, product_id, product_name_snapshot, qty, unit_price_minor, unit_cost_minor, line_total_minor, product_sku_snapshot) ` +
+            `SELECT id, return_id, sale_item_id, product_id, ${hasSnapshot ? "product_name_snapshot" : "''"}, qty, unit_price_minor, unit_cost_minor, line_total_minor, ${hasSku ? "product_sku_snapshot" : "NULL"} FROM store_return_items`
+          );
+          db.exec("DROP TABLE store_return_items");
+          db.exec("ALTER TABLE store_return_items_v49 RENAME TO store_return_items");
+          db.exec("CREATE INDEX IF NOT EXISTS idx_store_return_items_return ON store_return_items(return_id)");
+          db.exec("CREATE INDEX IF NOT EXISTS idx_store_return_items_product ON store_return_items(product_id)");
+          db.exec("CREATE INDEX IF NOT EXISTS idx_store_return_items_sale_item ON store_return_items(sale_item_id)");
+        }
+      },
+    },
   ];
 }
 

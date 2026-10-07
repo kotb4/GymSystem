@@ -5,10 +5,33 @@ import type { Db } from "@/db/engine";
 import { assertDepartmentAccess, memberDepartmentById } from "./department";
 
 /** Outstanding balances for one member across gym subscriptions + store debts. */
+export interface OutstandingSubscriptionItem {
+  subscriptionId: string;
+  planName: string;
+  startDate: string;
+  endDate: string;
+  priceMinor: number;
+  paidMinor: number;
+  discountMinor: number;
+  remainingMinor: number;
+}
+
+export interface OutstandingStoreDebtItem {
+  debtId: string;
+  saleId: string;
+  saleNo: string;
+  createdAt: string;
+  originalMinor: number;
+  paidMinor: number;
+  remainingMinor: number;
+}
+
 export interface MemberOutstanding {
   subscriptionsMinor: number;
   storeMinor: number;
   totalMinor: number;
+  subscriptions: OutstandingSubscriptionItem[];
+  storeDebts: OutstandingStoreDebtItem[];
 }
 
 export function getMemberOutstanding(
@@ -19,30 +42,103 @@ export function getMemberOutstanding(
   requirePermission(actor, "members.view");
   assertDepartmentAccess(actor, memberDepartmentById(db, memberId));
 
-  const subs = Number(
-    db.scalar(
-      `WITH paid AS (
-        SELECT subscription_id, SUM(paid_amount_minor) AS p, SUM(discount_amount_minor) AS d
-        FROM payments
-        WHERE status IN ('partial', 'paid')
-        GROUP BY subscription_id
-      )
-      SELECT COALESCE(SUM(MAX(CAST(ROUND(s.price * 100) AS INTEGER) - COALESCE(paid.p, 0) - COALESCE(paid.d, 0), 0)), 0)
-      FROM member_subscriptions s
-      LEFT JOIN paid ON paid.subscription_id = s.id
-      WHERE s.member_id = ? AND s.status = 'active'`,
-      [memberId],
-    ) ?? 0,
+  const subRows = db.all<{
+    id: string;
+    plan_name: string | null;
+    start_date: string;
+    end_date: string;
+    price: number;
+    paid: number | null;
+    disc: number | null;
+  }>(
+    `WITH paid AS (
+      SELECT subscription_id, SUM(paid_amount_minor) AS p, SUM(discount_amount_minor) AS d
+      FROM payments
+      WHERE status IN ('partial', 'paid')
+      GROUP BY subscription_id
+    )
+    SELECT
+      s.id,
+      p.name AS plan_name,
+      s.start_date,
+      s.end_date,
+      s.price,
+      paid.p AS paid,
+      paid.d AS disc
+    FROM member_subscriptions s
+    JOIN membership_plans p ON p.id = s.plan_id
+    LEFT JOIN paid ON paid.subscription_id = s.id
+    WHERE s.member_id = ? AND s.status = 'active'`,
+    [memberId],
   );
 
-  const store = Number(
-    db.scalar(
-      "SELECT COALESCE(SUM(original_minor - paid_minor), 0) FROM store_debts WHERE member_id = ? AND status = 'open'",
-      [memberId],
-    ) ?? 0,
+  const subscriptions: OutstandingSubscriptionItem[] = [];
+  let subsTotal = 0;
+
+  for (const row of subRows) {
+    const priceMinor = Math.round(Number(row.price) * 100);
+    const paidMinor = Number(row.paid ?? 0);
+    const discountMinor = Number(row.disc ?? 0);
+    const remainingMinor = Math.max(0, priceMinor - paidMinor - discountMinor);
+    if (remainingMinor > 0) {
+      subsTotal += remainingMinor;
+      subscriptions.push({
+        subscriptionId: row.id,
+        planName: row.plan_name ?? "—",
+        startDate: row.start_date,
+        endDate: row.end_date,
+        priceMinor,
+        paidMinor,
+        discountMinor,
+        remainingMinor,
+      });
+    }
+  }
+
+  const debtRows = db.all<{
+    id: string;
+    sale_id: string;
+    sale_no: string | null;
+    created_at: string;
+    original_minor: number;
+    paid_minor: number;
+  }>(
+    `SELECT d.id, d.sale_id, s.sale_no, d.created_at, d.original_minor, d.paid_minor
+    FROM store_debts d
+    JOIN store_sales s ON s.id = d.sale_id
+    WHERE d.member_id = ? AND d.status = 'open'
+    ORDER BY d.created_at ASC`,
+    [memberId],
   );
 
-  return { subscriptionsMinor: subs, storeMinor: store, totalMinor: subs + store };
+  const storeDebts: OutstandingStoreDebtItem[] = [];
+  let storeTotal = 0;
+
+  for (const row of debtRows) {
+    const orig = Number(row.original_minor);
+    const paid = Number(row.paid_minor);
+    const remainingMinor = Math.max(0, orig - paid);
+    if (remainingMinor > 0) {
+      storeTotal += remainingMinor;
+      storeDebts.push({
+        debtId: row.id,
+        saleId: row.sale_id,
+        saleNo: row.sale_no ?? "—",
+        createdAt: row.created_at,
+        originalMinor: orig,
+        paidMinor: paid,
+        remainingMinor,
+      });
+    }
+  }
+
+  return {
+    subscriptionsMinor: subsTotal,
+    storeMinor: storeTotal,
+    totalMinor: subsTotal + storeTotal,
+    subscriptions,
+    storeDebts,
+  };
 }
 
 export interface MethodBreakdownRow {

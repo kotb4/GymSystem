@@ -1,4 +1,4 @@
-﻿import { useEffect, useState } from "react";
+import { useEffect, useState } from "react";
 import { Pencil, Plus, ReceiptText, RotateCcw, Tags, Undo2 } from "lucide-react";
 import { useAuth } from "@/contexts/auth-context";
 import { useT } from "@/i18n";
@@ -20,6 +20,7 @@ import { EmptyState } from "@/components/ui/empty-state";
 import { Pagination } from "@/components/ui/pagination";
 import { ConfirmDialog } from "@/components/ui/confirm-dialog";
 import { ExpenseFormModal, ExpenseCategoriesModal, ExpenseVoidModal } from "@/components/finance/expense-form-modal";
+import { BranchBadge } from "@/components/ui/branch-badge";
 
 export function ExpensesPage() {
   const t = useT();
@@ -151,6 +152,11 @@ export function ExpensesPage() {
     },
     { key: "method", header: t("exp.colMethod"), render: (row) => <span className="text-subtle">{row.methodLabel}</span> },
     {
+      key: "branch",
+      header: t("common.branch"),
+      render: (row) => <BranchBadge branchId={row.expense.branchId} />,
+    },
+    {
       key: "ref",
       header: t("exp.colRef"),
       render: (row) => <span dir="ltr" className="text-faint tabnum">{row.referenceNo ?? "—"}</span>,
@@ -230,7 +236,7 @@ export function ExpensesPage() {
       <Card>
         <CardHeader title={t("common.search")} />
         <div className="grid gap-3 px-5 pb-4 sm:grid-cols-2 xl:grid-cols-5">
-          <Input placeholder={t("common.search")} value={search} onChange={(e) => setSearch(e.target.value)} />
+          <Input label={t("common.search")} placeholder={t("common.search")} value={search} onChange={(e) => setSearch(e.target.value)} />
           <Input
             label={t("pay.filterFrom")}
             type="date"

@@ -88,7 +88,7 @@ export function LoyaltyTab({ ctx }: TabProps) {
       const [bal, tx, cat] = await Promise.all([
         api.loyalty.getMemberBalance(member.id),
         api.loyalty.listMemberTransactions(member.id),
-        canManage ? api.loyalty.getRedemptionCatalog() : Promise.resolve([] as RedemptionItem[]),
+        api.loyalty.getRedemptionCatalog(),
       ]);
       setBalance(bal);
       setRows(tx.items);
@@ -98,7 +98,7 @@ export function LoyaltyTab({ ctx }: TabProps) {
     } finally {
       setLoading(false);
     }
-  }, [member.id, canManage]);
+  }, [member.id]);
 
   useEffect(() => { load(); }, [load]);
 

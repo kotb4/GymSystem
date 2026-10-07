@@ -26,10 +26,51 @@ function toError(payload: unknown, status: number): Error {
   return new AppError("INTERNAL", "errors.unexpected");
 }
 
+const TOKEN_STORAGE_KEY = "gymsystem_auth_token";
+let inMemoryToken: string | null = null;
+
+export function getStoredToken(): string | null {
+  if (inMemoryToken) return inMemoryToken;
+  try {
+    if (typeof window !== "undefined" && window.localStorage) {
+      const stored = window.localStorage.getItem(TOKEN_STORAGE_KEY);
+      if (stored) {
+        inMemoryToken = stored;
+        return stored;
+      }
+    }
+  } catch {
+    // localStorage restricted/disabled
+  }
+  return null;
+}
+
+export function setStoredToken(token: string | null): void {
+  inMemoryToken = token;
+  try {
+    if (typeof window !== "undefined" && window.localStorage) {
+      if (token) {
+        window.localStorage.setItem(TOKEN_STORAGE_KEY, token);
+      } else {
+        window.localStorage.removeItem(TOKEN_STORAGE_KEY);
+      }
+    }
+  } catch {
+    // localStorage restricted/disabled
+  }
+}
+
 async function request<T>(url: string, init?: RequestInit): Promise<T> {
+  const token = getStoredToken();
+  const headers = new Headers(init?.headers);
+  if (token && !headers.has("Authorization")) {
+    headers.set("Authorization", `Bearer ${token}`);
+  }
+  headers.set("x-disable-cookies", "1");
+
   let res: Response;
   try {
-    res = await fetch(url, { credentials: "same-origin", ...init });
+    res = await fetch(url, { credentials: "same-origin", ...init, headers });
   } catch {
     // backend not reachable (should not happen in the packaged app)
     throw new AppError("INTERNAL", "boot.failed");
@@ -82,6 +123,7 @@ export interface MeResponse {
     department?: "general" | "men" | "women";
   } | null;
   needsSetup: boolean;
+  featureFlags?: Record<string, boolean>;
 }
 
 export { request };

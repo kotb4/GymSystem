@@ -26,12 +26,21 @@ import {
   Info,
   PauseCircle,
   PlayCircle,
+  Plus,
   Send,
+  ShieldBan,
+  ShieldCheck,
+  Smartphone,
   Snowflake,
+  Ticket,
   Trash2,
+  Undo2,
 } from "lucide-react";
 import { FreezeSubscriptionModal } from "@/components/subscriptions/freeze-subscription-modal";
 import { RenewModal } from "../modals/renew-modal";
+import { SubscriptionContractActions } from "@/components/subscriptions/subscription-contract-actions";
+import { AssignCardModal } from "@/components/cards/assign-card-modal";
+import { GuestInvitationsModal } from "@/components/subscriptions/guest-invitations-modal";
 import type { TabProps } from "../types";
 import { permissionDeniedNode } from "../helpers";
 
@@ -52,8 +61,11 @@ export function MembershipTab({ ctx }: TabProps) {
 function CardsCard({ ctx }: TabProps) {
   const t = useT();
   const { hasPermission } = useAuth();
+  const { toast } = useToast();
   const [cards, setCards] = useState<CardWithMember[]>([]);
   const [qrFor, setQrFor] = useState<CardWithMember | null>(null);
+  const [deleteTarget, setDeleteTarget] = useState<CardWithMember | null>(null);
+  const [deleteBusy, setDeleteBusy] = useState(false);
   const reload = useCallback(() => {
     let alive = true;
     api.cards
@@ -69,11 +81,38 @@ function CardsCard({ ctx }: TabProps) {
   useEffect(() => {
     reload();
   }, [reload, ctx.reloadTick]);
+
+  const runDelete = async () => {
+    if (!deleteTarget) return;
+    setDeleteBusy(true);
+    try {
+      const result = await api.cards.delete(deleteTarget.id, true);
+      if (result.detachedAttendance > 0) {
+        toast(
+          "success",
+          t("cards.deletedToastWithAttendance", { count: result.detachedAttendance }),
+        );
+      } else {
+        toast(
+          "success",
+          result.unassigned ? t("cards.deletedToastUnassigned") : t("cards.deletedToast"),
+        );
+      }
+      setDeleteTarget(null);
+      reload();
+    } catch (err) {
+      toast("error", describeError(err, t));
+    } finally {
+      setDeleteBusy(false);
+    }
+  };
+
   interface Row {
     id: string;
     cardId: string;
     barcodeValue: string;
     status: CardWithMember["status"];
+    kind: CardWithMember["kind"];
     assignedAt: string | null;
   }
   const rows: Row[] = cards.map((c) => ({
@@ -81,16 +120,61 @@ function CardsCard({ ctx }: TabProps) {
     cardId: c.id,
     barcodeValue: c.barcodeValue,
     status: c.status,
+    kind: c.kind,
     assignedAt: c.assignedAt,
   }));
+  const [assignOpen, setAssignOpen] = useState(false);
+
+  const toggleBlock = async (card: CardWithMember) => {
+    try {
+      const blocking = card.status !== "blocked";
+      await api.cards.setBlocked(card.id, blocking);
+      toast("success", blocking ? t("cards.blockedToast") : t("cards.unblockedToast"));
+      reload();
+    } catch (err) {
+      toast("error", describeError(err, t));
+    }
+  };
+
+  const unassignCard = async (card: CardWithMember) => {
+    try {
+      await api.cards.unassign(card.id);
+      toast("success", t("cards.unassignedToast"));
+      reload();
+    } catch (err) {
+      toast("error", describeError(err, t));
+    }
+  };
+
+  const hasVirtualCard = cards.some((c) => c.kind === "virtual" && c.status === "assigned");
+  const [virtualBusy, setVirtualBusy] = useState(false);
+
+  const handleCreateVirtualCard = async () => {
+    setVirtualBusy(true);
+    try {
+      await api.cards.createVirtualCard(ctx.member.id);
+      toast("success", t("cards.virtualCardCreatedToast"));
+      reload();
+    } catch (err) {
+      toast("error", describeError(err, t));
+    } finally {
+      setVirtualBusy(false);
+    }
+  };
+
   const columns: Column<Row>[] = [
     {
       key: "barcode",
       header: t("cards.barcode"),
       render: (row) => (
-        <span dir="ltr" className="font-mono font-bold tracking-wider">
-          {row.barcodeValue}
-        </span>
+        <div className="flex items-center gap-2">
+          <span dir="ltr" className="font-mono font-bold tracking-wider">
+            {row.barcodeValue}
+          </span>
+          <Badge variant={row.kind === "virtual" ? "info" : "neutral"}>
+            {row.kind === "virtual" ? t("cards.kindVirtual") : t("cards.kindPhysical")}
+          </Badge>
+        </div>
       ),
     },
     {
@@ -115,31 +199,87 @@ function CardsCard({ ctx }: TabProps) {
           <span className="text-faint">—</span>
         ),
     },
-    ...(hasPermission("cards.send")
+    ...(hasPermission("cards.send") || hasPermission("cards.delete") || hasPermission("cards.block") || hasPermission("cards.unassign")
       ? [
           {
             key: "actions" as const,
             header: "" as const,
-            render: (row: Row) => (
-              <Button
-                size="sm"
-                variant="ghost"
-                onClick={() => {
-                  const card = cards.find((c) => c.id === row.id);
-                  if (card) setQrFor(card);
-                }}
-              >
-                <Send className="size-3.5" />
-                {t("cards.sendQrShort")}
-              </Button>
-            ),
+            render: (row: Row) => {
+              const card = cards.find((c) => c.id === row.id);
+              if (!card) return null;
+              return (
+                <div className="flex items-center justify-end gap-1">
+                  {hasPermission("cards.send") && (
+                    <Button size="sm" variant="ghost" onClick={() => setQrFor(card)} title={t("cards.sendQr")}>
+                      <Send className="size-3.5" />
+                      {t("cards.sendQrShort")}
+                    </Button>
+                  )}
+                  {hasPermission("cards.unassign") && card.status === "assigned" && (
+                    <Button size="sm" variant="ghost" onClick={() => void unassignCard(card)} title={t("cards.actionUnassign")}>
+                      <Undo2 className="size-3.5" />
+                    </Button>
+                  )}
+                  {hasPermission("cards.block") && card.status !== "lost" && (
+                    <Button
+                      size="sm"
+                      variant="ghost"
+                      onClick={() => void toggleBlock(card)}
+                      title={card.status === "blocked" ? t("cards.actionUnblock") : t("cards.actionBlock")}
+                    >
+                      {card.status === "blocked" ? (
+                        <ShieldCheck className="size-3.5 text-emerald-400" />
+                      ) : (
+                        <ShieldBan className="size-3.5 text-amber" />
+                      )}
+                    </Button>
+                  )}
+                  {hasPermission("cards.delete") && (
+                    <Button
+                      size="sm"
+                      variant="ghost"
+                      className="text-red"
+                      onClick={() => setDeleteTarget(card)}
+                      title={t("cards.actionDelete")}
+                    >
+                      <Trash2 className="size-3.5" />
+                    </Button>
+                  )}
+                </div>
+              );
+            },
           },
         ]
       : []),
   ];
   return (
     <Card>
-      <CardHeader title={t("members.tabCards")} />
+      <CardHeader
+        title={t("members.tabCards")}
+        action={
+          hasPermission("cards.assign") ? (
+            <div className="flex items-center gap-2">
+              {!hasVirtualCard && (
+                <Button
+                  size="sm"
+                  variant="primary"
+                  onClick={() => void handleCreateVirtualCard()}
+                  loading={virtualBusy}
+                  disabled={virtualBusy}
+                  title={t("cards.createVirtualCard")}
+                >
+                  <Smartphone className="size-3.5" />
+                  {t("cards.createVirtualCard")}
+                </Button>
+              )}
+              <Button size="sm" variant="secondary" onClick={() => setAssignOpen(true)}>
+                <Plus className="size-3.5" />
+                {t("members.qaAssignCard")}
+              </Button>
+            </div>
+          ) : undefined
+        }
+      />
       {rows.length === 0 ? (
         <EmptyState icon={<CreditCard />} title={t("members.noCards")} />
       ) : (
@@ -155,6 +295,31 @@ function CardsCard({ ctx }: TabProps) {
           onClose={() => setQrFor(null)}
         />
       )}
+      {assignOpen && (
+        <AssignCardModal
+          open={assignOpen}
+          onClose={() => setAssignOpen(false)}
+          onDone={() => {
+            setAssignOpen(false);
+            reload();
+          }}
+          presetMember={ctx.member}
+        />
+      )}
+      <ConfirmDialog
+        open={deleteTarget !== null}
+        onClose={() => setDeleteTarget(null)}
+        title={t("cards.deleteTitle")}
+        confirmLabel={t("cards.deleteConfirm")}
+        message={
+          <span className="space-y-2">
+            <span className="block">{t("cards.deleteMsgAssigned", { member: ctx.member.fullName })}</span>
+            <span className="block text-[12px] text-faint">{t("cards.deleteAttendanceNote")}</span>
+          </span>
+        }
+        loading={deleteBusy}
+        onConfirm={() => void runDelete()}
+      />
     </Card>
   );
 }
@@ -170,6 +335,8 @@ function SubsCard({ ctx }: TabProps) {
   const [detailsTarget, setDetailsTarget] = useState<Subscription | null>(null);
   const [freezeTarget, setFreezeTarget] = useState<Subscription | null>(null);
   const [freezeHistory, setFreezeHistory] = useState<FreezeInfo[]>([]);
+  const [invitationsModalOpen, setInvitationsModalOpen] = useState(false);
+  const [invitationSubId, setInvitationSubId] = useState<string | undefined>(undefined);
   const [busy, setBusy] = useState(false);
   const [statusFilter, setStatusFilter] = useState("all");
   const [balances, setBalances] = useState<Record<string, { paidMinor: number; discountedMinor: number; remainingMinor: number }>>({});
@@ -500,6 +667,22 @@ function SubsCard({ ctx }: TabProps) {
                 {t("subs.renew")}
               </Button>
             )}
+            {hasPermission("invitations.manage") && row.effective === "active" && (
+              <Button
+                size="sm"
+                variant="secondary"
+                onClick={() => {
+                  setInvitationSubId(row.id);
+                  setInvitationsModalOpen(true);
+                }}
+                className="border-neon/40 text-neon hover:bg-neon/10"
+                title="دعوة ضيف"
+              >
+                <Ticket className="size-3.5" />
+                {t("members.inviteGuestBtn")}
+              </Button>
+            )}
+            <SubscriptionContractActions subscriptionId={row.id} size="sm" />
             {hasPermission("subscriptions.purge") && (
               <Button
                 size="sm"
@@ -538,6 +721,19 @@ function SubsCard({ ctx }: TabProps) {
                 { value: "cancelled", label: t("subs.filterCancelled") },
               ]}
             />
+            {hasPermission("invitations.manage") && ctx.member.status !== "archived" && (
+              <Button
+                variant="secondary"
+                onClick={() => {
+                  setInvitationSubId(undefined);
+                  setInvitationsModalOpen(true);
+                }}
+                className="border-neon/40 text-neon hover:bg-neon/10 font-bold"
+              >
+                <Ticket className="size-4" />
+                {t("members.inviteGuestBtn")}
+              </Button>
+            )}
             {hasPermission("subscriptions.create") && ctx.member.status !== "archived" && (
               <Button onClick={() => ctx.onAddSubscription()}>
                 <CalendarPlus className="size-4" />
@@ -655,6 +851,13 @@ function SubsCard({ ctx }: TabProps) {
             );
           })()}
       </Modal>
+      <GuestInvitationsModal
+        open={invitationsModalOpen}
+        onClose={() => setInvitationsModalOpen(false)}
+        memberId={ctx.member.id}
+        memberName={ctx.member.fullName}
+        subscriptionId={invitationSubId}
+      />
     </Card>
   );
 }

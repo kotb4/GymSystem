@@ -4,6 +4,7 @@ import { requirePermission, type ServiceActor } from "@/core/permissions";
 import type { Db, Row } from "@/db/engine";
 import { recordAudit } from "./audit.service";
 import { insertLedgerEntry } from "./payments.service";
+import { getLocalBranchId } from "@/core/branch";
 
 export type ExpenseStatus = "active" | "voided";
 
@@ -17,6 +18,7 @@ export interface ExpenseRow extends Row {
   reference_no: string | null;
   status: ExpenseStatus;
   created_by: string;
+  branch_id: string | null;
 }
 
 export interface Expense {
@@ -33,6 +35,7 @@ export interface Expense {
   createdBy: string;
   createdByName: string;
   createdAt: string;
+  branchId?: string | null;
 }
 
 export interface ExpenseCategory {
@@ -58,6 +61,7 @@ function mapExpense(row: ExpenseRow & Record<string, unknown>): Expense {
     status: row.status as ExpenseStatus,
     createdBy: row.created_by,
     createdByName: String(row.creator_name ?? ""),
+    branchId: (row.branch_id as string) ?? "main",
     createdAt: String(row.created_at ?? ""),
   };
 }
@@ -111,7 +115,7 @@ export async function createExpense(
   const stamp = nowStamp();
   await db.transaction(async () => {
     db.run(
-      "INSERT INTO expenses (id, category_id, amount_minor, method_code, description, expense_date, reference_no, status, created_by, created_at, updated_at)\nVALUES (?, ?, ?, ?, ?, ?, ?, 'active', ?, ?, ?)",
+      "INSERT INTO expenses (id, category_id, amount_minor, method_code, description, expense_date, reference_no, status, created_by, created_at, updated_at, branch_id)\nVALUES (?, ?, ?, ?, ?, ?, ?, 'active', ?, ?, ?, ?)",
       [
         id,
         input.categoryId,
@@ -123,6 +127,7 @@ export async function createExpense(
         actor.userId,
         stamp,
         stamp,
+        getLocalBranchId(db),
       ],
     );
     insertLedgerEntry(db, {

@@ -121,23 +121,20 @@ describe("store history integrity (TASK-041)", () => {
     ).rejects.toMatchObject({ messageKey: "errors.store.productInactive" });
   });
 
-  it("refuses destructive purge of a product referenced by sales; nothing is deleted or audited", async () => {
+  it("allows authorized purge of a product referenced by sales; unlinks product and preserves sale line snapshot", async () => {
     const p = await soldProduct();
     const sale = await createSale(db, owner, {
       items: [{ productId: p.id, qty: 1 }],
       methodCode: "cash",
     });
 
-    await expect(purgeProduct(db, owner, p.id)).rejects.toMatchObject({
-      code: "CONFLICT",
-      messageKey: "errors.store.productSold",
-    });
-    expect(db.count("SELECT COUNT(*) AS c FROM products WHERE id = ?", [p.id])).toBe(1);
-    expect(db.count("SELECT COUNT(*) AS c FROM store_sale_items WHERE sale_id = ?", [sale.id])).toBe(1);
-    expect(db.count("SELECT COUNT(*) AS c FROM stock_movements WHERE product_id = ?", [p.id])).toBeGreaterThan(0);
+    await purgeProduct(db, owner, p.id);
+    expect(db.count("SELECT COUNT(*) AS c FROM products WHERE id = ?", [p.id])).toBe(0);
+    expect(db.count("SELECT COUNT(*) AS c FROM store_sale_items WHERE sale_id = ? AND product_id IS NULL", [sale.id])).toBe(1);
+    expect(db.count("SELECT COUNT(*) AS c FROM stock_movements WHERE product_id = ?", [p.id])).toBe(0);
     expect(
-      db.count("SELECT COUNT(*) AS c FROM audit_logs WHERE action = 'PRODUCT_PURGED'"),
-    ).toBe(0);
+      db.count("SELECT COUNT(*) AS c FROM audit_logs WHERE action = 'PRODUCT_PURGED' AND entity_id = ?", [p.id]),
+    ).toBe(1);
   });
 
   it("denies non-owner roles from purging (permission check precedes history guard)", async () => {

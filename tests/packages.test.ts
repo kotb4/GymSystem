@@ -6,6 +6,7 @@ import { assignCardByBarcode } from "@/core/services/cards.service";
 import { recordCheckIn } from "@/core/services/attendance.service";
 import { createSubscription } from "@/core/services/subscriptions.service";
 import * as packages from "@/core/services/packages.service";
+import * as plans from "@/core/services/plans.service";
 import { updateSetting } from "@/core/services/settings.service";
 import type { Db } from "@/db/engine";
 import type { ServiceActor } from "@/core/permissions";
@@ -223,7 +224,7 @@ describe("package CRUD + validation", () => {
       "SELECT price, duration_days, sessions_count FROM membership_plans WHERE id = ?",
       [pkg.syntheticPlanId!],
     )!;
-    expect(plan.price).toBe(60000);
+    expect(plan.price).toBe(600);
     expect(plan.duration_days).toBe(60);
     expect(plan.sessions_count).toBe(15);
   });
@@ -282,6 +283,7 @@ describe("package subscription snapshot + check-in", () => {
       planId: pkg.syntheticPlanId!,
       packageId: pkg.id,
     });
+    expect(sub.price).toBe(450);
     const row = db.first<{
       package_id: string | null;
       package_name: string | null;
@@ -355,5 +357,76 @@ describe("package subscription snapshot + check-in", () => {
     await expect(freezeSubscription(db, owner, sub.id, { endDate: subEnd, reason: "مرة أخرى" })).rejects.toMatchObject(
       { messageKey: "errors.freezeMaxReached" },
     );
+  });
+
+  it("deletes an unreferenced package hard and its synthetic plan", async () => {
+    const pkg = await packages.createPackage(db, owner, {
+      name: "باقة تجريبية للحذف",
+      model: "time",
+      durationDays: 30,
+      price: 15000,
+    });
+    expect(pkg.id).toBeTruthy();
+    const res = await packages.deletePackage(db, owner, pkg.id);
+    expect(res).toEqual({ success: true, softDeactivated: false });
+    expect(db.first("SELECT id FROM packages WHERE id = ?", [pkg.id])).toBeNull();
+    if (pkg.syntheticPlanId) {
+      expect(db.first("SELECT id FROM membership_plans WHERE id = ?", [pkg.syntheticPlanId])).toBeNull();
+    }
+  });
+
+  it("soft-deactivates package and synthetic plan when referenced by subscriptions", async () => {
+    const pkg = await packages.createPackage(db, owner, {
+      name: "باقة مستخدمة للاشتراك",
+      model: "time",
+      durationDays: 30,
+      price: 15000,
+    });
+    const member = await createMember(db, owner, { fullName: "مشترك باقة" });
+    await createSubscription(db, owner, {
+      memberId: member.id,
+      planId: pkg.syntheticPlanId!,
+      packageId: pkg.id,
+    });
+
+    const res = await packages.deletePackage(db, owner, pkg.id);
+    expect(res).toEqual({ success: true, softDeactivated: true });
+
+    const pkgRow = db.first<{ is_active: number }>("SELECT is_active FROM packages WHERE id = ?", [pkg.id]);
+    expect(pkgRow?.is_active).toBe(0);
+
+    const planRow = db.first<{ is_active: number }>(
+      "SELECT is_active FROM membership_plans WHERE id = ?",
+      [pkg.syntheticPlanId!],
+    );
+    expect(planRow?.is_active).toBe(0);
+  });
+
+  it("deletes an unreferenced plan hard, and soft-deactivates when referenced", async () => {
+    const p1 = await plans.createPlan(db, owner, {
+      name: "خطة عادية للحذف",
+      durationDays: 30,
+      price: 10000,
+      kind: "time",
+    });
+    const res1 = await plans.deletePlan(db, owner, p1.id);
+    expect(res1).toEqual({ success: true, softDeactivated: false });
+    expect(db.first("SELECT id FROM membership_plans WHERE id = ?", [p1.id])).toBeNull();
+
+    const p2 = await plans.createPlan(db, owner, {
+      name: "خطة مشتركة",
+      durationDays: 30,
+      price: 10000,
+      kind: "time",
+    });
+    const member = await createMember(db, owner, { fullName: "مشترك خطة" });
+    await createSubscription(db, owner, {
+      memberId: member.id,
+      planId: p2.id,
+    });
+    const res2 = await plans.deletePlan(db, owner, p2.id);
+    expect(res2).toEqual({ success: true, softDeactivated: true });
+    const row = db.first<{ is_active: number }>("SELECT is_active FROM membership_plans WHERE id = ?", [p2.id]);
+    expect(row?.is_active).toBe(0);
   });
 });

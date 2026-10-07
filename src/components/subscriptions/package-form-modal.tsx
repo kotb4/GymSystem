@@ -34,6 +34,7 @@ export function PackageFormModal({ open, onClose, onSaved, pkg }: PackageFormMod
   const [freezeAllowanceDays, setFreezeAllowanceDays] = useState("0");
   const [allowedFreezes, setAllowedFreezes] = useState("0");
   const [ptSessions, setPtSessions] = useState("0");
+  const [invitationsCount, setInvitationsCount] = useState("0");
   const [allowedAreas, setAllowedAreas] = useState<AccessArea[]>(["general"]);
   const [description, setDescription] = useState("");
   const [isActive, setIsActive] = useState(true);
@@ -51,6 +52,7 @@ export function PackageFormModal({ open, onClose, onSaved, pkg }: PackageFormMod
     setFreezeAllowanceDays(pkg ? String(pkg.freezeAllowanceDays) : "0");
     setAllowedFreezes(pkg ? String(pkg.allowedFreezes) : "0");
     setPtSessions(pkg ? String(pkg.ptSessions) : "0");
+    setInvitationsCount(pkg ? String(pkg.invitationsCount ?? 0) : "0");
     setAllowedAreas(pkg && pkg.allowedAreas.length ? pkg.allowedAreas : ["general"]);
     setDescription(pkg?.description ?? "");
     setIsActive(pkg ? pkg.isActive : true);
@@ -76,6 +78,7 @@ export function PackageFormModal({ open, onClose, onSaved, pkg }: PackageFormMod
       freezeAllowanceDays: Number(freezeAllowanceDays || "0"),
       allowedFreezes: Number(allowedFreezes || "0"),
       ptSessions: Number(ptSessions || "0"),
+      invitationsCount: Number(invitationsCount || "0"),
       allowedAreas,
       description: description.trim() || null,
     };
@@ -174,7 +177,7 @@ export function PackageFormModal({ open, onClose, onSaved, pkg }: PackageFormMod
             )}
           </div>
         )}
-        <div className="grid gap-3.5 sm:grid-cols-3">
+        <div className="grid gap-3.5 sm:grid-cols-2 lg:grid-cols-4">
           <Input
             label={t("packages.freezeAllowanceDays")}
             type="number"
@@ -200,6 +203,15 @@ export function PackageFormModal({ open, onClose, onSaved, pkg }: PackageFormMod
             dir="ltr"
             value={ptSessions}
             onChange={(e) => setPtSessions(e.target.value)}
+            disabled={submitting}
+          />
+          <Input
+            label="دعوات الضيوف المجانية"
+            type="number"
+            min={0}
+            dir="ltr"
+            value={invitationsCount}
+            onChange={(e) => setInvitationsCount(e.target.value)}
             disabled={submitting}
           />
         </div>

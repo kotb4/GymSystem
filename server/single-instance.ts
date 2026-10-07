@@ -173,40 +173,32 @@ export async function ensureSingleActiveInstance(options: {
     options.exeName ?? (process.platform === "win32" ? path.basename(process.execPath) : undefined);
 
   const portInUse = await isPortInUse(port);
-  const otherPids = exeName ? findOtherExePids(exeName) : [];
-
-  if (!portInUse && otherPids.length === 0) {
+  if (!portInUse) {
     return false;
   }
 
-  log(
-    `previous instance detected (port ${port} in use: ${portInUse}, old PIDs: ${otherPids.join(",") || "none"}). Terminating old instance to take over...`,
-  );
+  log(`previous instance detected on port ${port}. Terminating old instance to take over...`);
 
   // 1. Try graceful shutdown if port responds
-  if (portInUse) {
-    const graceful = await requestGracefulShutdown(port, 700);
-    if (graceful) {
-      log("sent graceful shutdown signal to previous instance");
-      await new Promise((r) => setTimeout(r, 350));
-    }
+  const graceful = await requestGracefulShutdown(port, 700);
+  if (graceful) {
+    log(`sent graceful shutdown signal to previous instance on port ${port}`);
+    await new Promise((r) => setTimeout(r, 350));
   }
 
-  // 2. Terminate any other instances of the same executable
-  if (exeName) {
-    const remainingExePids = findOtherExePids(exeName);
-    for (const pid of remainingExePids) {
-      log(`terminating previous executable process (PID ${pid})...`);
-      killProcess(pid, true);
-    }
-  }
-
-  // 3. Force kill whatever is still occupying the port
+  // 2. If port is still occupying, terminate the specific PID listening on this port
   if (await isPortInUse(port)) {
     const listeningPid = findPidListeningOnPort(port);
     if (listeningPid && listeningPid !== process.pid) {
       log(`terminating process occupying port ${port} (PID ${listeningPid})...`);
       killProcess(listeningPid, true);
+    } else if (exeName) {
+      // Fallback: if netstat didn't resolve PID but port is still locked, kill matching exe instances
+      const remainingExePids = findOtherExePids(exeName);
+      for (const pid of remainingExePids) {
+        log(`terminating executable process holding port (PID ${pid})...`);
+        killProcess(pid, true);
+      }
     }
   }
 

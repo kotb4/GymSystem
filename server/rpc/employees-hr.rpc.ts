@@ -4,6 +4,8 @@ import { a, defineService, type Fn } from "./helpers";
 export const employeesHr = defineService({
   clockIn: a(employeesHrService.clockIn as Fn),
   clockOut: a(employeesHrService.clockOut as Fn),
+  clockInEmployee: a(employeesHrService.clockInEmployee as Fn),
+  clockOutEmployee: a(employeesHrService.clockOutEmployee as Fn),
   clockInByBarcode: a(employeesHrService.clockInByBarcode as Fn),
   clockOutByBarcode: a(employeesHrService.clockOutByBarcode as Fn),
   setEmployeeBarcode: a(employeesHrService.setEmployeeBarcode as Fn),
@@ -28,4 +30,7 @@ export const employeesHr = defineService({
   employeeMonthlyHours: a(employeesHrService.employeeMonthlyHours as Fn),
   setLeaveEntitlements: a(employeesHrService.setLeaveEntitlements as Fn),
   ensureSalariesForMonth: a(employeesHrService.ensureSalariesForMonth as Fn),
+  listAdvances: a(employeesHrService.listAdvances as Fn),
+  addAdvance: a(employeesHrService.addAdvance as Fn),
+  cancelAdvance: a(employeesHrService.cancelAdvance as Fn),
 });

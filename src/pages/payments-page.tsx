@@ -1,4 +1,4 @@
-﻿import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { Banknote, RotateCcw, Undo2 } from "lucide-react";
 import { useAuth } from "@/contexts/auth-context";
 import { useT } from "@/i18n";
@@ -21,6 +21,8 @@ import { Pagination } from "@/components/ui/pagination";
 import { ConfirmDialog } from "@/components/ui/confirm-dialog";
 import { PaymentFormModal } from "@/components/finance/payment-form-modal";
 import { PaymentRefundModal, PaymentVoidModal } from "@/components/finance/payment-actions";
+import { ReceiptActions } from "@/components/finance/receipt-actions";
+import { useFocusRow } from "@/hooks/use-focus-row";
 
 const STATUS_OPTIONS: Array<{ value: string; key: string }> = [
   { value: "all", key: "common.all" },
@@ -39,6 +41,7 @@ function statusVariant(status: PaymentStatus): BadgeVariant {
 export function PaymentsPage() {
   const t = useT();
   const { actor, hasPermission } = useAuth();
+  const focusRowId = useFocusRow();
 
   const [search, setSearch] = useState("");
   const [debounced, setDebounced] = useState("");
@@ -130,6 +133,7 @@ export function PaymentsPage() {
     status: PaymentStatus;
     createdByName: string;
     reason: string | null;
+    receiptNo: string | null;
     payment: Payment;
   }
 
@@ -146,10 +150,23 @@ export function PaymentsPage() {
     status: p.status,
     createdByName: p.createdByName,
     reason: p.voidReason ?? p.refundReason ?? null,
+    receiptNo: p.receiptNo,
     payment: p,
   }));
 
   const columns: Column<Row>[] = [
+    {
+      key: "receiptNo",
+      header: t("pay.colReceiptNo"),
+      render: (row) =>
+        row.receiptNo ? (
+          <span dir="ltr" className="font-mono text-[11px] font-bold text-ink">
+            {row.receiptNo}
+          </span>
+        ) : (
+          <span className="text-faint">—</span>
+        ),
+    },
     {
       key: "date",
       header: t("pay.colDate"),
@@ -255,6 +272,7 @@ export function PaymentsPage() {
         }
         return (
           <div className="flex items-center gap-1">
+            {row.payment.status !== "voided" && <ReceiptActions paymentId={row.payment.id} size="sm" />}
             {hasPermission("payments.refund") && row.payment.paidAmountMinor > row.payment.refundedAmountMinor && (
               <Button variant="ghost" size="sm" onClick={() => setRefundTarget(row.payment)}>
                 <RotateCcw className="size-3.5" />
@@ -360,7 +378,7 @@ export function PaymentsPage() {
           <EmptyState icon={<Banknote />} title={t("pay.empty")} />
         ) : (
           <>
-            <DataTable columns={columns} data={rows} rowKey={(r) => r.id} />
+            <DataTable columns={columns} data={rows} rowKey={(r) => r.id} highlightRowKey={focusRowId} />
             <Pagination
               page={page}
               pageSize={appConfig.pageSize}

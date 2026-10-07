@@ -1,5 +1,7 @@
 import { useCallback, useEffect, useState, type ChangeEvent } from "react";
-import { Barcode, Minus, Package, Plus, RotateCcw, Trash2, Undo2 } from "lucide-react";
+import { Link } from "react-router-dom";
+import { Barcode, Minus, Package, Plus, RotateCcw, Trash2, Undo2, User, X } from "lucide-react";
+import { useFocusRow } from "@/hooks/use-focus-row";
 import { useAuth } from "@/contexts/auth-context";
 import { useT } from "@/i18n";
 import { useToast } from "@/components/ui/toast";
@@ -18,6 +20,8 @@ import { DataTable, type Column } from "@/components/ui/table";
 import { EmptyState } from "@/components/ui/empty-state";
 import { ConfirmDialog } from "@/components/ui/confirm-dialog";
 import { MemberPickerModal } from "@/components/members/member-picker-modal";
+import { BranchBadge } from "@/components/ui/branch-badge";
+import { StoreReceiptActions } from "@/components/store/store-receipt-actions";
 
 const MOVEMENT_LABEL_KEYS: Record<string, string> = {
   stock_in: "store.movement_stock_in",
@@ -44,6 +48,8 @@ const TAB_ITEMS = [
 export function StorePage() {
   const t = useT();
   const [tab, setTab] = useState("pos");
+  // A reference-number lookup can send us straight to one of the tabs below.
+  const focusRowId = useFocusRow();
   return (
     <div className="space-y-4">
       <Card>
@@ -58,9 +64,9 @@ export function StorePage() {
       </Card>
       {tab === "pos" && <PosTab onDone={() => setTab("sales")} />}
       {tab === "products" && <ProductsTab />}
-      {tab === "sales" && <SalesTab />}
-      {tab === "returns" && <ReturnsTab />}
-      {tab === "debts" && <DebtsTab />}
+      {tab === "sales" && <SalesTab highlightRowKey={focusRowId} />}
+      {tab === "returns" && <ReturnsTab highlightRowKey={focusRowId} />}
+      {tab === "debts" && <DebtsTab highlightRowKey={focusRowId} />}
       {tab === "movements" && <MovementsTab />}
       {tab === "reports" && <ReportsTab />}
     </div>
@@ -79,10 +85,16 @@ function PosTab({ onDone }: { onDone: () => void }) {
   const [discountMajor, setDiscountMajor] = useState("");
   const [methodCode, setMethodCode] = useState("cash");
   const [isCredit, setIsCredit] = useState(false);
-  const [creditMember, setCreditMember] = useState<{ id: string; fullName: string } | null>(null);
+  const [selectedMember, setSelectedMember] = useState<{ id: string; fullName: string } | null>(null);
   const [pickerOpen, setPickerOpen] = useState(false);
   const [submitting, setSubmitting] = useState(false);
   const canCredit = hasPermission("store.credit");
+
+  const [methods, setMethods] = useState<Array<{ code: string; labelAr: string }>>([]);
+
+  useEffect(() => {
+    api.payments.methods().then(setMethods).catch(console.error);
+  }, []);
 
   const loadProducts = useCallback(() => {
     api.store
@@ -113,7 +125,7 @@ function PosTab({ onDone }: { onDone: () => void }) {
 
   const completeSale = async () => {
     if (!actor || cart.length === 0) return;
-    if (isCredit && !creditMember) {
+    if (isCredit && !selectedMember) {
       toast("error", t("store.pickMemberCredit"));
       return;
     }
@@ -123,14 +135,14 @@ function PosTab({ onDone }: { onDone: () => void }) {
         items: cart.map((l) => ({ productId: l.productId, qty: l.qty })),
         discountMinor,
         methodCode,
-        memberId: isCredit ? creditMember!.id : null,
+        memberId: selectedMember ? selectedMember.id : null,
         isCredit,
       });
       toast("success", t("store.saleDoneToast", { no: sale.saleNo }));
       setCart([]);
       setDiscountMajor("");
       setIsCredit(false);
-      setCreditMember(null);
+      setSelectedMember(null);
       onDone();
     } catch (err) {
       toast("error", describeError(err, t));
@@ -199,25 +211,69 @@ function PosTab({ onDone }: { onDone: () => void }) {
                 <span dir="ltr" className="tabnum">{formatMinor(itemsTotalMinor)}</span>
               </div>
               <Input label={`${t("store.discount")} (ج.م)`} type="number" min={0} step="0.01" dir="ltr" value={discountMajor} onChange={(e: ChangeEvent<HTMLInputElement>) => setDiscountMajor(e.target.value)} />
-              <Select label={t("store.method")} value={methodCode} onChange={(e) => setMethodCode(e.target.value)} options={[
-                { value: "cash", label: "نقدي" },
-                { value: "bank_card", label: "بطاقة بنكية" },
-                { value: "transfer", label: "تحويل / محفظة" },
-                { value: "other", label: "أخرى" },
-              ]} />
-              {canCredit && (
-                <>
-                  <label className="flex items-center gap-2 text-sm font-semibold">
-                    <input type="checkbox" checked={isCredit} onChange={(e) => setIsCredit(e.target.checked)} className="accent-neon" />
+              <Select
+                label={t("store.method")}
+                value={methodCode}
+                onChange={(e) => setMethodCode(e.target.value)}
+                options={
+                  methods.length > 0
+                    ? methods.map((m) => ({ value: m.code, label: m.labelAr }))
+                    : [
+                        { value: "cash", label: "نقدي" },
+                        { value: "bank_card", label: "بطاقة بنكية" },
+                        { value: "transfer", label: "تحويل / محفظة" },
+                        { value: "other", label: "أخرى" },
+                      ]
+                }
+              />
+              {/* Member association (optional for cash/immediate, required for credit) */}
+              <div className="space-y-1.5 rounded-lg border border-line bg-surface/50 p-2.5">
+                <div className="flex items-center justify-between text-xs font-semibold">
+                  <span className="text-subtle">{t("store.linkedMember")}</span>
+                  {selectedMember && (
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setSelectedMember(null);
+                        setIsCredit(false);
+                      }}
+                      className="inline-flex items-center gap-1 text-[11px] text-faint hover:text-red"
+                    >
+                      <X className="size-3" />
+                      {t("common.clear")}
+                    </button>
+                  )}
+                </div>
+                {selectedMember ? (
+                  <div className="flex items-center justify-between rounded-lg border border-line bg-panel px-3 py-2 text-sm">
+                    <span className="flex items-center gap-1.5 font-bold">
+                      <User className="size-4 text-neon" />
+                      {selectedMember.fullName}
+                    </span>
+                    <Button variant="ghost" size="sm" onClick={() => setPickerOpen(true)}>
+                      {t("common.edit")}
+                    </Button>
+                  </div>
+                ) : (
+                  <Button variant="secondary" size="sm" fullWidth onClick={() => setPickerOpen(true)}>
+                    <User className="size-3.5" />
+                    {t("store.pickMember")}
+                  </Button>
+                )}
+
+                {canCredit && selectedMember && (
+                  <label className="mt-2 flex items-center gap-2 pt-1 text-sm font-semibold border-t border-line/60">
+                    <input
+                      type="checkbox"
+                      checked={isCredit}
+                      onChange={(e) => setIsCredit(e.target.checked)}
+                      className="accent-neon"
+                    />
                     {t("store.creditSale")}
                   </label>
-                  {isCredit && (
-                    <Button variant="secondary" size="sm" onClick={() => setPickerOpen(true)}>
-                      {creditMember?.fullName ?? t("store.pickMemberCredit")}
-                    </Button>
-                  )}
-                </>
-              )}
+                )}
+              </div>
+
               <div className="flex justify-between border-t border-line pt-3 text-base font-extrabold text-neon">
                 <span>{t("pay.summaryNet")}</span>
                 <span dir="ltr" className="tabnum">{formatMinor(totalMinor)}</span>
@@ -234,7 +290,7 @@ function PosTab({ onDone }: { onDone: () => void }) {
         open={pickerOpen}
         onClose={() => setPickerOpen(false)}
         onSelect={(m) => {
-          setCreditMember(m);
+          setSelectedMember(m);
           setPickerOpen(false);
         }}
       />
@@ -442,7 +498,7 @@ function StockModal({ product, onClose, onSaved }: { product: ProductPublic; onC
 
 // --------------------------------- sales ----------------------------------
 
-function SalesTab() {
+function SalesTab({ highlightRowKey }: { highlightRowKey?: string | null }) {
   const t = useT();
   const { hasPermission } = useAuth();
   const { toast } = useToast();
@@ -451,6 +507,7 @@ function SalesTab() {
   const [voidTarget, setVoidTarget] = useState<StoreSale | null>(null);
   const [unvoidSaleTarget, setUnvoidSaleTarget] = useState<StoreSale | null>(null);
   const [returnTarget, setReturnTarget] = useState<StoreSale | null>(null);
+  const [returnLoadingId, setReturnLoadingId] = useState<string | null>(null);
   const [reason, setReason] = useState("");
 
   const reload = useCallback(() => {
@@ -460,6 +517,18 @@ function SalesTab() {
 
   const openDetails = (saleId: string) => {
     api.store.getSale(saleId).then(setViewing).catch(console.error);
+  };
+
+  const handleOpenReturn = async (sale: StoreSale) => {
+    try {
+      setReturnLoadingId(sale.id);
+      const full = await api.store.getSale(sale.id);
+      setReturnTarget(full);
+    } catch (err) {
+      toast("error", describeError(err, t));
+    } finally {
+      setReturnLoadingId(null);
+    }
   };
 
   const doVoid = async () => {
@@ -480,12 +549,49 @@ function SalesTab() {
       <button type="button" onClick={() => openDetails(r.id)} className="font-bold tabnum hover:text-neon" dir="ltr">{r.saleNo}</button>
     ) },
     { key: "member", header: t("store.colMember"), render: (r) => r.memberName ?? "—" },
-    { key: "total", header: t("store.colTotal"), render: (r) => <span dir="ltr" className="tabnum font-bold">{formatMinor(r.totalMinor)}</span> },
+    { key: "branch", header: t("common.branch"), render: (r) => <BranchBadge branchId={r.branchId} /> },
+    { key: "total", header: t("store.colTotal"), render: (r) => (
+      <div className="flex flex-col">
+        <span dir="ltr" className={`tabnum font-bold ${r.status === "voided" || r.returnStatus === "full" ? "line-through text-subtle" : ""}`}>
+          {formatMinor(r.totalMinor)}
+        </span>
+        {r.returnStatus === "full" && (
+          <span className="text-[11px] text-red font-semibold">{t("store.statusFullyReturned")}</span>
+        )}
+        {r.returnStatus === "partial" && (
+          <span dir="ltr" className="text-[11px] text-amber font-semibold">
+            {t("store.returnedTag")}: -{formatMinor(r.returnedTotalMinor ?? 0)}
+          </span>
+        )}
+      </div>
+    ) },
     { key: "profit", header: t("store.colProfit"), render: (r) =>
       hasPermission("store.profit")
         ? <span dir="ltr" className="tabnum text-emerald">{formatMinor(r.grossProfitMinor)}</span>
         : <span>—</span> },
-    { key: "status", header: t("store.colStatus"), render: (r) => <Badge variant={r.status === "completed" ? "success" : "danger"}>{r.status === "completed" ? t("exp.statusActive") : t("exp.statusVoided")}</Badge> },
+    { key: "status", header: t("store.colStatus"), render: (r) => (
+      <div className="flex flex-col gap-1 items-start">
+        {r.status === "voided" ? (
+          <Badge variant="danger">{t("exp.statusVoided")}</Badge>
+        ) : r.returnStatus === "full" ? (
+          <Badge variant="danger">{t("store.statusFullyReturned")}</Badge>
+        ) : r.returnStatus === "partial" ? (
+          <Badge variant="warning">{t("store.statusPartiallyReturned")}</Badge>
+        ) : (
+          <Badge variant="success">{t("exp.statusActive")}</Badge>
+        )}
+        {r.isCredit && (
+          <Badge variant={r.debtStatus === "settled" ? "info" : "warning"} dot>
+            {r.debtStatus === "settled" ? "آجل مسدد" : "آجل غير مسدد"}
+          </Badge>
+        )}
+      </div>
+    ) },
+    {
+      key: "receipt",
+      header: t("pdf.receiptTitle"),
+      render: (r: StoreSale) => <StoreReceiptActions saleId={r.id} size="sm" />,
+    },
     ...(hasPermission("store.void_sale") || hasPermission("store.return")
       ? [{
           key: "actions",
@@ -499,8 +605,16 @@ function SalesTab() {
             }
             return (
               <div className="flex items-center justify-end gap-1.5">
-                {hasPermission("store.return") && (
-                  <button type="button" aria-label={t("store.makeReturn")} onClick={() => setReturnTarget(r)} className="text-faint hover:text-amber"><Undo2 className="size-4" /></button>
+                {hasPermission("store.return") && r.returnStatus !== "full" && (
+                  <button
+                    type="button"
+                    aria-label={t("store.makeReturn")}
+                    disabled={returnLoadingId === r.id}
+                    onClick={() => void handleOpenReturn(r)}
+                    className="text-faint hover:text-amber disabled:opacity-50"
+                  >
+                    <Undo2 className="size-4" />
+                  </button>
                 )}
                 {hasPermission("store.void_sale") && (
                   <button type="button" aria-label={t("store.voidSale")} onClick={() => setVoidTarget(r)} className="text-faint hover:text-red"><Trash2 className="size-4" /></button>
@@ -516,7 +630,7 @@ function SalesTab() {
     <>
       <Card>
         <CardHeader title={t("store.tabSales")} />
-        {items.length === 0 ? <EmptyState icon={<Package />} title={t("pay.empty")} /> : <DataTable columns={columns} data={items} rowKey={(r) => r.id} />}
+        {items.length === 0 ? <EmptyState icon={<Package />} title={t("pay.empty")} /> : <DataTable columns={columns} data={items} rowKey={(r) => r.id} highlightRowKey={highlightRowKey} />}
       </Card>
       <Modal open={voidTarget !== null} onClose={() => setVoidTarget(null)} title={t("store.voidSale")} widthClass="max-w-xs"
         footer={<><Button variant="danger" type="submit" form="void-form">{t("common.confirm")}</Button><Button variant="secondary" onClick={() => setVoidTarget(null)}>{t("common.cancel")}</Button></>}>
@@ -550,12 +664,44 @@ function SalesTab() {
         />
       )}
       {viewing && (
-        <Modal open onClose={() => setViewing(null)} title={viewing.saleNo} widthClass="max-w-md">
+        <Modal
+          open
+          onClose={() => setViewing(null)}
+          title={viewing.saleNo}
+          widthClass="max-w-md"
+          footer={
+            <div className="flex items-center justify-between w-full">
+              <StoreReceiptActions saleId={viewing.id} size="md" />
+              <Button variant="secondary" onClick={() => setViewing(null)}>{t("common.close")}</Button>
+            </div>
+          }
+        >
+          <div className="mb-3 flex items-center justify-between border-b border-line pb-2 text-xs">
+            {viewing.returnStatus === "full" ? (
+              <Badge variant="danger">{t("store.statusFullyReturned")}</Badge>
+            ) : viewing.returnStatus === "partial" ? (
+              <Badge variant="warning">{t("store.statusPartiallyReturned")}</Badge>
+            ) : (
+              <Badge variant="success">{t("exp.statusActive")}</Badge>
+            )}
+            {(viewing.returnedTotalMinor ?? 0) > 0 && (
+              <span dir="ltr" className="tabnum text-red font-bold">
+                {t("store.returnedTotal")}: -{formatMinor(viewing.returnedTotalMinor ?? 0)}
+              </span>
+            )}
+          </div>
           <ul className="divide-y divide-line text-sm">
             {viewing.items.map((it, i) => (
               <li key={`${it.productId}-${i}`} className="flex justify-between py-2">
-                <span>{it.productName} × {it.qty}</span>
-                <span dir="ltr" className="tabnum">{formatMinor(it.lineTotalMinor)}</span>
+                <span>
+                  {it.productName} × {it.qty}
+                  {it.returnedQty > 0 && (
+                    <span className="ms-1.5 text-xs text-red font-semibold">({t("store.returnedTag")}: {it.returnedQty})</span>
+                  )}
+                </span>
+                <span dir="ltr" className={`tabnum ${it.returnedQty >= it.qty ? "line-through text-subtle" : ""}`}>
+                  {formatMinor(it.lineTotalMinor)}
+                </span>
               </li>
             ))}
           </ul>
@@ -570,15 +716,56 @@ function SalesTab() {
 function ReturnModal({ sale, onClose, onDone }: { sale: StoreSale; onClose: () => void; onDone: () => void }) {
   const t = useT();
   const { toast } = useToast();
+  const [fullSale, setFullSale] = useState<StoreSale | null>(sale.items && sale.items.length > 0 ? sale : null);
+  const [loading, setLoading] = useState<boolean>(!sale.items || sale.items.length === 0);
   const [lines, setLines] = useState<Record<string, string>>(() => {
     const init: Record<string, string> = {};
-    for (const it of sale.items) init[it.id] = String(Math.max(0, it.qty - it.returnedQty));
+    if (sale.items && sale.items.length > 0) {
+      for (const it of sale.items) init[it.id] = String(Math.max(0, it.qty - it.returnedQty));
+    }
     return init;
   });
   const [reason, setReason] = useState("");
   const [busy, setBusy] = useState(false);
 
-  const returnable = sale.items.filter((it) => it.qty - it.returnedQty > 0);
+  useEffect(() => {
+    let alive = true;
+    if (!sale.items || sale.items.length === 0) {
+      setLoading(true);
+      api.store
+        .getSale(sale.id)
+        .then((s) => {
+          if (!alive) return;
+          setFullSale(s);
+          const init: Record<string, string> = {};
+          for (const it of s.items) {
+            init[it.id] = String(Math.max(0, it.qty - it.returnedQty));
+          }
+          setLines(init);
+        })
+        .catch((err) => {
+          if (!alive) return;
+          toast("error", describeError(err, t));
+        })
+        .finally(() => {
+          if (alive) setLoading(false);
+        });
+    } else {
+      setFullSale(sale);
+      const init: Record<string, string> = {};
+      for (const it of sale.items) {
+        init[it.id] = String(Math.max(0, it.qty - it.returnedQty));
+      }
+      setLines(init);
+      setLoading(false);
+    }
+    return () => {
+      alive = false;
+    };
+  }, [sale, t, toast]);
+
+  const activeSale = fullSale ?? sale;
+  const returnable = (activeSale.items || []).filter((it) => it.qty - it.returnedQty > 0);
   const itemsTotal = returnable.reduce((s, it) => s + it.unitPriceMinor * Math.max(0, Math.min(Number(lines[it.id] || 0), it.qty - it.returnedQty)), 0);
   const totalMinor = itemsTotal;
 
@@ -593,7 +780,7 @@ function ReturnModal({ sale, onClose, onDone }: { sale: StoreSale; onClose: () =
     setBusy(true);
     try {
       const ret = await api.store.returnSale({
-        saleId: sale.id,
+        saleId: activeSale.id,
         lines: chosen.map((l) => ({ saleItemId: l.id, qty: l.qty })),
         reason: reason || null,
       });
@@ -606,7 +793,15 @@ function ReturnModal({ sale, onClose, onDone }: { sale: StoreSale; onClose: () =
     }
   };
 
-  if (sale.isCredit) {
+  if (loading) {
+    return (
+      <Modal open onClose={onClose} title={`${t("store.makeReturn")} — ${sale.saleNo}`} widthClass="max-w-md">
+        <p className="text-sm text-subtle py-8 text-center">{t("common.loading")}</p>
+      </Modal>
+    );
+  }
+
+  if (activeSale.isCredit && activeSale.debtStatus !== "settled") {
     return (
       <Modal open onClose={onClose} title={t("store.makeReturn")} widthClass="max-w-sm"
         footer={<Button variant="secondary" onClick={onClose}>{t("common.close")}</Button>}>
@@ -616,7 +811,7 @@ function ReturnModal({ sale, onClose, onDone }: { sale: StoreSale; onClose: () =
   }
 
   return (
-    <Modal open onClose={onClose} title={`${t("store.makeReturn")} — ${sale.saleNo}`} widthClass="max-w-md"
+    <Modal open onClose={onClose} title={`${t("store.makeReturn")} — ${activeSale.saleNo}`} widthClass="max-w-md"
       footer={<><Button type="submit" form="return-form" loading={busy}>{t("store.returnSubmit")}</Button><Button variant="secondary" onClick={onClose}>{t("common.cancel")}</Button></>}>
       <form id="return-form" onSubmit={(e) => { e.preventDefault(); void submit(); }} className="space-y-3.5">
         {returnable.length === 0 ? (
@@ -658,7 +853,7 @@ function ReturnModal({ sale, onClose, onDone }: { sale: StoreSale; onClose: () =
   );
 }
 
-function ReturnsTab() {
+function ReturnsTab({ highlightRowKey }: { highlightRowKey?: string | null }) {
   const t = useT();
   const [rows, setRows] = useState<Array<Omit<StoreReturnRow, "items">>>([]);
   const [viewing, setViewing] = useState<StoreReturnRow | null>(null);
@@ -686,7 +881,7 @@ function ReturnsTab() {
     <>
       <Card>
         <CardHeader title={t("store.tabReturns")} />
-        {rows.length === 0 ? <EmptyState icon={<Package />} title={t("store.emptyReturns")} /> : <DataTable columns={columns} data={rows} rowKey={(r) => r.id} />}
+        {rows.length === 0 ? <EmptyState icon={<Package />} title={t("store.emptyReturns")} /> : <DataTable columns={columns} data={rows} rowKey={(r) => r.id} highlightRowKey={highlightRowKey} />}
       </Card>
       {viewing && (
         <Modal open onClose={() => setViewing(null)} title={viewing.returnNo} widthClass="max-w-md">
@@ -710,16 +905,18 @@ function ReturnsTab() {
 
 // --------------------------------- debts ----------------------------------
 
-function DebtsTab() {
+function DebtsTab({ highlightRowKey }: { highlightRowKey?: string | null }) {
   const t = useT();
   const { toast } = useToast();
   const [rows, setRows] = useState<StoreDebtRow[]>([]);
   const [repayTarget, setRepayTarget] = useState<StoreDebtRow | null>(null);
   const [amountMajor, setAmountMajor] = useState("");
   const [methodCode, setMethodCode] = useState("cash");
+  const [methods, setMethods] = useState<Array<{ code: string; labelAr: string }>>([]);
 
   const reload = useCallback(() => {
     api.store.listDebts({ status: "open" }).then((r) => setRows(r.items)).catch(console.error);
+    api.payments.methods().then(setMethods).catch(console.error);
   }, []);
   useEffect(() => { reload(); }, [reload]);
 
@@ -737,28 +934,66 @@ function DebtsTab() {
   };
 
   const columns: Column<StoreDebtRow>[] = [
-    { key: "member", header: t("common.member"), render: (r) => (
-      <span><span className="block font-bold">{r.memberName}</span><span dir="ltr" className="block text-[11px] text-faint tabnum">{r.memberCode}</span></span>
-    ) },
+    {
+      key: "member",
+      header: t("common.member"),
+      render: (r) => (
+        <span>
+          <Link to={`/members/${r.memberId}`} className="block font-bold hover:text-neon underline-offset-2 hover:underline">
+            {r.memberName}
+          </Link>
+          <span dir="ltr" className="block text-[11px] text-faint tabnum">
+            {r.memberCode}
+          </span>
+        </span>
+      ),
+    },
     { key: "saleNo", header: t("store.colSaleNo"), render: (r) => <span dir="ltr" className="tabnum text-subtle">{r.saleNo}</span> },
     { key: "remaining", header: t("store.debtRemaining"), render: (r) => <span dir="ltr" className="font-bold tabnum text-red">{formatMinor(r.remainingMinor)}</span> },
-    { key: "actions", header: "", align: "end", render: (r) => <Button size="sm" variant="secondary" onClick={() => setRepayTarget(r)}>{t("store.repay")}</Button> },
+    {
+      key: "actions",
+      header: "",
+      align: "end",
+      render: (r) => (
+        <Button
+          size="sm"
+          variant="secondary"
+          onClick={() => {
+            setRepayTarget(r);
+            setAmountMajor((r.remainingMinor / 100).toFixed(2));
+          }}
+        >
+          {t("store.repay")}
+        </Button>
+      ),
+    },
   ];
 
   return (
     <>
       <Card>
         <CardHeader title={t("store.tabDebts")} />
-        {rows.length === 0 ? <EmptyState icon={<Package />} title={t("subs.balancePaid")} /> : <DataTable columns={columns} data={rows} rowKey={(r) => r.id} />}
+        {rows.length === 0 ? <EmptyState icon={<Package />} title={t("subs.balancePaid")} /> : <DataTable columns={columns} data={rows} rowKey={(r) => r.id} highlightRowKey={highlightRowKey} />}
       </Card>
       <Modal open={repayTarget !== null} onClose={() => setRepayTarget(null)} title={t("store.repay")} widthClass="max-w-xs"
         footer={<><Button type="submit" form="repay-form">{t("common.confirm")}</Button><Button variant="secondary" onClick={() => setRepayTarget(null)}>{t("common.cancel")}</Button></>}>
         <form id="repay-form" onSubmit={(e) => { e.preventDefault(); void repay(); }} className="space-y-3.5">
           <p className="text-sm text-subtle">{repayTarget?.memberName} — <span dir="ltr" className="tabnum">{repayTarget ? formatMinor(repayTarget.remainingMinor) : ""}</span></p>
           <Input label={t("store.repayAmount")} type="number" step="0.01" min={0} dir="ltr" value={amountMajor} onChange={(e: ChangeEvent<HTMLInputElement>) => setAmountMajor(e.target.value)} autoFocus />
-          <Select label={t("store.method")} value={methodCode} onChange={(e) => setMethodCode(e.target.value)} options={[
-            { value: "cash", label: "نقدي" }, { value: "bank_card", label: "بطاقة بنكية" }, { value: "transfer", label: "تحويل" },
-          ]} />
+          <Select
+            label={t("store.method")}
+            value={methodCode}
+            onChange={(e) => setMethodCode(e.target.value)}
+            options={
+              methods.length > 0
+                ? methods.map((m) => ({ value: m.code, label: m.labelAr }))
+                : [
+                    { value: "cash", label: "نقدي" },
+                    { value: "bank_card", label: "بطاقة بنكية" },
+                    { value: "transfer", label: "تحويل" },
+                  ]
+            }
+          />
         </form>
       </Modal>
     </>

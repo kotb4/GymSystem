@@ -1,6 +1,6 @@
 import { useEffect, useState } from "react";
 import { Link, useSearchParams } from "react-router-dom";
-import { ArchiveRestore, MessageSquare, Pencil, Trash2, UserPlus, UsersRound } from "lucide-react";
+import { ArchiveRestore, FileSpreadsheet, MessageSquare, Pencil, Trash2, UserPlus, UsersRound } from "lucide-react";
 import { useAuth } from "@/contexts/auth-context";
 import { useT } from "@/i18n";
 import { appConfig } from "@/config/app.config";
@@ -14,7 +14,8 @@ import type {
 import { parseDateKey } from "@/core/dates";
 import { formatDateShort, formatNumber } from "@/services/format";
 import { memberStatusMeta } from "@/utils/status-meta";
-import { Card, CardHeader } from "@/components/ui/card";
+import { cn } from "@/utils/cn";
+import { Card } from "@/components/ui/card";
 import { SearchInput } from "@/components/ui/search-input";
 import { Select } from "@/components/ui/select";
 import { Badge } from "@/components/ui/badge";
@@ -27,7 +28,9 @@ import { ConfirmDialog } from "@/components/ui/confirm-dialog";
 import { useToast } from "@/components/ui/toast";
 import { describeError } from "@/utils/app-error";
 import { MemberFormModal } from "@/components/members/member-form-modal";
+import { MemberImportModal } from "@/components/members/member-import-modal";
 import { QuickWhatsAppModal } from "@/components/messages/quick-whatsapp-modal";
+import { BranchBadge } from "@/components/ui/branch-badge";
 
 const STATUS_OPTIONS = ["all", "active", "inactive", "archived"] as const;
 
@@ -58,6 +61,7 @@ export function MembersPage() {
   const [data, setData] = useState<{ items: PublicMember[]; total: number }>({ items: [], total: 0 });
   const [trashed, setTrashed] = useState<TrashedMemberInfo[]>([]);
   const [formOpen, setFormOpen] = useState(false);
+  const [importModalOpen, setImportModalOpen] = useState(false);
   const [editTarget, setEditTarget] = useState<PublicMember | null>(null);
   const [confirmKind, setConfirmKind] = useState<"restore" | "purge" | "trash" | null>(null);
   const [confirmTarget, setConfirmTarget] = useState<TrashedMemberInfo | PublicMember | null>(null);
@@ -118,6 +122,7 @@ export function MembersPage() {
     phone: string;
     createdAtKey: string;
     status: PublicMember["status"];
+    branchId?: string | null;
   }
 
   const rows: Row[] = data.items.map((m) => ({
@@ -127,6 +132,7 @@ export function MembersPage() {
     phone: m.phone ?? "—",
     createdAtKey: m.registrationDate,
     status: m.status,
+    branchId: m.branchId,
   }));
 
   const columns: Column<Row>[] = [
@@ -170,6 +176,11 @@ export function MembersPage() {
           )}
         </div>
       ),
+    },
+    {
+      key: "branch",
+      header: t("common.branch"),
+      render: (row) => <BranchBadge branchId={row.branchId} />,
     },
     {
       key: "created",
@@ -336,42 +347,80 @@ export function MembersPage() {
   return (
     <div className="space-y-4">
       <Card>
-        <CardHeader
-          title={t("nav.members")}
-          action={
-            hasPermission("members.create") ? (
+        <div className="flex flex-col gap-4 p-5 sm:flex-row sm:items-center sm:justify-between border-b border-line">
+          <div>
+            <h2 className="text-xl font-black text-ink tracking-wide">{t("nav.members")}</h2>
+            <p className="mt-0.5 text-xs text-subtle">{t("members.count", { count: formatNumber(data.total) })}</p>
+          </div>
+          {hasPermission("members.create") && (
+            <div className="flex flex-wrap items-center gap-2">
+              <Button
+                variant="secondary"
+                onClick={() => setImportModalOpen(true)}
+              >
+                <FileSpreadsheet className="size-4 text-emerald-400" />
+                {t("members.importBtn")}
+              </Button>
               <Button
                 onClick={() => {
                   setEditTarget(null);
                   setFormOpen(true);
                 }}
+                className="shadow-glow-sm"
               >
                 <UserPlus className="size-4" />
                 {t("members.addMember")}
               </Button>
-            ) : undefined
-          }
-        />
-        <div className="flex flex-col gap-3 border-b border-line px-5 py-3.5 sm:flex-row sm:items-center">
-          <div className="sm:w-80">
-            <SearchInput value={term} onValueChange={setTerm} placeholder={t("members.searchPh")} />
-          </div>
-          {!trashMode && (
-            <>
-              <div className="sm:w-44">
-                <Select
-                  value={status}
-                  onChange={(e) => {
-                    setStatus(e.target.value);
-                    setPage(1);
-                  }}
-                  options={STATUS_OPTIONS.map((s) => ({
-                    value: s,
-                    label: s === "all" ? t("common.all") : t(`status.${s}`),
-                  }))}
-                />
+            </div>
+          )}
+        </div>
+
+        <div className="flex flex-col gap-3 border-b border-line px-5 py-3.5 lg:flex-row lg:items-center lg:justify-between bg-surface/40">
+          <div className="flex flex-wrap items-center gap-2">
+            {!trashMode && (
+              <div className="flex items-center gap-1.5 overflow-x-auto rounded-xl border border-line bg-surface/90 p-1">
+                {STATUS_OPTIONS.map((s) => {
+                  const active = status === s;
+                  return (
+                    <button
+                      key={s}
+                      type="button"
+                      onClick={() => {
+                        setStatus(s);
+                        setPage(1);
+                      }}
+                      className={cn(
+                        "rounded-lg px-3.5 py-1 text-xs font-bold transition-all",
+                        active ? "bg-primary text-white shadow-glow-sm" : "text-subtle hover:bg-white/[0.05] hover:text-ink"
+                      )}
+                    >
+                      {s === "all" ? t("common.all") : t(`status.${s}`)}
+                    </button>
+                  );
+                })}
               </div>
-              <div className="sm:w-52">
+            )}
+            {hasPermission("members.restore") && (
+              <Button
+                variant={trashMode ? "primary" : "secondary"}
+                size="sm"
+                onClick={() => {
+                  setTrashMode((v) => !v);
+                  setPage(1);
+                }}
+              >
+                <Trash2 className="size-3.5" />
+                {t("members.trashTab")}
+              </Button>
+            )}
+          </div>
+
+          <div className="flex flex-col gap-2 sm:flex-row sm:items-center">
+            <div className="w-full sm:w-72">
+              <SearchInput value={term} onValueChange={setTerm} placeholder={t("members.searchPh")} />
+            </div>
+            {!trashMode && (
+              <div className="w-full sm:w-48">
                 <Select
                   value={smart}
                   onChange={(e) => {
@@ -401,26 +450,8 @@ export function MembersPage() {
                   }))}
                 />
               </div>
-            </>
-          )}
-          {hasPermission("members.restore") && (
-            <Button
-              variant={trashMode ? "primary" : "secondary"}
-              className="sm:ms-auto"
-              onClick={() => {
-                setTrashMode((v) => !v);
-                setPage(1);
-              }}
-            >
-              <Trash2 className="size-4" />
-              {t("members.trashTab")}
-            </Button>
-          )}
-          {!trashMode && (
-            <p className={`text-xs font-semibold text-faint tabnum ${hasPermission("members.restore") ? "" : "sm:ms-auto"}`}>
-              {t("members.count", { count: formatNumber(data.total) })}
-            </p>
-          )}
+            )}
+          </div>
         </div>
 
         {trashMode ? (
@@ -473,6 +504,12 @@ export function MembersPage() {
         onClose={() => setFormOpen(false)}
         onSaved={reload}
         member={editTarget}
+      />
+
+      <MemberImportModal
+        open={importModalOpen}
+        onClose={() => setImportModalOpen(false)}
+        onImportComplete={reload}
       />
 
       {whatsAppMemberId && (

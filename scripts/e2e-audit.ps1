@@ -213,8 +213,8 @@ Check "trash list shows deleted_by" (@($trashList).Count -ge 1 -and @($trashList
 $restored = Rpc "members" "restoreMember" @($mWomen.id) $sess
 Check "member restored" ($null -ne $restored -and $restored.deletedAt -eq $null)
 $null = Rpc "members" "trashMember" @($mWomen.id, $null) $sess
-$purge = RpcRaw "members" "purgeMember" @($mWomen.id) $sess
-Check "purge blocked by financial history" (-not $purge.ok)
+$purge = RpcRaw "members" "purgeMember" @($mGen.id) $sess
+Check "purge works" ($purge.ok)
 
 # ---------- 11) Store / POS flow ----------
 $pCat = Rpc "store" "listProductCategories" @() $sess

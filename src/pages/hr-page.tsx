@@ -14,11 +14,13 @@ import {
   Minus,
   Plus,
   Pencil,
+  Printer,
   Trash2,
   History,
   UserPlus,
   Wallet,
   X,
+  CreditCard,
   type LucideIcon,
 } from "lucide-react";
 import { useAuth } from "@/contexts/auth-context";
@@ -36,6 +38,7 @@ import {
   type PublicDailyActivity,
   type PublicLeaveBalance,
   type EmployeeDailyWorked,
+  type PublicEmployeeAdvance,
 } from "@/api";
 import { formatMinor } from "@/core/money";
 import { todayKey } from "@/core/dates";
@@ -737,6 +740,158 @@ function AddAmountModal({ kind, employees, editTarget, onClose, onSaved }: {
   );
 }
 
+// ----------------------------- advances -----------------------------------
+
+export function AdvancesTab() {
+  const t = useT();
+  const { hasPermission } = useAuth();
+  const { toast } = useToast();
+  const isManager = hasPermission("hr.manage");
+  const [month, setMonth] = useState(todayKey().slice(0, 7));
+  const [rows, setRows] = useState<PublicEmployeeAdvance[]>([]);
+  const [employees, setEmployees] = useState<PublicEmployee[]>([]);
+  const [adding, setAdding] = useState(false);
+  const [cancelTarget, setCancelTarget] = useState<PublicEmployeeAdvance | null>(null);
+
+  const fetchRows = useCallback(() => {
+    api.employeesHr.listAdvances({ month }).then(setRows).catch(console.error);
+  }, [month]);
+  useEffect(() => { fetchRows(); }, [fetchRows]);
+  useEffect(() => {
+    if (isManager) api.employees.list({ includeInactive: false }).then(setEmployees).catch(console.error);
+  }, [isManager]);
+
+  const columns: Column<PublicEmployeeAdvance>[] = [
+    ...(isManager ? [{ key: "emp", header: t("emp.fullName"), render: (r: PublicEmployeeAdvance) => <span className="font-bold">{r.employeeName}</span> }] : []),
+    { key: "month", header: t("hr.deductionMonth"), render: (r) => <span dir="ltr" className="tabnum">{r.deductionMonth}</span> },
+    { key: "amount", header: t("hr.amount"), render: (r) => <span dir="ltr" className="font-bold tabnum text-warning">{formatMinor(r.amountMinor)}</span> },
+    { key: "notes", header: t("common.notes"), render: (r) => <span className="text-subtle">{r.notes ?? "—"}</span> },
+    {
+      key: "status", header: t("common.status"), render: (r) => r.status === "open"
+        ? <Badge variant="warning" dot>{t("hr.advanceStatusOpen")}</Badge>
+        : r.status === "settled" ? <Badge variant="success" dot>{t("hr.advanceStatusSettled")}</Badge>
+        : <Badge variant="neutral" dot>{t("hr.advanceStatusCancelled")}</Badge>,
+    },
+    ...(isManager ? [{
+      key: "actions", header: "", align: "end" as const,
+      render: (r: PublicEmployeeAdvance) => r.status === "open" ? (
+        <div className="flex items-center justify-end">
+          <Button
+            size="sm"
+            variant="ghost"
+            onClick={() => setCancelTarget(r)}
+            className="text-red hover:bg-red/10"
+            title={t("hr.cancelAdvance")}
+          >
+            <X className="size-4" />
+          </Button>
+        </div>
+      ) : null,
+    }] : []),
+  ];
+
+  return (
+    <>
+      <Card>
+        <CardHeader title={t("hr.tabAdvances")} action={
+          <div className="flex items-center gap-2">
+            {isManager && (
+              <Button size="sm" onClick={() => setAdding(true)}>
+                <Plus className="size-3.5" />{t("hr.addAdvance")}
+              </Button>
+            )}
+            <Input type="month" dir="ltr" value={month} onChange={(e: ChangeEvent<HTMLInputElement>) => setMonth(e.target.value)} className="w-36" />
+          </div>
+        } />
+        {rows.length === 0 ? <EmptyState icon={<CreditCard />} title={t("hr.advancesEmpty")} /> : <DataTable columns={columns} data={rows} rowKey={(r) => r.id} />}
+      </Card>
+      {adding && (
+        <AddAdvanceModal
+          employees={employees}
+          defaultMonth={month}
+          onClose={() => setAdding(false)}
+          onSaved={() => { setAdding(false); fetchRows(); }}
+        />
+      )}
+      <ConfirmDialog
+        open={cancelTarget !== null}
+        onClose={() => setCancelTarget(null)}
+        title={t("hr.cancelAdvance")}
+        message={cancelTarget ? t("hr.confirmCancelAdvance", { name: cancelTarget.employeeName, amount: formatMinor(cancelTarget.amountMinor) }) : ""}
+        confirmLabel={t("common.confirm")}
+        tone="danger"
+        onConfirm={() => {
+          const target = cancelTarget;
+          setCancelTarget(null);
+          if (!target) return;
+          void (async () => {
+            try {
+              await api.employeesHr.cancelAdvance(target.id);
+              toast("success", t("hr.advanceCancelled"));
+              fetchRows();
+            } catch (err) {
+              toast("error", describeError(err, t));
+            }
+          })();
+        }}
+      />
+    </>
+  );
+}
+
+function AddAdvanceModal({ employees, defaultMonth, onClose, onSaved }: {
+  employees: PublicEmployee[];
+  defaultMonth: string;
+  onClose: () => void;
+  onSaved: () => void;
+}) {
+  const t = useT();
+  const { toast } = useToast();
+  const [form, setForm] = useState({
+    employeeId: employees[0]?.id ?? "",
+    amountMajor: "",
+    deductionMonth: defaultMonth || todayKey().slice(0, 7),
+    notes: "",
+  });
+  const [busy, setBusy] = useState(false);
+
+  const save = async () => {
+    setBusy(true);
+    try {
+      const amountMinor = Math.round(Number(form.amountMajor || 0) * 100);
+      if (!form.employeeId || amountMinor <= 0 || !form.deductionMonth) throw new Error("validation");
+      await api.employeesHr.addAdvance({
+        employeeId: form.employeeId,
+        amountMinor,
+        deductionMonth: form.deductionMonth,
+        notes: form.notes || null,
+      });
+      toast("success", t("hr.advanceCreated"));
+      onSaved();
+    } catch (err) {
+      toast("error", describeError(err, t));
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  return (
+    <Modal open onClose={onClose}
+      title={t("hr.addAdvance")}
+      widthClass="max-w-sm"
+      footer={<><Button loading={busy} onClick={save}>{t("common.save")}</Button><Button variant="secondary" onClick={onClose}>{t("common.cancel")}</Button></>}>
+      <div className="space-y-3.5">
+        <Select label={t("emp.fullName")} value={form.employeeId} onChange={(e) => setForm((f) => ({ ...f, employeeId: e.target.value }))} options={employees.map((e) => ({ value: e.id, label: e.fullName }))} />
+        <div className="grid grid-cols-2 gap-3">
+          <Input label={t("hr.advanceAmount")} type="number" step="0.01" min={0} dir="ltr" value={form.amountMajor} onChange={(e) => setForm((f) => ({ ...f, amountMajor: e.target.value }))} autoFocus />
+          <Input label={t("hr.deductionMonth")} type="month" dir="ltr" value={form.deductionMonth} onChange={(e) => setForm((f) => ({ ...f, deductionMonth: e.target.value }))} />
+        </div>
+        <Input label={t("common.notes")} value={form.notes} onChange={(e) => setForm((f) => ({ ...f, notes: e.target.value }))} />
+      </div>
+    </Modal>
+  );
+}
+
 // ----------------------------- salary summary ----------------------------
 
 export function SalarySummaryTab() {
@@ -755,6 +910,7 @@ export function SalarySummaryTab() {
     baseMinor: number;
     incentivesMinor: number;
     deductionsMinor: number;
+    advancesMinor: number;
     unpaidLeaveDays: number;
     unpaidLeaveImpactMinor: number;
     netMinor: number;
@@ -781,6 +937,7 @@ export function SalarySummaryTab() {
           baseMinor: sum?.baseMinor ?? 0,
           incentivesMinor: sum?.incentivesMinor ?? 0,
           deductionsMinor: sum?.deductionsMinor ?? 0,
+          advancesMinor: sum?.advancesMinor ?? 0,
           unpaidLeaveDays: sum?.unpaidLeaveDays ?? 0,
           unpaidLeaveImpactMinor: sum?.unpaidLeaveImpactMinor ?? 0,
           netMinor: sum?.netMinor ?? 0,
@@ -791,6 +948,26 @@ export function SalarySummaryTab() {
     });
   }, [month]);
   useEffect(() => { reload(); }, [reload]);
+
+  const [printingId, setPrintingId] = useState<string | null>(null);
+
+  const printPayslip = async (salaryId: string) => {
+    setPrintingId(salaryId);
+    try {
+      const res = await api.pdf.generatePayslip(salaryId);
+      const byteChars = atob(res.base64);
+      const byteNumbers = new Array(byteChars.length);
+      for (let i = 0; i < byteChars.length; i++) byteNumbers[i] = byteChars.charCodeAt(i);
+      const byteArray = new Uint8Array(byteNumbers);
+      const blob = new Blob([byteArray], { type: "application/pdf" });
+      const url = URL.createObjectURL(blob);
+      window.open(url, "_blank");
+    } catch (err) {
+      toast("error", describeError(err, t));
+    } finally {
+      setPrintingId(null);
+    }
+  };
 
   const approve = async () => {
     setApproving(true);
@@ -824,6 +1001,7 @@ export function SalarySummaryTab() {
     { key: "base", header: t("emp.base"), render: (r) => <span dir="ltr" className="tabnum">{formatMinor(r.baseMinor)}</span> },
     { key: "incentives", header: t("hr.incentivesTotal"), render: (r) => <span dir="ltr" className="tabnum text-neon">{formatMinor(r.incentivesMinor)}</span> },
     { key: "deductions", header: t("hr.deductionsTotal"), render: (r) => <span dir="ltr" className="tabnum text-red">{formatMinor(r.deductionsMinor + r.unpaidLeaveImpactMinor)}</span> },
+    { key: "advances", header: t("hr.advancesTotal"), render: (r) => <span dir="ltr" className="tabnum text-warning">{formatMinor(r.advancesMinor)}</span> },
     { key: "net", header: t("hr.netSalary"), render: (r) => <span dir="ltr" className="font-bold tabnum text-neon">{formatMinor(r.netMinor)}</span> },
     {
       key: "status", header: t("common.status"), render: (r) => r.status === "paid"
@@ -831,14 +1009,29 @@ export function SalarySummaryTab() {
         : r.status === "pending" ? <Badge variant="warning" dot>{t("emp.pending")}</Badge>
         : <Badge variant="neutral" dot>{t("hr.salaryNotGenerated")}</Badge>,
     },
-    ...(canManage ? [{
+    {
       key: "actions", header: "", align: "end" as const,
-      render: (r: SummaryRow) => r.status === "pending" && r.salaryId ? (
-        <Button size="sm" variant="secondary" onClick={() => setPayTarget({ id: r.salaryId!, name: r.employeeName, netMinor: r.netMinor })}>
-          <HandCoins className="size-3.5" />{t("emp.paySalary")}
-        </Button>
-      ) : null,
-    }] : []),
+      render: (r: SummaryRow) => (
+        <div className="flex items-center justify-end gap-1.5">
+          {r.salaryId && (
+            <Button
+              size="sm"
+              variant="secondary"
+              loading={printingId === r.salaryId}
+              onClick={() => void printPayslip(r.salaryId!)}
+              title={t("hr.printPayslip")}
+            >
+              <Printer className="size-3.5" />
+            </Button>
+          )}
+          {canManage && r.status === "pending" && r.salaryId ? (
+            <Button size="sm" variant="secondary" onClick={() => setPayTarget({ id: r.salaryId!, name: r.employeeName, netMinor: r.netMinor })}>
+              <HandCoins className="size-3.5" />{t("emp.paySalary")}
+            </Button>
+          ) : null}
+        </div>
+      ),
+    },
   ];
 
   return (

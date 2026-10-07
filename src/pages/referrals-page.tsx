@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useState } from "react";
+import { Link } from "react-router-dom";
 import { ArrowRight, Award, Plus, Trash2, UserPlus } from "lucide-react";
 import { useAuth } from "@/contexts/auth-context";
 import { useT } from "@/i18n";
@@ -51,17 +52,10 @@ export function ReferralsPage() {
   const [loading, setLoading] = useState(true);
 
   const [showCreate, setShowCreate] = useState(false);
-  const [pickerFor, setPickerFor] = useState<null | "referrer" | "convert">(null);
+  const [pickerFor, setPickerFor] = useState<null | "convert">(null);
   const [convertTarget, setConvertTarget] = useState<ReferralRow | null>(null);
   const [cancelTarget, setCancelTarget] = useState<ReferralRow | null>(null);
   const [submitting, setSubmitting] = useState(false);
-  const [formError, setFormError] = useState<string | null>(null);
-
-  // create-referral form
-  const [referrer, setReferrer] = useState<PublicMember | null>(null);
-  const [referredName, setReferredName] = useState("");
-  const [referredPhone, setReferredPhone] = useState("");
-  const [notes, setNotes] = useState("");
 
   // settings form
   const [rewardType, setRewardType] = useState<"free_days" | "credit">("free_days");
@@ -92,42 +86,6 @@ export function ReferralsPage() {
   }, []);
   useEffect(() => { load(); }, [load]);
 
-  const openCreate = () => {
-    setFormError(null);
-    setReferredName("");
-    setReferredPhone("");
-    setNotes("");
-    setReferrer(null);
-    setShowCreate(true);
-  };
-
-  const handleCreate = async () => {
-    setFormError(null);
-    if (!referrer) {
-      setFormError(t("referral.chooseReferrer"));
-      return;
-    }
-    if (referredName.trim().length < 2) {
-      setFormError(t("errors.fullNameRequired"));
-      return;
-    }
-    setSubmitting(true);
-    try {
-      await api.referral.create({
-        referrerMemberId: referrer.id,
-        referredName: referredName.trim(),
-        referredPhone: referredPhone.trim() || null,
-        notes: notes.trim() || null,
-      });
-      toast("success", t("referral.msgReferralCreated"));
-      setShowCreate(false);
-      await load();
-    } catch (e) {
-      setFormError(describeError(e, t));
-    } finally {
-      setSubmitting(false);
-    }
-  };
 
   const handleConvertSelect = async (member: PublicMember) => {
     if (!convertTarget) return;
@@ -181,9 +139,24 @@ export function ReferralsPage() {
     {
       key: "referrerName",
       header: t("referral.labelReferrer"),
-      render: (r) => <span className="font-semibold">{r.referrerName}</span>,
+      render: (r) => (
+        <Link to={`/members/${r.referrerId}`} className="font-semibold hover:text-neon underline-offset-2 hover:underline">
+          {r.referrerName}
+        </Link>
+      ),
     },
-    { key: "referredName", header: t("referral.labelReferredName"), render: (r) => <span>{r.referredName}</span> },
+    {
+      key: "referredName",
+      header: t("referral.labelReferredName"),
+      render: (r) =>
+        r.referredMemberId ? (
+          <Link to={`/members/${r.referredMemberId}`} className="font-semibold text-emerald-400 hover:text-emerald-300 underline-offset-2 hover:underline">
+            {r.referredName}
+          </Link>
+        ) : (
+          <span>{r.referredName}</span>
+        ),
+    },
     {
       key: "referredPhone",
       header: t("referral.labelReferredPhone"),
@@ -243,7 +216,7 @@ export function ReferralsPage() {
             <CardHeader
               title={t("referral.tabReferrals")}
               action={canManage ? (
-                <Button onClick={openCreate}>
+                <Button onClick={() => setShowCreate(true)}>
                   <Plus className="size-4" />
                   {t("referral.btnCreateReferral")}
                 </Button>
@@ -293,7 +266,9 @@ export function ReferralsPage() {
                 {top.map((row) => (
                   <li key={row.referrerId} className="flex items-center gap-3 px-5 py-3">
                     <div className="min-w-0 flex-1">
-                      <p className="truncate text-sm font-semibold">{row.referrerName}</p>
+                      <Link to={`/members/${row.referrerId}`} className="truncate text-sm font-semibold hover:text-neon underline-offset-2 hover:underline">
+                        {row.referrerName}
+                      </Link>
                       <p className="text-xs text-subtle">
                         {row.convertedReferrals} {t("referral.statsConverted")}
                       </p>
@@ -336,74 +311,16 @@ export function ReferralsPage() {
       </div>
 
       {showCreate && (
-        <Modal open={showCreate} onClose={() => setShowCreate(false)} title={t("referral.btnCreateReferral")} widthClass="max-w-lg">
-          <div className="space-y-3.5">
-            <div>
-              <span className="mb-1.5 block text-[13px] font-semibold text-subtle">{t("referral.labelReferrer")}</span>
-              {referrer ? (
-                <div className="flex items-center gap-3 rounded-xl border border-line bg-panel px-3.5 py-2.5">
-                  <span className="min-w-0 flex-1">
-                    <span className="block truncate text-sm font-bold">{referrer.fullName}</span>
-                    <span dir="ltr" className="block text-[11px] text-faint tabnum">
-                      {referrer.memberCode}{referrer.phone ? ` · ${referrer.phone}` : ""}
-                    </span>
-                  </span>
-                  <Button size="sm" variant="ghost" onClick={() => setPickerFor("referrer")}>
-                    {t("referral.btnChangeReferrer")}
-                  </Button>
-                </div>
-              ) : (
-                <Button variant="secondary" onClick={() => setPickerFor("referrer")} className="w-full justify-center">
-                  <UserPlus className="size-4" />
-                  {t("referral.chooseReferrer")}
-                </Button>
-              )}
-            </div>
-            <Input
-              label={t("referral.labelReferredName")}
-              value={referredName}
-              onChange={(e) => setReferredName(e.target.value)}
-              placeholder={t("referral.labelReferredName")}
-              required
-            />
-            <Input
-              label={t("referral.labelReferredPhone")}
-              value={referredPhone}
-              onChange={(e) => setReferredPhone(e.target.value)}
-              placeholder={t("referral.labelReferredPhone")}
-              type="tel"
-              dir="ltr"
-            />
-            <Input
-              label={t("referral.labelNotes")}
-              value={notes}
-              onChange={(e) => setNotes(e.target.value)}
-              placeholder={t("referral.labelNotes")}
-            />
-            {formError && (
-              <p role="alert" className="rounded-xl border border-red/30 bg-red/10 px-3.5 py-2.5 text-[13px] font-semibold text-red">
-                {formError}
-              </p>
-            )}
-          </div>
-          <div className="mt-6 flex items-center gap-2.5">
-            <Button onClick={handleCreate} loading={submitting} disabled={submitting}>
-              {t("referral.btnCreateReferral")}
-            </Button>
-            <Button variant="secondary" onClick={() => setShowCreate(false)} disabled={submitting}>
-              {t("common.cancel")}
-            </Button>
-          </div>
-        </Modal>
-      )}
-
-      {pickerFor === "referrer" && (
-        <MemberPickerModal
-          open
-          onClose={() => setPickerFor(null)}
-          onSelect={(m) => { setReferrer(m); setPickerFor(null); }}
+        <CreateReferralModal
+          open={showCreate}
+          onClose={() => setShowCreate(false)}
+          onSuccess={() => {
+            setShowCreate(false);
+            void load();
+          }}
         />
       )}
+
       {pickerFor === "convert" && (
         <MemberPickerModal
           open
@@ -432,5 +349,125 @@ export function ReferralsPage() {
         confirmLabel={t("referral.btnConvert")}
       />
     </div>
+  );
+}
+
+interface CreateReferralModalProps {
+  open: boolean;
+  onClose: () => void;
+  onSuccess: () => void;
+}
+
+function CreateReferralModal({ open, onClose, onSuccess }: CreateReferralModalProps) {
+  const t = useT();
+  const { toast } = useToast();
+  const [referrer, setReferrer] = useState<PublicMember | null>(null);
+  const [pickerOpen, setPickerOpen] = useState(false);
+  const [referredName, setReferredName] = useState("");
+  const [referredPhone, setReferredPhone] = useState("");
+  const [notes, setNotes] = useState("");
+  const [submitting, setSubmitting] = useState(false);
+  const [formError, setFormError] = useState<string | null>(null);
+
+  const handleSubmit = async () => {
+    setFormError(null);
+    if (!referrer) {
+      setFormError(t("referral.chooseReferrer"));
+      return;
+    }
+    if (referredName.trim().length < 2) {
+      setFormError(t("errors.fullNameRequired"));
+      return;
+    }
+    setSubmitting(true);
+    try {
+      await api.referral.create({
+        referrerMemberId: referrer.id,
+        referredName: referredName.trim(),
+        referredPhone: referredPhone.trim() || null,
+        notes: notes.trim() || null,
+      });
+      toast("success", t("referral.msgReferralCreated"));
+      onSuccess();
+    } catch (e) {
+      setFormError(describeError(e, t));
+    } finally {
+      setSubmitting(false);
+    }
+  };
+
+  return (
+    <>
+      <Modal open={open} onClose={onClose} title={t("referral.btnCreateReferral")} widthClass="max-w-lg">
+        <div className="space-y-3.5">
+          <div>
+            <span className="mb-1.5 block text-[13px] font-semibold text-subtle">{t("referral.labelReferrer")}</span>
+            {referrer ? (
+              <div className="flex items-center gap-3 rounded-xl border border-line bg-panel px-3.5 py-2.5">
+                <span className="min-w-0 flex-1">
+                  <span className="block truncate text-sm font-bold">{referrer.fullName}</span>
+                  <span dir="ltr" className="block text-[11px] text-faint tabnum">
+                    {referrer.memberCode}{referrer.phone ? ` · ${referrer.phone}` : ""}
+                  </span>
+                </span>
+                <Button size="sm" variant="ghost" onClick={() => setPickerOpen(true)}>
+                  {t("referral.btnChangeReferrer")}
+                </Button>
+              </div>
+            ) : (
+              <Button variant="secondary" onClick={() => setPickerOpen(true)} className="w-full justify-center">
+                <UserPlus className="size-4" />
+                {t("referral.chooseReferrer")}
+              </Button>
+            )}
+          </div>
+          <Input
+            label={t("referral.labelReferredName")}
+            value={referredName}
+            onChange={(e) => setReferredName(e.target.value)}
+            placeholder={t("referral.labelReferredName")}
+            required
+          />
+          <Input
+            label={t("referral.labelReferredPhone")}
+            value={referredPhone}
+            onChange={(e) => setReferredPhone(e.target.value)}
+            placeholder={t("referral.labelReferredPhone")}
+            type="tel"
+            dir="ltr"
+          />
+          <Input
+            label={t("referral.labelNotes")}
+            value={notes}
+            onChange={(e) => setNotes(e.target.value)}
+            placeholder={t("referral.labelNotes")}
+          />
+          {formError && (
+            <p role="alert" className="rounded-xl border border-red/30 bg-red/10 px-3.5 py-2.5 text-[13px] font-semibold text-red">
+              {formError}
+            </p>
+          )}
+        </div>
+        <div className="mt-6 flex items-center gap-2.5">
+          <Button onClick={handleSubmit} loading={submitting} disabled={submitting}>
+            {t("referral.btnCreateReferral")}
+          </Button>
+          <Button variant="secondary" onClick={onClose} disabled={submitting}>
+            {t("common.cancel")}
+          </Button>
+        </div>
+      </Modal>
+
+      {pickerOpen && (
+        <MemberPickerModal
+          open
+          onClose={() => setPickerOpen(false)}
+          onSelect={(m) => {
+            setReferrer(m);
+            setPickerOpen(false);
+          }}
+        />
+      )}
+    </>
   );
 }

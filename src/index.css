@@ -4,29 +4,34 @@
 @theme {
   --font-sans: "Cairo Variable", "Cairo", ui-sans-serif, system-ui, sans-serif;
 
-  --color-base: #080b12;
-  --color-surface: #0d111a;
-  --color-panel: #111722;
-  --color-raised: #151c28;
+  --color-base: #0a0d14;
+  --color-surface: #0f131f;
+  --color-panel: #141824;
+  --color-raised: #1a2030;
 
-  --color-line: rgba(255, 255, 255, 0.06);
-  --color-line-strong: rgba(255, 255, 255, 0.12);
+  --color-line: rgba(255, 255, 255, 0.07);
+  --color-line-strong: rgba(255, 255, 255, 0.14);
 
-  --color-neon: #39ff88;
-  --color-cyan: #00e5ff;
-  --color-violet: #9b5cff;
-  --color-amber: #ffc53d;
-  --color-red: #ff4d5e;
-  --color-neon-ink: #06230f;
+  --color-primary: #6366f1;
+  --color-primary-hover: #4f46e5;
+  --color-primary-glow: rgba(99, 102, 241, 0.35);
 
-  --color-ink: #eef2f7;
-  --color-subtle: #98a2b0;
-  --color-faint: #6b7686;
+  --color-neon: #6366f1;
+  --color-cyan: #38bdf8;
+  --color-violet: #818cf8;
+  --color-amber: #f59e0b;
+  --color-red: #ef4444;
+  --color-emerald: #10b981;
+  --color-neon-ink: #ffffff;
 
-  --shadow-card: 0 1px 2px rgba(0, 0, 0, 0.35), 0 12px 32px -16px rgba(0, 0, 0, 0.55);
-  --shadow-pop: 0 4px 12px rgba(0, 0, 0, 0.4), 0 20px 48px -16px rgba(0, 0, 0, 0.65);
-  --shadow-glow-sm: 0 0 14px rgba(57, 255, 136, 0.28);
-  --shadow-glow: 0 0 0 1px rgba(57, 255, 136, 0.22), 0 0 28px rgba(57, 255, 136, 0.16);
+  --color-ink: #f8fafc;
+  --color-subtle: #94a3b8;
+  --color-faint: #64748b;
+
+  --shadow-card: 0 1px 3px rgba(0, 0, 0, 0.4), 0 12px 28px -12px rgba(0, 0, 0, 0.6);
+  --shadow-pop: 0 4px 16px rgba(0, 0, 0, 0.5), 0 24px 48px -16px rgba(0, 0, 0, 0.7);
+  --shadow-glow-sm: 0 0 14px rgba(99, 102, 241, 0.28);
+  --shadow-glow: 0 0 0 1px rgba(99, 102, 241, 0.3), 0 0 28px rgba(99, 102, 241, 0.2);
 
   --animate-fade-up: fade-up 0.4s cubic-bezier(0.21, 0.65, 0.36, 1) both;
   --animate-fade-in: fade-in 0.25s ease both;

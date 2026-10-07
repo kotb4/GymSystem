@@ -566,7 +566,6 @@ export function sweepPendingWrites(): number {
     const dir = path.join(filesRoot, kind);
     if (!existsSync(dir)) continue;
     try {
-      const { readdirSync } = require("node:fs") as typeof import("node:fs");
       for (const entry of readdirSync(dir)) {
         if (entry.includes(".pending-")) {
           try { unlinkSync(path.join(dir, entry)); removed++; } catch { /* best effort */ }
@@ -582,7 +581,6 @@ export function diskStats(): { bytes: number; fileCount: number } {
   if (!filesRoot) return { bytes: 0, fileCount: 0 };
   let bytes = 0;
   let fileCount = 0;
-  const { readdirSync } = require("node:fs") as typeof import("node:fs");
   const walk = (dir: string): void => {
     if (!existsSync(dir)) return;
     for (const entry of readdirSync(dir)) {

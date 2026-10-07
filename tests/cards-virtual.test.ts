@@ -10,7 +10,7 @@ import {
 import { createMember } from "@/core/services/members.service";
 import { createPlan } from "@/core/services/plans.service";
 import { createSubscription } from "@/core/services/subscriptions.service";
-import { unassignCard, setCardBlocked } from "@/core/services/cards.service";
+import { unassignCard, setCardBlocked, createVirtualCard } from "@/core/services/cards.service";
 import type { Db } from "@/db/engine";
 import type { ServiceActor } from "@/core/permissions";
 import { createTestDb } from "./helpers/test-db";
@@ -101,5 +101,27 @@ describe("virtual cards (TASK-044)", () => {
     const ensured = ensureVirtualCard(db, { memberId: member.id, memberCode: member.memberCode });
     expect(ensured.kind).toBe("virtual");
     expect(ensured.status).toBe("assigned");
+  });
+
+  it("createVirtualCard restores/re-attaches the virtual card after being unassigned", async () => {
+    const member = await createMember(db, owner, { fullName: "عضو بدون كارت" });
+    const originalCard = listMemberCards(db, reception, member.id)[0];
+    expect(originalCard.kind).toBe("virtual");
+    expect(originalCard.status).toBe("assigned");
+
+    // Unassign it
+    await unassignCard(db, owner, originalCard.id);
+    expect(listMemberCards(db, reception, member.id)).toHaveLength(0);
+
+    // Call createVirtualCard
+    const restored = await createVirtualCard(db, owner, member.id);
+    expect(restored.kind).toBe("virtual");
+    expect(restored.status).toBe("assigned");
+    expect(restored.barcodeValue).toBe(member.memberCode);
+
+    const memberCards = listMemberCards(db, reception, member.id);
+    expect(memberCards).toHaveLength(1);
+    expect(memberCards[0].id).toBe(restored.id);
+    expect(memberCards[0].status).toBe("assigned");
   });
 });

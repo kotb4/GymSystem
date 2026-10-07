@@ -8,6 +8,7 @@ import {
   departmentScopeCondition,
 } from "./department";
 import { ensureVirtualCard } from "./cards.service";
+import { getLocalBranchId, getLocalBranchPrefix } from "@/core/branch";
 
 const MEMBER_STATUSES = ["active", "inactive", "suspended", "archived"] as const;
 export type MemberStatus = (typeof MEMBER_STATUSES)[number];
@@ -38,6 +39,7 @@ export interface MemberRow extends Row {
   deletion_reason: string | null;
   created_by: string | null;
   archived_at: string | null;
+  branch_id: string | null;
   created_at: string;
   updated_at: string;
 }
@@ -61,6 +63,7 @@ export interface PublicMember {
   department: DepartmentScope;
   photoFileId: string | null;
   deletedAt: string | null;
+  branchId?: string | null;
 }
 
 export interface MemberInput {
@@ -151,6 +154,7 @@ export function toPublicMember(row: MemberRow): PublicMember {
     department: (row.department ?? "general") as DepartmentScope,
     photoFileId: row.photo_file_id == null ? null : String(row.photo_file_id),
     deletedAt: row.deleted_at ?? null,
+    branchId: row.branch_id ?? "main",
   };
 }
 
@@ -159,8 +163,13 @@ function bumpCounter(db: Db, name: string): number {
   return Number(db.scalar("SELECT value FROM counters WHERE name = ?", [name]));
 }
 
-export function formatMemberCode(value: number): string {
-  return `MEM-${String(value).padStart(6, "0")}`;
+export function formatMemberCode(value: number, prefix?: string): string {
+  const cleanPrefix = prefix ? prefix.trim().toUpperCase() : "";
+  const numStr = String(value).padStart(6, "0");
+  if (cleanPrefix) {
+    return `${cleanPrefix}-MEM-${numStr}`;
+  }
+  return `MEM-${numStr}`;
 }
 
 export function getMemberRowById(db: Db, memberId: string): MemberRow | null {
@@ -266,9 +275,11 @@ export async function createMember(
   let memberCode = "";
   await db.transaction(async () => {
     const codeValue = bumpCounter(db, "member_code");
-    memberCode = formatMemberCode(codeValue);
+    const branchPrefix = getLocalBranchPrefix(db);
+    const branchId = getLocalBranchId(db);
+    memberCode = formatMemberCode(codeValue, branchPrefix);
     db.run(
-      "INSERT INTO members (id, member_code, full_name, phone, email, gender, date_of_birth, address, notes, height_cm, weight_kg, emergency_contact_name, emergency_contact_phone, department, registration_date, status, created_by, archived_at, created_at, updated_at)\nVALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'active', ?, NULL, ?, ?)",
+      "INSERT INTO members (id, member_code, full_name, phone, email, gender, date_of_birth, address, notes, height_cm, weight_kg, emergency_contact_name, emergency_contact_phone, department, registration_date, status, created_by, archived_at, created_at, updated_at, branch_id)\nVALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'active', ?, NULL, ?, ?, ?)",
       [
         id,
         memberCode,
@@ -288,6 +299,7 @@ export async function createMember(
         actor.userId,
         nowStamp(),
         nowStamp(),
+        branchId,
       ],
     );
     recordAudit(db, actor, "MEMBER_CREATED", "member", id, {

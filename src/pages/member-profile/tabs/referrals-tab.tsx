@@ -4,7 +4,7 @@ import { useAuth } from "@/contexts/auth-context";
 import { useT } from "@/i18n";
 import { useToast } from "@/components/ui/toast";
 import { describeError } from "@/utils/app-error";
-import { api, type ReferralRow, type ReferralStats, type ReferralRewardRow } from "@/api";
+import { api, type PublicMember, type ReferralRow, type ReferralStats, type ReferralRewardRow } from "@/api";
 import { formatMinor } from "@/core/money";
 import { Card, CardHeader } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
@@ -14,6 +14,7 @@ import { Modal } from "@/components/ui/modal";
 import { DataTable, type Column } from "@/components/ui/table";
 import { EmptyState } from "@/components/ui/empty-state";
 import { ConfirmDialog } from "@/components/ui/confirm-dialog";
+import { MemberPickerModal } from "@/components/members/member-picker-modal";
 import type { TabProps } from "../types";
 import { permissionDeniedNode } from "../helpers";
 
@@ -58,12 +59,6 @@ export function ReferralsTab({ ctx }: TabProps) {
   const [convertTarget, setConvertTarget] = useState<ReferralRow | null>(null);
   const [cancelTarget, setCancelTarget] = useState<ReferralRow | null>(null);
   const [submitting, setSubmitting] = useState(false);
-  const [formError, setFormError] = useState<string | null>(null);
-
-  // form state
-  const [referredName, setReferredName] = useState("");
-  const [referredPhone, setReferredPhone] = useState("");
-  const [notes, setNotes] = useState("");
 
   const load = useCallback(async () => {
     setLoading(true);
@@ -91,36 +86,11 @@ export function ReferralsTab({ ctx }: TabProps) {
     return permissionDeniedNode(t);
   }
 
-  const handleCreate = async () => {
-    setFormError(null);
-    if (referredName.trim().length < 2) {
-      setFormError(t("errors.fullNameRequired"));
-      return;
-    }
-    setSubmitting(true);
-    try {
-      await api.referral.create({
-        referrerMemberId: member.id,
-        referredName: referredName.trim(),
-        referredPhone: referredPhone.trim() || null,
-        notes: notes.trim() || null,
-      });
-      toast("success", t("referral.msgReferralCreated"));
-      setReferredName(""); setReferredPhone(""); setNotes("");
-      setShowCreate(false);
-      await load();
-    } catch (e) {
-      setFormError(describeError(e, t));
-    } finally {
-      setSubmitting(false);
-    }
-  };
-
-  const handleConvert = async () => {
+  const handleConvertSelect = async (referredMember: PublicMember) => {
     if (!convertTarget) return;
     setSubmitting(true);
     try {
-      await api.referral.convert(convertTarget.id, member.id);
+      await api.referral.convert(convertTarget.id, referredMember.id);
       toast("success", t("referral.msgReferralConverted"));
       setConvertTarget(null);
       await load();
@@ -248,27 +218,26 @@ export function ReferralsTab({ ctx }: TabProps) {
       <CreateModal
         open={showCreate}
         onClose={() => setShowCreate(false)}
-        onSubmit={handleCreate}
-        submitting={submitting}
-        error={formError}
-        referredName={referredName}
-        setReferredName={setReferredName}
-        referredPhone={referredPhone}
-        setReferredPhone={setReferredPhone}
-        notes={notes}
-        setNotes={setNotes}
+        onSubmit={async (data) => {
+          await api.referral.create({
+            referrerMemberId: member.id,
+            referredName: data.referredName.trim(),
+            referredPhone: data.referredPhone.trim() || null,
+            notes: data.notes.trim() || null,
+          });
+          toast("success", t("referral.msgReferralCreated"));
+          setShowCreate(false);
+          await load();
+        }}
       />
 
-      <ConfirmDialog
-        open={!!convertTarget}
-        onClose={() => setConvertTarget(null)}
-        onConfirm={handleConvert}
-        loading={submitting}
-        title={t("referral.btnConvert")}
-        message={t("referral.confirmConvert")}
-        confirmLabel={t("referral.btnConvert")}
-        tone="primary"
-      />
+      {convertTarget && (
+        <MemberPickerModal
+          open
+          onClose={() => setConvertTarget(null)}
+          onSelect={(m) => { void handleConvertSelect(m); }}
+        />
+      )}
 
       <ConfirmDialog
         open={!!cancelTarget}
@@ -287,28 +256,43 @@ function CreateModal({
   open,
   onClose,
   onSubmit,
-  submitting,
-  error,
-  referredName,
-  setReferredName,
-  referredPhone,
-  setReferredPhone,
-  notes,
-  setNotes,
 }: {
   open: boolean;
   onClose: () => void;
-  onSubmit: () => void;
-  submitting: boolean;
-  error: string | null;
-  referredName: string;
-  setReferredName: (v: string) => void;
-  referredPhone: string;
-  setReferredPhone: (v: string) => void;
-  notes: string;
-  setNotes: (v: string) => void;
+  onSubmit: (data: { referredName: string; referredPhone: string; notes: string }) => Promise<void>;
 }) {
   const t = useT();
+  const [referredName, setReferredName] = useState("");
+  const [referredPhone, setReferredPhone] = useState("");
+  const [notes, setNotes] = useState("");
+  const [submitting, setSubmitting] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+
+  useEffect(() => {
+    if (open) {
+      setReferredName("");
+      setReferredPhone("");
+      setNotes("");
+      setError(null);
+    }
+  }, [open]);
+
+  const handleSubmit = async () => {
+    setError(null);
+    if (referredName.trim().length < 2) {
+      setError(t("errors.fullNameRequired"));
+      return;
+    }
+    setSubmitting(true);
+    try {
+      await onSubmit({ referredName, referredPhone, notes });
+    } catch (e) {
+      setError(describeError(e, t));
+    } finally {
+      setSubmitting(false);
+    }
+  };
+
   return (
     <Modal open={open} onClose={onClose} title={t("referral.btnCreateReferral")} widthClass="max-w-lg">
       <div className="space-y-3.5">
@@ -340,7 +324,7 @@ function CreateModal({
         )}
       </div>
       <div className="mt-6 flex items-center gap-2.5">
-        <Button onClick={onSubmit} loading={submitting} disabled={submitting}>
+        <Button onClick={handleSubmit} loading={submitting} disabled={submitting}>
           {t("referral.btnCreateReferral")}
         </Button>
         <Button variant="secondary" onClick={onClose} disabled={submitting}>

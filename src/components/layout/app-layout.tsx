@@ -1,11 +1,11 @@
 import { Outlet, useLocation } from "react-router-dom";
-import { useEffect } from "react";
+import { useEffect, useState } from "react";
 import { useT } from "@/i18n";
 import { routeTitleKey } from "@/routes/nav-routes";
 import { useAuth } from "@/contexts/auth-context";
 import { useLicense } from "@/contexts/license-context";
 import { useBootMaintenance } from "@/hooks/use-boot-maintenance";
-import { Sidebar } from "./sidebar";
+import { Sidebar, MobileDrawer, MobileBottomNav } from "./sidebar";
 import { Header } from "./header";
 import { NewsTicker } from "./news-ticker";
 
@@ -43,6 +43,8 @@ export function AppLayout() {
         ? "border-amber/40 bg-amber/10 text-amber"
         : "border-neon/30 bg-neon/10 text-neon";
 
+  const [mobileNavOpen, setMobileNavOpen] = useState(false);
+
   return (
     <div className="relative isolate flex h-screen overflow-hidden">
       <div aria-hidden className="pointer-events-none absolute inset-0 -z-10 overflow-hidden">
@@ -51,19 +53,22 @@ export function AppLayout() {
       </div>
 
       <Sidebar />
+      <MobileDrawer open={mobileNavOpen} onClose={() => setMobileNavOpen(false)} />
+
       <div className="flex min-w-0 flex-1 flex-col">
-        <Header />
+        <Header onOpenMobileNav={() => setMobileNavOpen(true)} />
         <NewsTicker />
         {(bannerMsg && (
           <div className={`border-b px-4 py-2 text-center text-[13px] font-semibold ${bannerTone}`}>
             {bannerMsg}
           </div>
         ))}
-        <main className="flex-1 overflow-y-auto">
-          <div key={location.pathname} className="mx-auto w-full max-w-[1440px] animate-fade-up px-6 py-6">
+        <main className="flex-1 overflow-y-auto pb-20 lg:pb-0">
+          <div key={location.pathname} className="mx-auto w-full max-w-[1440px] animate-fade-up px-3.5 py-4 sm:px-6 sm:py-6">
             <Outlet />
           </div>
         </main>
+        <MobileBottomNav onOpenMenu={() => setMobileNavOpen(true)} />
       </div>
     </div>
   );

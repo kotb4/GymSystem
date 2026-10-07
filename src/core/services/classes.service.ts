@@ -1,4 +1,4 @@
-﻿import { errConflict, errNotFound, errValidation } from "@/core/errors";
+import { errConflict, errNotFound, errValidation } from "@/core/errors";
 import { requirePermission, roleHasPermission, type ServiceActor } from "@/core/permissions";
 import type { Db, Row } from "@/db/engine";
 import { nowStamp, todayKey } from "@/core/dates";
@@ -16,8 +16,29 @@ function str(v: unknown): string {
 
 // ------------------------------- classes ---------------------------------
 
+export type CombatDiscipline =
+  | "mma"
+  | "boxing"
+  | "kickboxing"
+  | "muay_thai"
+  | "karate"
+  | "taekwondo"
+  | "wrestling"
+  | "judo"
+  | "bjj"
+  | "kung_fu"
+  | "self_defense"
+  | "combat_fitness"
+  | "general";
+
+export type TargetCategory = "kids" | "teens" | "adults" | "ladies" | "all";
+export type CombatLevel = "beginner" | "intermediate" | "advanced" | "all_levels";
+
 export interface ClassInput {
   name: string;
+  discipline?: CombatDiscipline;
+  category?: TargetCategory;
+  level?: CombatLevel;
   description?: string | null;
   trainerId?: string | null;
   location?: string | null;
@@ -28,6 +49,9 @@ export interface ClassInput {
 export interface GymClass {
   id: string;
   name: string;
+  discipline: CombatDiscipline;
+  category: TargetCategory;
+  level: CombatLevel;
   description: string | null;
   trainerId: string | null;
   trainerName: string | null;
@@ -44,6 +68,9 @@ function mapClass(r: Row): GymClass {
   return {
     id: str(r.id),
     name: str(r.name),
+    discipline: (r.discipline ? str(r.discipline) : "general") as CombatDiscipline,
+    category: (r.category ? str(r.category) : "all") as TargetCategory,
+    level: (r.level ? str(r.level) : "all_levels") as CombatLevel,
     description: r.description == null ? null : str(r.description),
     trainerId: r.trainer_id == null ? null : str(r.trainer_id),
     trainerName: r.trainer_name == null ? null : str(r.trainer_name),
@@ -57,19 +84,27 @@ function mapClass(r: Row): GymClass {
 export function listClasses(
   db: Db,
   actor: ServiceActor,
-  query: { search?: string; includeInactive?: boolean } = {},
+  query: { search?: string; includeInactive?: boolean; discipline?: string; category?: string } = {},
 ): GymClass[] {
   requirePermission(actor, "classes.view");
   const conditions: string[] = [];
   const params: Num[] = [];
   if (!query.includeInactive) conditions.push("c.is_active = 1");
+  if (query.discipline && query.discipline !== "all") {
+    conditions.push("c.discipline = ?");
+    params.push(query.discipline);
+  }
+  if (query.category && query.category !== "all") {
+    conditions.push("c.category = ?");
+    params.push(query.category);
+  }
   const search = query.search?.trim();
   if (search) {
     conditions.push("(c.name LIKE ? OR c.location LIKE ?)");
     params.push(`%${search}%`, `%${search}%`);
   }
   const where = conditions.length > 0 ? `WHERE ${conditions.join(" AND ")}` : "";
-  return db.all<Row>(`${CLASS_SELECT} ${where} ORDER BY c.name`).map(mapClass);
+  return db.all<Row>(`${CLASS_SELECT} ${where} ORDER BY c.name`, params).map(mapClass);
 }
 
 function getClassRow(db: Db, classId: string): Row {
@@ -84,13 +119,19 @@ export async function createClass(db: Db, actor: ServiceActor, input: ClassInput
   if (name.length < 2) throw errValidation("errors.classNameShort");
   const capacity = Math.floor(Number(input.capacity));
   if (capacity <= 0) throw errValidation("errors.classCapacityInvalid");
+  const discipline = input.discipline ?? "general";
+  const category = input.category ?? "all";
+  const level = input.level ?? "all_levels";
   const id = crypto.randomUUID();
   await db.transaction(async () => {
     db.run(
-      "INSERT INTO classes (id, name, description, trainer_id, location, capacity, consumes_session, is_active, created_by, created_at, updated_at)\nVALUES (?, ?, ?, ?, ?, ?, ?, 1, ?, ?, ?)",
+      "INSERT INTO classes (id, name, discipline, category, level, description, trainer_id, location, capacity, consumes_session, is_active, created_by, created_at, updated_at)\nVALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 1, ?, ?, ?)",
       [
         id,
         name,
+        discipline,
+        category,
+        level,
         input.description?.trim() || null,
         input.trainerId ?? null,
         input.location?.trim() || null,
@@ -101,7 +142,7 @@ export async function createClass(db: Db, actor: ServiceActor, input: ClassInput
         stamp(),
       ],
     );
-    recordAudit(db, actor, "CLASS_CREATED", "class", id, { name });
+    recordAudit(db, actor, "CLASS_CREATED", "class", id, { name, discipline, category });
   });
   return mapClass(getClassRow(db, id));
 }
@@ -116,11 +157,18 @@ export async function updateClass(
   const current = getClassRow(db, classId);
   if (patch.capacity !== undefined && Math.floor(patch.capacity) <= 0)
     throw errValidation("errors.classCapacityInvalid");
+  const discipline = patch.discipline !== undefined ? patch.discipline : (current.discipline ? str(current.discipline) : "general");
+  const category = patch.category !== undefined ? patch.category : (current.category ? str(current.category) : "all");
+  const level = patch.level !== undefined ? patch.level : (current.level ? str(current.level) : "all_levels");
+
   await db.transaction(async () => {
     db.run(
-      "UPDATE classes SET name = ?, description = ?, trainer_id = ?, location = ?, capacity = ?, consumes_session = ?, is_active = ?, updated_at = ? WHERE id = ?",
+      "UPDATE classes SET name = ?, discipline = ?, category = ?, level = ?, description = ?, trainer_id = ?, location = ?, capacity = ?, consumes_session = ?, is_active = ?, updated_at = ? WHERE id = ?",
       [
         patch.name?.trim() ?? str(current.name),
+        discipline,
+        category,
+        level,
         patch.description !== undefined ? patch.description?.trim() || null : current.description,
         patch.trainerId !== undefined ? patch.trainerId : current.trainer_id,
         patch.location !== undefined ? patch.location?.trim() || null : current.location,
@@ -134,6 +182,28 @@ export async function updateClass(
     recordAudit(db, actor, "CLASS_UPDATED", "class", classId, {});
   });
   return mapClass(getClassRow(db, classId));
+}
+
+export async function deleteClass(db: Db, actor: ServiceActor, classId: string): Promise<void> {
+  requirePermission(actor, "classes.purge");
+  const cls = getClassRow(db, classId);
+  const className = str(cls.name);
+
+  await db.transaction(async () => {
+    // 1. Delete all bookings for all sessions of this class
+    db.run(
+      "DELETE FROM class_bookings WHERE session_id IN (SELECT id FROM class_sessions WHERE class_id = ?)",
+      [classId],
+    );
+    // 2. Delete all sessions
+    db.run("DELETE FROM class_sessions WHERE class_id = ?", [classId]);
+    // 3. Delete recurrences
+    db.run("DELETE FROM class_recurrences WHERE class_id = ?", [classId]);
+    // 4. Delete the class itself
+    db.run("DELETE FROM classes WHERE id = ?", [classId]);
+
+    recordAudit(db, actor, "CLASS_PURGED", "class", classId, { name: className });
+  });
 }
 
 // ---------------------------- class sessions -----------------------------
@@ -288,6 +358,21 @@ export async function completeClassSession(db: Db, actor: ServiceActor, sessionI
     recordAudit(db, actor, "CLASS_SESSION_DONE", "class_session", sessionId, {});
   });
   return mapSession(getSessionRow(db, sessionId));
+}
+
+export async function deleteClassSession(db: Db, actor: ServiceActor, sessionId: string): Promise<void> {
+  requirePermission(actor, "classes.manage");
+  const session = getSessionRow(db, sessionId);
+  await db.transaction(async () => {
+    // Delete all bookings for this session
+    db.run("DELETE FROM class_bookings WHERE session_id = ?", [sessionId]);
+    // Delete the session
+    db.run("DELETE FROM class_sessions WHERE id = ?", [sessionId]);
+    recordAudit(db, actor, "CLASS_SESSION_PURGED", "class_session", sessionId, {
+      date: str(session.session_date),
+      time: str(session.start_time),
+    });
+  });
 }
 
 // ------------------------------ bookings ---------------------------------
@@ -718,6 +803,17 @@ export async function deactivateClassRecurrence(db: Db, actor: ServiceActor, rec
   await db.transaction(async () => {
     db.run("UPDATE class_recurrences SET is_active = 0, updated_at = ? WHERE id = ?", [stamp(), recurrenceId]);
     recordAudit(db, actor, "CLASS_RECURRENCE_STOPPED", "class_recurrence", recurrenceId, {
+      class: str(rec.class_name),
+    });
+  });
+}
+
+export async function deleteClassRecurrence(db: Db, actor: ServiceActor, recurrenceId: string): Promise<void> {
+  requirePermission(actor, "classes.manage");
+  const rec = getRecurrenceRow(db, recurrenceId);
+  await db.transaction(async () => {
+    db.run("DELETE FROM class_recurrences WHERE id = ?", [recurrenceId]);
+    recordAudit(db, actor, "CLASS_RECURRENCE_PURGED", "class_recurrence", recurrenceId, {
       class: str(rec.class_name),
     });
   });

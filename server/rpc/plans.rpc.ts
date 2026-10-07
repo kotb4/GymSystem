@@ -5,4 +5,5 @@ export const plans = defineService({
   listPlans: a(plansService.listPlans as Fn),
   createPlan: a(plansService.createPlan as Fn),
   updatePlan: a(plansService.updatePlan as Fn),
+  deletePlan: a(plansService.deletePlan as Fn),
 });

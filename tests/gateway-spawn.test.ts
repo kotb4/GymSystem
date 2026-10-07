@@ -29,7 +29,7 @@ describe("gateway-spawn helpers", () => {
   });
 
   it("resolves the packaged launch next to the exe when files exist", () => {
-    // Packaged mode resolves against process.execPath dir â€” can't fabricate
+    // Packaged mode resolves against process.execPath dir — can't fabricate
     // that on disk for a unit test, so assert it returns null when absent and
     // that dev (non-packaged) resolution reuses the current node binary.
     const dev = resolveGatewayLaunch(false);
@@ -110,7 +110,7 @@ describe("ensureGateway", () => {
       log: noop,
       probe: async () => false,
       // resolveGatewayLaunch(packaged=true) will fail because the exe dir has
-      // no runtime\node.exe â€” assert the friendly error, no spawn.
+      // no runtime\node.exe — assert the friendly error, no spawn.
       spawnFn: () => (fakeChild()),
       pollMs: 2,
       startTimeoutMs: 10,

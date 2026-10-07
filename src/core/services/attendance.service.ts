@@ -1,7 +1,8 @@
-﻿import { addDaysKey, nowStamp, secondsBetweenStamps, todayKey } from "@/core/dates";
+import { addDaysKey, nowStamp, secondsBetweenStamps, todayKey } from "@/core/dates";
 import { errNotFound } from "@/core/errors";
 import { requirePermission, type ServiceActor } from "@/core/permissions";
 import type { Db, Row } from "@/db/engine";
+import { assignDocNo } from "./document-numbers.service";
 import { recordAudit } from "./audit.service";
 import { getCardByBarcode } from "./cards.service";
 import { readSetting, SETTING_KEYS } from "./settings.service";
@@ -32,6 +33,7 @@ export type CheckInResult =
   | {
       kind: "success";
       attendanceId: string;
+      memberId?: string;
       memberName: string;
       memberCode: string;
       photoFileId: string | null;
@@ -41,8 +43,25 @@ export type CheckInResult =
       /** Money still owed (subscription balance + open store debts). */
       outstandingMinor: number;
     }
-  | { kind: "denied"; reason: CheckInDenialReason; barcode: string; memberName?: string }
-  | { kind: "duplicate"; secondsAgo: number; memberName: string; memberCode: string };
+  | {
+      kind: "denied";
+      reason: CheckInDenialReason;
+      barcode: string;
+      memberId?: string;
+      memberName?: string;
+      memberCode?: string;
+      photoFileId?: string | null;
+      notes?: string | null;
+    }
+  | {
+      kind: "duplicate";
+      secondsAgo: number;
+      memberId?: string;
+      memberName: string;
+      memberCode: string;
+      photoFileId?: string | null;
+      notes?: string | null;
+    };
 
 export interface AttendanceRow extends Row {
   id: string;
@@ -192,7 +211,7 @@ export async function recordCheckIn(
         }
       }
       const attendanceId = crypto.randomUUID();
-      await db.transaction(async () => {
+      db.transaction(() => {
         db.run(
           "INSERT INTO attendance (id, member_id, card_id, subscription_id, checkin_at, created_by, device_identifier, notes)\nVALUES (?, ?, ?, NULL, ?, ?, ?, ?)",
           [
@@ -257,7 +276,7 @@ export async function recordCheckIn(
 
   const attendanceId = crypto.randomUUID();
   try {
-    await db.transaction(async () => {
+    db.transaction(() => {
       const lastVisit = db.first<AttendanceRow>(
         "SELECT * FROM attendance WHERE deleted_at IS NULL AND member_id = ? ORDER BY checkin_at DESC LIMIT 1",
         [member.id],
@@ -287,6 +306,7 @@ export async function recordCheckIn(
           input.deviceIdentifier ?? null,
         ],
       );
+      assignDocNo(db, "attendance", attendanceId, stampNow);
       if (planKind === "sessions" && sessionsTotal != null) consumeSession(db, subscription.id);
       recordAudit(db, actor, "CHECKIN_RECORDED", "attendance", attendanceId, {
         memberCode: member.member_code,
@@ -307,6 +327,7 @@ export async function recordCheckIn(
   return {
     kind: "success",
     attendanceId,
+    memberId: member.id,
     memberName: member.full_name,
     memberCode: member.member_code,
     photoFileId: member.photo_file_id,
@@ -430,6 +451,12 @@ export function deleteAttendance(
   if (!row) throw errNotFound("errors.attendanceNotFound");
   db.transaction(() => {
     db.run("UPDATE attendance SET deleted_at = ? WHERE id = ?", [nowStamp(), attendanceId]);
+    if (row.subscription_id) {
+      db.run(
+        "UPDATE member_subscriptions SET sessions_used = MAX(0, sessions_used - 1), updated_at = ? WHERE id = ? AND sessions_total IS NOT NULL",
+        [nowStamp(), row.subscription_id],
+      );
+    }
     recordAudit(db, actor, "ATTENDANCE_DELETED", "attendance", attendanceId, {
       memberId: row.member_id,
       checkinAt: row.checkin_at,
@@ -450,6 +477,12 @@ export function restoreAttendance(
   if (!row) throw errNotFound("errors.attendanceNotFound");
   db.transaction(() => {
     db.run("UPDATE attendance SET deleted_at = NULL WHERE id = ?", [attendanceId]);
+    if (row.subscription_id) {
+      db.run(
+        "UPDATE member_subscriptions SET sessions_used = sessions_used + 1, updated_at = ? WHERE id = ? AND sessions_total IS NOT NULL",
+        [nowStamp(), row.subscription_id],
+      );
+    }
     recordAudit(db, actor, "ATTENDANCE_RESTORED", "attendance", attendanceId, {
       memberId: row.member_id,
       checkinAt: row.checkin_at,

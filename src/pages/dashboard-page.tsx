@@ -1,8 +1,7 @@
-﻿import { useEffect, useMemo, useState } from "react";
-import { Link, useNavigate } from "react-router-dom";
+import { useEffect, useMemo, useState } from "react";
+import { Link } from "react-router-dom";
 import {
   AlertTriangle,
-  BadgeCheck,
   Banknote,
   CalendarDays,
   ChevronLeft,
@@ -11,9 +10,11 @@ import {
   PackageCheck,
   ReceiptText,
   ScanLine,
+  Sparkles,
   TrendingUp,
   UserPlus,
   Users,
+  Building2,
   type LucideIcon,
 } from "lucide-react";
 import { useAuth } from "@/contexts/auth-context";
@@ -35,6 +36,7 @@ import { DataTable, type Column } from "@/components/ui/table";
 import { EmptyState } from "@/components/ui/empty-state";
 import { SeriesChart, type SeriesDataset } from "@/components/charts/series-chart";
 import { ACCENT_TINTS, type Accent } from "@/components/ui/accent";
+import { BranchFilter } from "@/components/ui/branch-filter";
 
 type RangeKey = "today" | "7d" | "30d" | "month" | "year" | "custom";
 
@@ -65,6 +67,7 @@ export function DashboardPage() {
   const t = useT();
   const { actor, hasPermission } = useAuth();
   const [rangeKey, setRangeKey] = useState<RangeKey>("7d");
+  const [selectedBranch, setSelectedBranch] = useState<string>("all");
   const today = todayKey();
   const [customFrom, setCustomFrom] = useState(addDaysKey(today, -6));
   const [customTo, setCustomTo] = useState(today);
@@ -90,7 +93,7 @@ export function DashboardPage() {
     if (!actor) return;
     let alive = true;
     void api.dashboard
-      .stats()
+      .stats(selectedBranch)
       .then((s) => {
         if (alive) setStats(s);
       })
@@ -106,13 +109,13 @@ export function DashboardPage() {
     return () => {
       alive = false;
     };
-  }, [actor, hasPermission]);
+  }, [actor, hasPermission, selectedBranch]);
 
   useEffect(() => {
     if (!actor) return;
     let alive = true;
     api.dashboard
-      .overview(rangeKey, rangeKey === "custom" ? customRange : undefined)
+      .overview(rangeKey, rangeKey === "custom" ? customRange : undefined, selectedBranch)
       .then((ov) => {
         if (alive) setOverview(ov);
       })
@@ -120,7 +123,7 @@ export function DashboardPage() {
     return () => {
       alive = false;
     };
-  }, [actor, rangeKey, customRange]);
+  }, [actor, rangeKey, customRange, selectedBranch]);
 
   useEffect(() => {
     if (!actor || !hasPermission("payments.view")) return;
@@ -205,136 +208,220 @@ export function DashboardPage() {
   }, [growth, overview, t]);
 
   return (
-    <div className="space-y-5">
-      <section className="flex flex-wrap items-center justify-between gap-3">
+    <div className="space-y-6">
+      {/* 1. Header with Greeting, Date & Period Filter Tabs */}
+      <section className="flex flex-wrap items-center justify-between gap-4">
         <div>
-          <h2 className="text-2xl font-extrabold tracking-tight">{greeting}</h2>
+          <h2 className="text-2xl font-extrabold tracking-tight text-ink">{greeting}</h2>
           <p className="mt-1 text-sm text-subtle">{t("dashboard.subtitle")}</p>
         </div>
-        <span className="hidden items-center gap-2 rounded-xl border border-line bg-panel px-3.5 py-2 text-xs font-semibold text-subtle md:inline-flex">
-          <CalendarDays aria-hidden className="size-4 text-faint" />
-          {formatFullHeading(new Date())}
-        </span>
+        <div className="flex flex-wrap items-center gap-3">
+          <BranchFilter
+            value={selectedBranch}
+            onChange={setSelectedBranch}
+            allLabel={t("dashboard.allBranches")}
+            label={t("dashboard.branchFilter")}
+          />
+          <DateRangeFilter
+            value={rangeKey}
+            onChange={setRangeKey}
+            customFrom={customFrom}
+            customTo={customTo}
+            onCustomFrom={setCustomFrom}
+            onCustomTo={setCustomTo}
+          />
+          <span className="hidden items-center gap-2 rounded-2xl border border-white/[0.08] bg-panel px-3.5 py-2 text-xs font-semibold text-subtle md:inline-flex shadow-sm">
+            <CalendarDays aria-hidden className="size-4 text-faint" />
+            {formatFullHeading(new Date())}
+          </span>
+        </div>
       </section>
 
-      <DateRangeFilter
-        value={rangeKey}
-        onChange={setRangeKey}
-        customFrom={customFrom}
-        customTo={customTo}
-        onCustomFrom={setCustomFrom}
-        onCustomTo={setCustomTo}
-      />
+      {selectedBranch !== "all" && (
+        <div className="flex items-center gap-2 px-3.5 py-1.5 rounded-xl bg-neon/10 border border-neon/20 text-xs text-neon font-semibold w-fit">
+          <Building2 className="size-3.5" />
+          <span>{t("dashboard.branchCurrent", { name: selectedBranch })}</span>
+        </div>
+      )}
 
-      <section className="grid gap-4 sm:grid-cols-2 xl:grid-cols-4">
-        <StatCard
-          title={t("dashboard.statsMembers")}
-          value={formatNumber(members?.totalMembers ?? stats.totalMembers)}
-          icon={<Users className="size-5" />}
-          accent="neon"
-        />
-        <StatCard
-          title={t("dashboard.statsActiveSubs")}
-          value={formatNumber(members?.activeSubscriptions ?? stats.activeSubscriptions)}
-          icon={<CreditCard className="size-5" />}
-          accent="cyan"
-        />
-        <StatCard
-          title={t("dashboard.statsCheckins")}
-          value={formatNumber(stats.checkinsToday)}
-          icon={<ScanLine className="size-5" />}
-          accent="violet"
-        />
-        <StatCard
-          title={t("dashboard.statsActiveMembers")}
-          value={formatNumber(members?.activeMembers ?? stats.activeMembers)}
-          icon={<BadgeCheck className="size-5" />}
-          accent="amber"
-        />
-      </section>
+      {/* 2. NeuroBank Grand Balance Card + Core Metrics Grid */}
+      <section className="grid gap-4 lg:grid-cols-12">
+        {/* NeuroBank Grand Hero Financial Card (5 cols on large screens) */}
+        <div className="lg:col-span-5">
+          <Card className="h-full relative overflow-hidden p-6 border-white/[0.12] bg-gradient-to-br from-panel via-surface/90 to-panel flex flex-col justify-between shadow-pop group">
+            {/* Subtle glow mesh */}
+            <div className="absolute -top-12 -end-12 w-48 h-48 bg-neon/10 rounded-full blur-3xl pointer-events-none transition-opacity group-hover:opacity-100 opacity-60" />
 
-      {finance && (
-        <section className="grid gap-4 sm:grid-cols-2 xl:grid-cols-3">
-          <KpiStat
-            title={t("dashboard.kpiRevenue")}
-            value={formatMinor(finance.revenue.current)}
-            icon={<Banknote className="size-5" />}
+            <div>
+              <div className="flex items-center justify-between gap-2">
+                <span className="text-xs font-bold text-subtle tracking-wide flex items-center gap-2">
+                  <span className="inline-block size-2 rounded-full bg-neon animate-pulse" />
+                  {t("dashboard.heroBalanceTitle")}
+                </span>
+                {finance && (
+                  <span
+                    className={cn(
+                      "inline-flex items-center gap-1 rounded-full px-2.5 py-0.5 text-[11px] font-bold tabnum border",
+                      finance.net.current >= 0
+                        ? "bg-neon/10 text-neon border-neon/20 shadow-glow-sm"
+                        : "bg-red/10 text-red border-red/20",
+                    )}
+                  >
+                    {finance.net.deltaPct !== null
+                      ? `${finance.net.deltaPct > 0 ? "+" : ""}${finance.net.deltaPct.toFixed(1)}%`
+                      : t(RANGES.find((r) => r.value === rangeKey)?.label ?? "dashboard.trendsThisMonth")}
+                  </span>
+                )}
+              </div>
+
+              <div className="mt-3">
+                <div className="text-3xl sm:text-4xl font-black tracking-tight tabnum text-ink">
+                  {finance ? formatMinor(finance.net.current) : formatMinor(0)}
+                </div>
+                <p className="mt-1 text-xs text-faint">{t("dashboard.heroBalanceSubtitle")}</p>
+              </div>
+
+              {/* Sub metrics: Inflow vs Outflow */}
+              {finance && (
+                <div className="mt-5 grid grid-cols-2 gap-3 pt-4 border-t border-white/[0.08]">
+                  <div className="p-3 rounded-xl bg-white/[0.03] border border-white/[0.05]">
+                    <div className="flex items-center gap-1.5 text-xs text-subtle">
+                      <span className="size-2 rounded-full bg-neon" />
+                      <span>{t("dashboard.kpiRevenue")}</span>
+                    </div>
+                    <div className="mt-1 text-lg font-bold tabnum text-ink">
+                      {formatMinor(finance.revenue.current)}
+                    </div>
+                  </div>
+                  <div className="p-3 rounded-xl bg-white/[0.03] border border-white/[0.05]">
+                    <div className="flex items-center gap-1.5 text-xs text-subtle">
+                      <span className="size-2 rounded-full bg-amber" />
+                      <span>{t("dashboard.kpiExpenses")}</span>
+                    </div>
+                    <div className="mt-1 text-lg font-bold tabnum text-ink">
+                      {formatMinor(finance.expenses.current)}
+                    </div>
+                  </div>
+                </div>
+              )}
+            </div>
+
+            {/* Quick Action Pills in NeuroBank Style */}
+            <div className="mt-6 pt-4 border-t border-white/[0.08] grid grid-cols-2 sm:grid-cols-4 gap-2">
+              <Link
+                to="/payments"
+                className="flex items-center justify-center gap-1.5 py-2 px-2 rounded-xl bg-white/[0.04] hover:bg-neon/15 hover:text-neon hover:border-neon/30 border border-white/[0.06] text-xs font-bold text-subtle transition-all"
+              >
+                <Banknote className="size-3.5" />
+                <span>{t("dashboard.quickDeposit")}</span>
+              </Link>
+              <Link
+                to="/expenses"
+                className="flex items-center justify-center gap-1.5 py-2 px-2 rounded-xl bg-white/[0.04] hover:bg-amber/15 hover:text-amber hover:border-amber/30 border border-white/[0.06] text-xs font-bold text-subtle transition-all"
+              >
+                <ReceiptText className="size-3.5" />
+                <span>{t("dashboard.quickExpense")}</span>
+              </Link>
+              <Link
+                to="/attendance"
+                className="flex items-center justify-center gap-1.5 py-2 px-2 rounded-xl bg-white/[0.04] hover:bg-cyan/15 hover:text-cyan hover:border-cyan/30 border border-white/[0.06] text-xs font-bold text-subtle transition-all"
+              >
+                <ScanLine className="size-3.5" />
+                <span>{t("dashboard.quickCheckin")}</span>
+              </Link>
+              <Link
+                to="/members?add=1"
+                className="flex items-center justify-center gap-1.5 py-2 px-2 rounded-xl bg-white/[0.04] hover:bg-violet/15 hover:text-violet hover:border-violet/30 border border-white/[0.06] text-xs font-bold text-subtle transition-all"
+              >
+                <UserPlus className="size-3.5" />
+                <span>{t("dashboard.quickAddMember")}</span>
+              </Link>
+            </div>
+          </Card>
+        </div>
+
+        {/* 4 Stat Cards in 7 cols */}
+        <div className="lg:col-span-7 grid gap-4 sm:grid-cols-2">
+          <StatCard
+            title={t("dashboard.statsMembers")}
+            value={formatNumber(members?.totalMembers ?? stats.totalMembers)}
+            icon={<Users className="size-5" />}
             accent="neon"
-            trend={finance.revenue}
-            prevLabel={prevLabel}
+            subtitle={`${formatNumber(members?.activeMembers ?? stats.activeMembers)} ${t("dashboard.statsActiveMembers")}`}
           />
-          <KpiStat
-            title={t("dashboard.kpiExpenses")}
-            value={formatMinor(finance.expenses.current)}
-            icon={<ReceiptText className="size-5" />}
+          <StatCard
+            title={t("dashboard.statsActiveSubs")}
+            value={formatNumber(members?.activeSubscriptions ?? stats.activeSubscriptions)}
+            icon={<CreditCard className="size-5" />}
+            accent="cyan"
+          />
+          <StatCard
+            title={t("dashboard.statsCheckins")}
+            value={formatNumber(stats.checkinsToday)}
+            icon={<ScanLine className="size-5" />}
+            accent="violet"
+            subtitle={t("dashboard.periodToday")}
+          />
+          <StatCard
+            title={t("dashboard.kpiNewMembers")}
+            value={formatNumber(growth?.newMembers.current ?? 0)}
+            icon={<UserPlus className="size-5" />}
             accent="amber"
-            trend={finance.expenses}
-            prevLabel={prevLabel}
+            delta={growth ? deltaProps(growth.newMembers).delta : undefined}
+            deltaDir={growth ? deltaProps(growth.newMembers).deltaDir : undefined}
+            trendLabel={prevLabel}
           />
-          <KpiStat
-            title={t("dashboard.kpiNet")}
-            value={formatMinor(finance.net.current)}
-            icon={<TrendingUp className="size-5" />}
-            accent={finance.net.current >= 0 ? "cyan" : "red"}
-            trend={finance.net}
-            prevLabel={prevLabel}
-          />
-        </section>
-      )}
-
-      {growth && (
-        <section>
-          <CardHeader title={t("dashboard.growthTitle")} />
-          <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-3 px-5 pb-5">
-            <KpiStat
-              title={t("dashboard.kpiNewMembers")}
-              value={formatNumber(growth.newMembers.current)}
-              icon={<UserPlus className="size-5" />}
-              accent="neon"
-              trend={growth.newMembers}
-              prevLabel={prevLabel}
-            />
-            <KpiStat
-              title={t("dashboard.kpiRenewals")}
-              value={formatNumber(growth.renewals.current)}
-              icon={<CreditCard className="size-5" />}
-              accent="violet"
-              trend={growth.renewals}
-              prevLabel={prevLabel}
-            />
-            <KpiStat
-              title={t("dashboard.kpiAttendance")}
-              value={formatNumber(growth.attendance.current)}
-              icon={<ScanLine className="size-5" />}
-              accent="amber"
-              trend={growth.attendance}
-              prevLabel={prevLabel}
-            />
-          </div>
-        </section>
-      )}
-
-      <AlertStrip overview={overview} />
-
-      <section className="grid gap-4 xl:grid-cols-2">
-        {finance && revenueDataset.length > 0 && (
-          <Card>
-            <CardHeader title={t("dashboard.chartRevenueTitle")} />
-            <div className="px-5 pb-5">
-              <SeriesChart series={revenueDataset} />
-            </div>
-          </Card>
-        )}
-        {growth && growthDataset.length > 0 && (
-          <Card>
-            <CardHeader title={t("dashboard.chartGrowthTitle")} />
-            <div className="px-5 pb-5">
-              <SeriesChart series={growthDataset} />
-            </div>
-          </Card>
-        )}
+        </div>
       </section>
 
+      {/* 3. Analytics & Revenue Breakdown (Dual Grid in NeuroBank style) */}
+      <section className="grid gap-4 lg:grid-cols-12">
+        {/* Main Cash Flow Chart (7 cols) */}
+        <div className="lg:col-span-7">
+          {finance && revenueDataset.length > 0 ? (
+            <Card className="h-full">
+              <CardHeader
+                title={t("dashboard.chartRevenueTitle")}
+                description={t("dashboard.subtitle")}
+              />
+              <div className="px-5 pb-5">
+                <SeriesChart series={revenueDataset} />
+              </div>
+            </Card>
+          ) : (
+            <Card className="h-full p-5 flex items-center justify-center">
+              <EmptyState icon={<TrendingUp />} title={t("common.noData")} />
+            </Card>
+          )}
+        </div>
+
+        {/* NeuroBank Revenue Breakdown (5 cols) */}
+        <div className="lg:col-span-5">
+          <RevenueBreakdownCard finance={finance} store={store} storeStats={storeStats} />
+        </div>
+      </section>
+
+      {/* 4. Secondary Chart (Growth) & Operational Quick Alerts */}
+      <section className="grid gap-4 lg:grid-cols-12">
+        <div className="lg:col-span-7">
+          {growth && growthDataset.length > 0 && (
+            <Card className="h-full">
+              <CardHeader
+                title={t("dashboard.chartGrowthTitle")}
+                description={t("dashboard.vsPrevPeriod")}
+              />
+              <div className="px-5 pb-5">
+                <SeriesChart series={growthDataset} />
+              </div>
+            </Card>
+          )}
+        </div>
+        <div className="lg:col-span-5">
+          <AlertStrip overview={overview} />
+        </div>
+      </section>
+
+      {/* 5. Operational Stats & Busy Hours */}
       {operational && (
         <section className="grid gap-4 sm:grid-cols-2 xl:grid-cols-4">
           <Link to="/payments?status=partial" className="block">
@@ -358,20 +445,20 @@ export function DashboardPage() {
             icon={<CreditCard className="size-5" />}
             accent="violet"
           />
-          <Card className="p-5">
+          <Card className="p-5 flex flex-col justify-between">
             <p className="text-sm font-bold text-subtle">{t("dashboard.opBusyHours")}</p>
             {operational.busyHoursToday.length === 0 ? (
               <p className="mt-3 text-[12px] text-faint">{t("common.none")}</p>
             ) : (
-              <ul className="mt-3 space-y-1.5">
+              <ul className="mt-3 space-y-2">
                 {operational.busyHoursToday.map((h) => (
                   <li key={h.hour} className="flex items-center justify-between gap-2 text-[12px] font-semibold">
-                    <span dir="ltr" className="tabnum text-subtle">
+                    <span dir="ltr" className="tabnum text-subtle w-12">
                       {String(h.hour).padStart(2, "0")}:00
                     </span>
-                    <span aria-hidden className="h-1.5 w-20 overflow-hidden rounded-full bg-white/10">
+                    <span aria-hidden className="h-2 flex-1 overflow-hidden rounded-full bg-white/[0.06]">
                       <span
-                        className="block h-full rounded-full bg-cyan/80"
+                        className="block h-full rounded-full bg-cyan transition-all duration-300"
                         style={{
                           width: `${Math.max(
                             10,
@@ -389,6 +476,7 @@ export function DashboardPage() {
         </section>
       )}
 
+      {/* 6. Store Quick Stats */}
       {storeStats && (
         <section className="grid gap-4 sm:grid-cols-2 xl:grid-cols-3">
           <Link to="/store" className="block">
@@ -418,15 +506,16 @@ export function DashboardPage() {
         </section>
       )}
 
+      {/* 7. Upcoming Sessions */}
       {upcomingSessions.length > 0 && (
         <section>
           <Card>
             <CardHeader title={t("dashboard.upcomingClasses")} />
-            <ul className="divide-y divide-line px-5 pb-4">
+            <ul className="divide-y divide-white/[0.06] px-5 pb-4">
               {upcomingSessions.map((s) => (
-                <li key={s.id} className="flex items-center justify-between gap-3 py-2.5 text-sm">
+                <li key={s.id} className="flex items-center justify-between gap-3 py-3 text-sm">
                   <span className="min-w-0">
-                    <span className="block font-bold">{s.className}</span>
+                    <span className="block font-bold text-ink">{s.className}</span>
                     <span dir="ltr" className="block text-[11px] text-faint tabnum">
                       {s.sessionDate} {s.startTime}
                     </span>
@@ -441,42 +530,12 @@ export function DashboardPage() {
         </section>
       )}
 
+      {/* 8. Expiring Subscriptions & Recent Check-ins */}
       <section className="grid gap-4 xl:grid-cols-2">
-        <QuickActions />
         <ExpiringCard rows={expiring} />
+        <RecentCheckInsCard />
       </section>
-
-      <RecentCheckInsCard />
     </div>
-  );
-}
-
-function KpiStat({
-  title,
-  value,
-  icon,
-  accent,
-  trend,
-  prevLabel,
-}: {
-  title: string;
-  value: string;
-  icon: React.ReactNode;
-  accent: Accent;
-  trend: { deltaPct: number | null };
-  prevLabel: string;
-}) {
-  const { delta, deltaDir } = deltaProps(trend);
-  return (
-    <StatCard
-      title={title}
-      value={value}
-      icon={icon}
-      accent={accent}
-      delta={delta}
-      deltaDir={deltaDir}
-      trendLabel={prevLabel}
-    />
   );
 }
 
@@ -521,6 +580,104 @@ function DateRangeFilter({
         </div>
       )}
     </div>
+  );
+}
+
+function RevenueBreakdownCard({
+  finance,
+  store,
+  storeStats,
+}: {
+  finance: { revenue: { current: number }; expenses: { current: number }; net: { current: number } } | null;
+  store: { lowStock: number; debtMinor: number } | null;
+  storeStats: StoreStats | null;
+}) {
+  const t = useT();
+  const totalRev = finance?.revenue.current ?? 0;
+  const storeRev = storeStats?.revenueMinor ?? 0;
+  const subRev = Math.max(0, totalRev - storeRev);
+
+  const subPct = totalRev > 0 ? Math.min(100, Math.round((subRev / totalRev) * 100)) : 0;
+  const storePct = totalRev > 0 ? Math.min(100, Math.round((storeRev / totalRev) * 100)) : 0;
+
+  const debtMinor = store?.debtMinor ?? 0;
+
+  return (
+    <Card className="h-full flex flex-col justify-between">
+      <CardHeader
+        title={t("dashboard.revenueDistributionTitle")}
+        description={t("dashboard.revenueDistributionSubtitle")}
+      />
+      <div className="p-5 space-y-4">
+        {/* Item 1: Subscriptions */}
+        <div className="space-y-1.5">
+          <div className="flex items-center justify-between text-xs">
+            <span className="font-semibold text-ink flex items-center gap-2">
+              <span className="size-2.5 rounded-full bg-neon shadow-glow-sm" />
+              {t("dashboard.sourceSubscriptions")}
+            </span>
+            <span className="font-bold tabnum text-ink">
+              {formatMinor(subRev)} <span className="text-subtle font-normal">({subPct}%)</span>
+            </span>
+          </div>
+          <div className="h-2 w-full rounded-full bg-white/[0.06] overflow-hidden">
+            <div
+              className="h-full rounded-full bg-neon transition-all duration-500"
+              style={{ width: `${subPct}%` }}
+            />
+          </div>
+        </div>
+
+        {/* Item 2: Store */}
+        <div className="space-y-1.5">
+          <div className="flex items-center justify-between text-xs">
+            <span className="font-semibold text-ink flex items-center gap-2">
+              <span className="size-2.5 rounded-full bg-cyan shadow-sm" />
+              {t("dashboard.sourceStore")}
+            </span>
+            <span className="font-bold tabnum text-ink">
+              {formatMinor(storeRev)} <span className="text-subtle font-normal">({storePct}%)</span>
+            </span>
+          </div>
+          <div className="h-2 w-full rounded-full bg-white/[0.06] overflow-hidden">
+            <div
+              className="h-full rounded-full bg-cyan transition-all duration-500"
+              style={{ width: `${storePct}%` }}
+            />
+          </div>
+        </div>
+
+        {/* Item 3: Debts */}
+        <div className="space-y-1.5">
+          <div className="flex items-center justify-between text-xs">
+            <span className="font-semibold text-ink flex items-center gap-2">
+              <span className="size-2.5 rounded-full bg-amber shadow-sm" />
+              {t("dashboard.sourceDebts")}
+            </span>
+            <span className="font-bold tabnum text-ink">
+              {formatMinor(debtMinor)}
+            </span>
+          </div>
+          <div className="h-2 w-full rounded-full bg-white/[0.06] overflow-hidden">
+            <div
+              className="h-full rounded-full bg-amber transition-all duration-500"
+              style={{ width: debtMinor > 0 ? (totalRev > 0 ? `${Math.min(100, Math.round((debtMinor / (totalRev + debtMinor)) * 100))}%` : "100%") : "0%" }}
+            />
+          </div>
+        </div>
+      </div>
+
+      {/* Smart insights pill at the bottom */}
+      <div className="p-3.5 mx-5 mb-5 rounded-2xl bg-white/[0.03] border border-white/[0.06] flex items-center gap-3">
+        <Sparkles className="size-5 text-neon shrink-0" />
+        <div className="text-xs text-subtle leading-relaxed">
+          <span className="font-bold text-ink">{t("dashboard.smartInsightsTitle")}: </span>
+          {finance && finance.net.current >= 0
+            ? t("dashboard.insightCashFlow")
+            : t("dashboard.insightOutstanding")}
+        </div>
+      </div>
+    </Card>
   );
 }
 
@@ -607,30 +764,36 @@ function AlertStrip({ overview }: { overview: DashboardOverview | null }) {
   if (visible.length === 0) return null;
 
   return (
-    <section>
+    <Card className="h-full flex flex-col justify-between">
       <CardHeader title={t("dashboard.alertsTitle")} />
-      <div className="grid gap-3 px-5 pb-5 sm:grid-cols-2 xl:grid-cols-3">
+      <div className="grid gap-2.5 p-5">
         {visible.map((item) => (
           <Link
             key={item.label}
             to={item.link ?? "#"}
             className={cn(
-              "group flex items-center gap-3 rounded-xl border border-line bg-surface p-3.5 transition-colors",
-              "hover:border-neon/40",
+              "group flex items-center gap-3 rounded-2xl border border-white/[0.06] bg-surface/80 p-3 transition-all duration-200",
+              "hover:border-neon/40 hover:bg-surface",
             )}
           >
-            <span aria-hidden className={cn("grid size-10 shrink-0 place-items-center rounded-xl", ACCENT_TINTS[item.accent])}>
+            <span
+              aria-hidden
+              className={cn("grid size-10 shrink-0 place-items-center rounded-xl", ACCENT_TINTS[item.accent])}
+            >
               <item.icon className="size-[18px]" />
             </span>
             <span className="min-w-0 flex-1">
               <span className="block text-xs font-semibold text-subtle">{item.label}</span>
-              <span className="block text-xl font-extrabold leading-tight tabnum">{item.value}</span>
+              <span className="block text-lg font-extrabold leading-tight tabnum text-ink">{item.value}</span>
             </span>
-            <ChevronLeft aria-hidden className="size-4 shrink-0 text-faint transition-transform group-hover:-translate-x-0.5 group-hover:text-neon" />
+            <ChevronLeft
+              aria-hidden
+              className="size-4 shrink-0 text-faint transition-transform group-hover:-translate-x-0.5 group-hover:text-neon"
+            />
           </Link>
         ))}
       </div>
-    </section>
+    </Card>
   );
 }
 
@@ -664,7 +827,7 @@ function ExpiringCard({ rows }: { rows: SubscriptionWithMember[] }) {
       render: (row) => (
         <Link to={`/members/${row.memberId}`} className="flex items-center gap-2.5">
           <Avatar name={row.name} size="sm" />
-          <span className="font-bold hover:text-neon">{row.name}</span>
+          <span className="font-bold hover:text-neon text-ink">{row.name}</span>
         </Link>
       ),
     },
@@ -721,91 +884,6 @@ function ExpiringCard({ rows }: { rows: SubscriptionWithMember[] }) {
   );
 }
 
-function QuickActions() {
-  const t = useT();
-  const navigate = useNavigate();
-  const { hasPermission } = useAuth();
-
-  interface Action {
-    icon: LucideIcon;
-    accent: Accent;
-    label: string;
-    desc: string;
-    onClick: () => void;
-  }
-
-  const actions: Action[] = [];
-  if (hasPermission("members.create")) {
-    actions.push({
-      icon: UserPlus,
-      accent: "neon",
-      label: t("dashboard.quickAddMember"),
-      desc: t("dashboard.quickAddMemberDesc"),
-      onClick: () => navigate("/members?add=1"),
-    });
-  }
-  if (hasPermission("checkin.create")) {
-    actions.push({
-      icon: ScanLine,
-      accent: "cyan",
-      label: t("dashboard.quickCheckin"),
-      desc: t("dashboard.quickCheckinDesc"),
-      onClick: () => navigate("/checkin"),
-    });
-  }
-  if (hasPermission("subscriptions.create")) {
-    actions.push({
-      icon: CalendarDays,
-      accent: "violet",
-      label: t("dashboard.quickAddSub"),
-      desc: t("dashboard.quickAddSubDesc"),
-      onClick: () => navigate("/subscriptions?add=1"),
-    });
-  }
-  if (hasPermission("cards.assign")) {
-    actions.push({
-      icon: CreditCard,
-      accent: "amber",
-      label: t("dashboard.quickAssignCard"),
-      desc: t("dashboard.quickAssignCardDesc"),
-      onClick: () => navigate("/cards?assign=1"),
-    });
-  }
-
-  if (actions.length === 0) return null;
-
-  return (
-    <Card className="flex h-full flex-col">
-      <CardHeader title={t("dashboard.quickTitle")} />
-      <div className="grid flex-1 grid-cols-1 gap-3 p-5">
-        {actions.map((action) => (
-          <button
-            key={`${action.label}-${action.desc}`}
-            type="button"
-            onClick={action.onClick}
-            className="group flex items-center gap-3.5 rounded-xl border border-line bg-surface p-3.5 text-start transition-all duration-150 hover:border-neon/40 hover:bg-neon/[0.04] focus-visible:ring-2 focus-visible:ring-neon/50"
-          >
-            <span
-              aria-hidden
-              className={cn(
-                "grid size-10 shrink-0 place-items-center rounded-xl transition-transform duration-150 group-hover:scale-105",
-                ACCENT_TINTS[action.accent]
-              )}
-            >
-              <action.icon className="size-[18px]" />
-            </span>
-            <span className="min-w-0">
-              <span className="block truncate text-sm font-bold">{action.label}</span>
-              <span className="block truncate text-[11px] text-faint">{action.desc}</span>
-            </span>
-            <ChevronLeft aria-hidden className="ms-auto size-4 shrink-0 text-faint transition-transform duration-150 group-hover:-translate-x-0.5 group-hover:text-neon" />
-          </button>
-        ))}
-      </div>
-    </Card>
-  );
-}
-
 function RecentCheckInsCard() {
   const t = useT();
   const { actor, hasPermission } = useAuth();
@@ -836,14 +914,20 @@ function RecentCheckInsCard() {
       ) : recent.length === 0 ? (
         <EmptyState icon={<ScanLine />} title={t("checkin.noScans")} />
       ) : (
-        <ul className="divide-y divide-line px-5 pb-4">
+        <ul className="divide-y divide-white/[0.06] px-5 pb-4">
           {recent.map((item) => (
-            <li key={item.id} className="flex items-center gap-3 py-2.5">
+            <li key={item.id} className="flex items-center gap-3 py-3 hover:bg-white/[0.02] px-2 rounded-xl transition-colors">
               <Avatar name={item.memberName} size="sm" />
-              <span className="min-w-0 flex-1 truncate text-sm font-bold">{item.memberName}</span>
-              <span dir="ltr" className="text-[11px] text-faint tabnum">
-                {item.checkinAt.slice(11, 16)}
-              </span>
+              <div className="min-w-0 flex-1">
+                <span className="block truncate text-sm font-bold text-ink">{item.memberName}</span>
+                <span className="block text-[11px] font-mono text-faint">{item.memberCode}</span>
+              </div>
+              <div className="flex items-center gap-2">
+                <span className="inline-block size-2 rounded-full bg-neon animate-pulse" />
+                <span dir="ltr" className="text-xs text-subtle tabnum font-mono">
+                  {item.checkinAt.slice(11, 16)}
+                </span>
+              </div>
             </li>
           ))}
         </ul>

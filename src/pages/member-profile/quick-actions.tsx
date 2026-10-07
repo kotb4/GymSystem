@@ -6,6 +6,7 @@ import {
   Scale,
   Snowflake,
   StickyNote,
+  UserPlus,
 } from "lucide-react";
 import { useAuth } from "@/contexts/auth-context";
 import { useT } from "@/i18n";
@@ -17,6 +18,7 @@ export type QuickAction =
   | "renew"
   | "freeze"
   | "recordPayment"
+  | "inviteGuest"
   | "addNote"
   | "addPt"
   | "addMeasurement"
@@ -31,6 +33,7 @@ interface QuickActionsProps {
 interface ActionDef {
   key: QuickAction;
   perm: Permission;
+  featureFlag?: string;
   label: string;
   icon: React.ReactNode;
   disabled?: boolean;
@@ -38,7 +41,7 @@ interface ActionDef {
 
 export function QuickActions({ onAction, activeSubscriptionId, memberArchived }: QuickActionsProps) {
   const t = useT();
-  const { hasPermission } = useAuth();
+  const { hasPermission, isFeatureEnabled } = useAuth();
   const archived = memberArchived;
   const hasActive = activeSubscriptionId != null;
 
@@ -46,19 +49,22 @@ export function QuickActions({ onAction, activeSubscriptionId, memberArchived }:
     {
       key: "checkin",
       perm: "checkin.create",
+      featureFlag: "featureAttendanceEnabled",
       label: t("members.qaCheckin"),
       icon: <ScanLine className="size-4" />,
     },
     {
       key: "renew",
       perm: "subscriptions.create",
-      label: t("members.qaRenew"),
+      featureFlag: "featureSubscriptionsEnabled",
+      label: hasActive ? t("members.qaRenew") : t("subs.addSubscription"),
       icon: <CreditCard className="size-4" />,
-      disabled: !hasActive,
+      disabled: archived,
     },
     {
       key: "freeze",
       perm: "subscriptions.freeze",
+      featureFlag: "featureSubscriptionsEnabled",
       label: t("members.qaFreeze"),
       icon: <Snowflake className="size-4" />,
       disabled: !hasActive || archived,
@@ -66,8 +72,17 @@ export function QuickActions({ onAction, activeSubscriptionId, memberArchived }:
     {
       key: "recordPayment",
       perm: "payments.create",
+      featureFlag: "featureTreasuryEnabled",
       label: t("members.qaRecordPayment"),
       icon: <CreditCard className="size-4" />,
+    },
+    {
+      key: "inviteGuest",
+      perm: "invitations.manage",
+      featureFlag: "featureSubscriptionsEnabled",
+      label: t("members.qaInviteGuest"),
+      icon: <UserPlus className="size-4" />,
+      disabled: archived,
     },
     {
       key: "addNote",
@@ -79,6 +94,7 @@ export function QuickActions({ onAction, activeSubscriptionId, memberArchived }:
     {
       key: "addPt",
       perm: "training.manage",
+      featureFlag: "featureClassesEnabled",
       label: t("members.qaAddPt"),
       icon: <Dumbbell className="size-4" />,
       disabled: archived,
@@ -86,6 +102,7 @@ export function QuickActions({ onAction, activeSubscriptionId, memberArchived }:
     {
       key: "addMeasurement",
       perm: "assessments.manage",
+      featureFlag: "featureInbodyEnabled",
       label: t("members.qaAddMeasurement"),
       icon: <Scale className="size-4" />,
       disabled: archived,
@@ -93,12 +110,16 @@ export function QuickActions({ onAction, activeSubscriptionId, memberArchived }:
     {
       key: "assignCard",
       perm: "cards.assign",
+      featureFlag: "featureCardsEnabled",
       label: t("members.qaAssignCard"),
       icon: <BadgePlus className="size-4" />,
     },
   ];
 
-  const visible = actions.filter((a) => hasPermission(a.perm));
+  const visible = actions.filter((a) => {
+    if (a.featureFlag && !isFeatureEnabled(a.featureFlag)) return false;
+    return hasPermission(a.perm);
+  });
   if (visible.length === 0) return null;
 
   return (

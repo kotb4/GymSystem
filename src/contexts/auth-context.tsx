@@ -20,6 +20,7 @@ export interface SetupFormInput {
   ownerFullName: string;
   username: string;
   password: string;
+  phone?: string;
 }
 
 export interface AuthActionResult {
@@ -39,6 +40,9 @@ interface AuthContextValue {
     department?: "general" | "men" | "women";
   } | null;
   needsSetup: boolean;
+  featureFlags?: Record<string, boolean>;
+  isFeatureEnabled: (flag: string) => boolean;
+  refreshFeatureFlags: () => Promise<void>;
   hasPermission: (permission: Permission) => boolean;
   login: (username: string, password: string) => Promise<AuthActionResult>;
   setup: (input: SetupFormInput) => Promise<AuthActionResult>;
@@ -53,6 +57,18 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   const [booting, setBooting] = useState(true);
   const [user, setUser] = useState<PublicUser | null>(null);
   const [needsSetup, setNeedsSetup] = useState(false);
+  const [featureFlags, setFeatureFlags] = useState<Record<string, boolean>>({});
+
+  const refreshFeatureFlags = useCallback(async () => {
+    try {
+      const me = await api.auth.me();
+      if (me.featureFlags) {
+        setFeatureFlags(me.featureFlags);
+      }
+    } catch {
+      // ignore
+    }
+  }, []);
 
   useEffect(() => {
     let alive = true;
@@ -62,6 +78,9 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         if (!alive) return;
         setNeedsSetup(me.needsSetup);
         setUser((me.user as PublicUser | null) ?? null);
+        if (me.featureFlags) {
+          setFeatureFlags(me.featureFlags);
+        }
       } catch {
         if (alive) setUser(null);
       } finally {
@@ -135,19 +154,46 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       .catch(() => undefined);
   }, []);
 
+  const isFeatureEnabled = useCallback(
+    (flag: string): boolean => {
+      if (user?.isDeveloper) return true;
+      if (flag in featureFlags) {
+        return Boolean(featureFlags[flag]);
+      }
+      return true;
+    },
+    [user, featureFlags]
+  );
+
   const value = useMemo<AuthContextValue>(
     () => ({
       booting,
       user,
       actor,
       needsSetup,
+      featureFlags,
+      isFeatureEnabled,
+      refreshFeatureFlags,
       hasPermission,
       login,
       setup,
       logout,
       refreshNeedsSetup,
     }),
-    [booting, user, actor, needsSetup, hasPermission, login, setup, logout, refreshNeedsSetup]
+    [
+      booting,
+      user,
+      actor,
+      needsSetup,
+      featureFlags,
+      isFeatureEnabled,
+      refreshFeatureFlags,
+      hasPermission,
+      login,
+      setup,
+      logout,
+      refreshNeedsSetup,
+    ]
   );
 
   return <AuthContext.Provider value={value}>{children}</AuthContext.Provider>;

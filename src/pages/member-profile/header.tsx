@@ -3,11 +3,15 @@ import { Link, useNavigate } from "react-router-dom";
 import {
   Archive,
   ArrowRight,
+  Banknote,
   Camera,
   Image as ImageIcon,
   MessageSquare,
   Pencil,
+  Plus,
+  Trash2,
   Undo2,
+  UserPlus,
   X,
 } from "lucide-react";
 import { useAuth } from "@/contexts/auth-context";
@@ -16,11 +20,13 @@ import { useToast } from "@/components/ui/toast";
 import { describeError } from "@/utils/app-error";
 import { api } from "@/api";
 import { parseDateKey } from "@/core/dates";
-import { formatDateShort } from "@/services/format";
+import { formatDate } from "@/services/format";
 import { memberStatusMeta } from "@/utils/status-meta";
 import type { PublicMember } from "@/core/services/members.service";
 import { Avatar } from "@/components/ui/avatar";
+import { compressMemberPhoto } from "@/utils/image-compressor";
 import { Badge } from "@/components/ui/badge";
+import { BranchBadge } from "@/components/ui/branch-badge";
 import { Button } from "@/components/ui/button";
 import { Card } from "@/components/ui/card";
 import { ConfirmDialog } from "@/components/ui/confirm-dialog";
@@ -31,25 +37,50 @@ interface MemberHeaderProps {
   member: PublicMember;
   onReload: () => void;
   onEdit: () => void;
+  onNewSubscription?: () => void;
+  onRecordPayment?: () => void;
+  onInviteGuest?: () => void;
 }
 
-function InfoRow({ label, value, ltr }: { label: string; value: string; ltr?: boolean }) {
+function InfoRow({
+  label,
+  value,
+  ltr,
+  className,
+}: {
+  label: string;
+  value: string;
+  ltr?: boolean;
+  className?: string;
+}) {
   return (
-    <div className="flex min-w-0 items-baseline gap-2">
-      <dt className="shrink-0 text-xs font-semibold text-faint">{label}</dt>
-      <dd dir={ltr ? "ltr" : undefined} className="min-w-0 truncate font-semibold tabnum">
+    <div className={`flex min-w-0 flex-wrap items-baseline gap-1.5 sm:gap-2 ${className ?? ""}`}>
+      <dt className="shrink-0 text-xs font-semibold text-faint">{label}:</dt>
+      <dd
+        dir={ltr ? "ltr" : undefined}
+        title={value}
+        className="min-w-0 font-bold tabnum text-foreground"
+      >
         {value}
       </dd>
     </div>
   );
 }
 
-export function MemberHeader({ member, onReload, onEdit }: MemberHeaderProps) {
+export function MemberHeader({
+  member,
+  onReload,
+  onEdit,
+  onNewSubscription,
+  onRecordPayment,
+  onInviteGuest,
+}: MemberHeaderProps) {
   const t = useT();
-  const { actor, hasPermission } = useAuth();
+  const { actor, hasPermission, isFeatureEnabled } = useAuth();
   const { toast } = useToast();
   const navigate = useNavigate();
   const [archiveOpen, setArchiveOpen] = useState(false);
+  const [trashOpen, setTrashOpen] = useState(false);
   const [busy, setBusy] = useState(false);
   const [photoBusy, setPhotoBusy] = useState(false);
   const [cameraOpen, setCameraOpen] = useState(false);
@@ -74,11 +105,27 @@ export function MemberHeader({ member, onReload, onEdit }: MemberHeaderProps) {
     }
   };
 
+  const onTrash = async () => {
+    if (!actor) return;
+    setBusy(true);
+    try {
+      await api.members.trash(member.id, null);
+      toast("success", t("members.trashedToast"));
+      setTrashOpen(false);
+      navigate("/members", { replace: true });
+    } catch (err) {
+      toast("error", describeError(err, t));
+    } finally {
+      setBusy(false);
+    }
+  };
+
   const applyPhotoFile = async (file: File) => {
     if (!actor) return;
     setPhotoBusy(true);
     try {
-      const { id: fileId } = await api.files.upload("member_photo", file);
+      const compressed = await compressMemberPhoto(file, { maxDimension: 512, quality: 0.82 });
+      const { id: fileId } = await api.files.upload("member_photo", compressed);
       await api.members.setMemberPhoto(member.id, fileId);
       toast("success", t("toast.saved"));
       onReload();
@@ -175,14 +222,15 @@ export function MemberHeader({ member, onReload, onEdit }: MemberHeaderProps) {
             <Badge variant={statusMeta.variant} dot>
               {statusMeta.label}
             </Badge>
+            <BranchBadge branchId={member.branchId} />
           </div>
           <p dir="ltr" className="mt-1 text-xs text-faint tabnum">
             {member.memberCode}
           </p>
-          <dl className="mt-4 grid gap-x-8 gap-y-2.5 text-[13px] sm:grid-cols-2 xl:grid-cols-3">
-            <div className="flex min-w-0 items-baseline gap-2">
-              <dt className="shrink-0 text-xs font-semibold text-faint">{t("common.phone")}</dt>
-              <dd dir="ltr" className="min-w-0 truncate font-semibold tabnum flex items-center gap-1.5">
+          <dl className="mt-4 grid gap-x-6 gap-y-3 text-[13px] sm:grid-cols-2 lg:grid-cols-3">
+            <div className="flex min-w-0 flex-wrap items-baseline gap-1.5 sm:gap-2">
+              <dt className="shrink-0 text-xs font-semibold text-faint">{t("common.phone")}:</dt>
+              <dd dir="ltr" className="min-w-0 font-bold tabnum flex items-center gap-1.5 text-foreground">
                 <span>{member.phone ?? "—"}</span>
                 {member.phone && (
                   <button
@@ -203,12 +251,12 @@ export function MemberHeader({ member, onReload, onEdit }: MemberHeaderProps) {
             />
             <InfoRow
               label={t("members.dob")}
-              value={member.dateOfBirth ? formatDateShort(parseDateKey(member.dateOfBirth)) : "—"}
+              value={member.dateOfBirth ? formatDate(parseDateKey(member.dateOfBirth)) : "—"}
             />
             <InfoRow label={t("members.address")} value={member.address ?? "—"} />
             <InfoRow
               label={t("members.registeredAt")}
-              value={formatDateShort(parseDateKey(member.registrationDate))}
+              value={member.registrationDate ? formatDate(parseDateKey(member.registrationDate)) : "—"}
             />
             <InfoRow
               label={t("members.department")}
@@ -222,12 +270,12 @@ export function MemberHeader({ member, onReload, onEdit }: MemberHeaderProps) {
             />
             <InfoRow
               label={t("members.formHeight")}
-              value={member.heightCm == null ? "—" : `${member.heightCm}`}
+              value={member.heightCm == null ? "—" : `${member.heightCm} سم`}
               ltr
             />
             <InfoRow
               label={t("members.formWeight")}
-              value={member.weightKg == null ? "—" : `${member.weightKg}`}
+              value={member.weightKg == null ? "—" : `${member.weightKg} كجم`}
               ltr
             />
             <InfoRow
@@ -240,6 +288,12 @@ export function MemberHeader({ member, onReload, onEdit }: MemberHeaderProps) {
               ltr
             />
           </dl>
+          {member.notes && member.notes.trim() !== "" && (
+            <div className="mt-4 flex items-start gap-2.5 rounded-xl border border-amber/30 bg-amber/10 px-3.5 py-2.5 text-xs text-amber">
+              <span className="font-bold shrink-0">{t("members.notes")}:</span>
+              <p className="whitespace-pre-line leading-relaxed font-medium text-amber-200">{member.notes}</p>
+            </div>
+          )}
         </div>
         <div className="flex flex-wrap items-center gap-2">
           <Link
@@ -249,6 +303,28 @@ export function MemberHeader({ member, onReload, onEdit }: MemberHeaderProps) {
           >
             <ArrowRight className="size-4" />
           </Link>
+          {!archived && isFeatureEnabled("featureSubscriptionsEnabled") && hasPermission("subscriptions.create") && onNewSubscription && (
+            <Button variant="primary" onClick={onNewSubscription}>
+              <Plus className="size-4" />
+              {t("subs.addSubscription")}
+            </Button>
+          )}
+          {!archived && isFeatureEnabled("featureTreasuryEnabled") && hasPermission("payments.create") && onRecordPayment && (
+            <Button variant="secondary" onClick={onRecordPayment}>
+              <Banknote className="size-4" />
+              {t("pay.addPayment")}
+            </Button>
+          )}
+          {!archived && isFeatureEnabled("featureSubscriptionsEnabled") && hasPermission("invitations.manage") && onInviteGuest && (
+            <Button
+              variant="secondary"
+              onClick={onInviteGuest}
+              className="border-neon/40 bg-neon/10 text-neon hover:bg-neon/20 font-bold"
+            >
+              <UserPlus className="size-4" />
+              {t("members.inviteGuestBtn")}
+            </Button>
+          )}
           {!archived && hasPermission("members.edit") && (
             <Button variant="secondary" onClick={onEdit}>
               <Pencil className="size-4" />
@@ -256,9 +332,15 @@ export function MemberHeader({ member, onReload, onEdit }: MemberHeaderProps) {
             </Button>
           )}
           {hasPermission("members.change_status") && (
-            <Button variant={archived ? "primary" : "danger"} onClick={() => setArchiveOpen(true)}>
+            <Button variant={archived ? "primary" : "secondary"} onClick={() => setArchiveOpen(true)}>
               {archived ? <Undo2 className="size-4" /> : <Archive className="size-4" />}
               {archived ? t("members.restoreMember") : t("members.archiveMember")}
+            </Button>
+          )}
+          {!archived && hasPermission("members.delete") && (
+            <Button variant="danger" onClick={() => setTrashOpen(true)}>
+              <Trash2 className="size-4" />
+              {t("members.trashAction")}
             </Button>
           )}
         </div>
@@ -268,9 +350,18 @@ export function MemberHeader({ member, onReload, onEdit }: MemberHeaderProps) {
         onClose={() => setArchiveOpen(false)}
         title={archived ? t("members.restoreMember") : t("members.archiveMember")}
         message={archived ? t("members.activateMember") : t("members.archiveConfirmMsg")}
-        tone={archived ? "primary" : "danger"}
+        tone={archived ? "primary" : undefined}
         loading={busy}
         onConfirm={onArchive}
+      />
+      <ConfirmDialog
+        open={trashOpen}
+        onClose={() => setTrashOpen(false)}
+        title={t("members.trashAction")}
+        message={t("members.trashConfirmMsg")}
+        tone="danger"
+        loading={busy}
+        onConfirm={onTrash}
       />
       <CameraCapture
         open={cameraOpen}

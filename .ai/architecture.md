@@ -35,18 +35,18 @@ One process owns the database. The browser stores no business data.
 
 ## Service layer (`src/core/services/` — backend-only)
 
-27 domain services: auth, users, members, plans, subscriptions, cards, card-delivery, attendance, attendance-analytics, payments, expenses, cash-session, finance, financial-report, dashboard, notifications, trainers, training-plans, classes, employees, store, inbody, settings, backup, audit, staff-activity, permissions. (CRM bulk messaging removed in TASK-044; `crm_templates`/`crm_messages` tables retained unused.)
+39 domain services: auth, users, members, plans, subscriptions, cards, card-delivery, attendance, attendance-analytics, payments, expenses, cash-session, finance, financial-report, dashboard, notifications, trainers, training-plans, classes, employees, store, inbody, settings, backup, audit, staff-activity, permissions, sync, developer, license, etc.
 
-Shared kernel (`src/core/`): `permissions.ts` (73 perms, 4 roles, DB-grant cache), `errors.ts` (AppError + i18n keys), `dates.ts` (YYYY-MM-DD keys), `money.ts` (minor units), `audit-actions.ts`.
+Shared kernel (`src/core/`): `permissions.ts` (93 perms, 5 roles, DB-grant cache), `errors.ts` (AppError + i18n keys), `dates.ts` (YYYY-MM-DD keys), `money.ts` (minor units), `audit-actions.ts` (165 actions), `branch.ts` (branch prefix, branch resolution).
 
 ## Database (`src/db/`)
 
 - `engine.ts`: `Db` class — run/all/first/scalar/count/insert/exec, re-entrant `transaction()` (BEGIN IMMEDIATE), `onDirty` listeners fired after COMMIT.
-- `migrations.ts`: append-only v1..v33 applied at every boot inside transactions; tracked in `schema_migrations`.
-- `seed.ts`: optional demo data when `GYM_SEED_DEMO=1` (backend env var; the only trigger) and `settings.demo_seeded` unset. Note: the frontend `VITE_SEED_DEMO` in `.env.development` does not reach the Node backend, so it does not seed.
+- `migrations.ts`: append-only v1..v41 applied at every boot inside transactions; tracked in `schema_migrations`.
+- `seed.ts`: optional demo data when `GYM_SEED_DEMO=1` (backend env var; the only trigger) and `settings.demo_seeded` unset.
 - Tests use an in-memory/file driver via `tests/helpers/test-db.ts` (`createTestDb()`).
 
-### Schema map (40+ tables, migrations v1..v33)
+### Schema map (40+ tables, migrations v1..v41)
 
 ```
 v1 core     roles, permissions, role_permissions, users, settings,
@@ -60,20 +60,28 @@ v4 growth   plan kinds time|sessions|open (+sessions_total/used, freeze cols),
             attendance.checkout_at, body_assessments, fitness_test_defs/results,
             product_categories(seed), products, stock_movements, store_sales,
             store_sale_items, store_debts, store_debt_payments, classes, class_sessions,
-            class_bookings, employees, salaries, expense_attachments(BLOB≤2MB; dropped v15, backfilled v26 to Files/),
-            dual box on cash_sessions+ledger, crm_templates(seed)/crm_messages (retained unused since TASK-044)
+            class_bookings, employees, salaries, expense_attachments
 v5 sessions auth_sessions
 v6 files    files(kind registry), members.photo_file_id, employees.salary_type/base,
             allow_negative_stock setting
+...
+v38-v41     branch_info, registered_branches, store_sales.branch_id, counters scoping
 ```
 
 Key integrity rules: money CHECKs (`net = base - discount`, non-negative), partial UNIQUE indexes (member phone, trainer phone, one open session per box), ledger `UNIQUE(ref_table, ref_id, entry_type)`, FK enforcement ON, `class_bookings UNIQUE(session_id, member_id)`, `salaries UNIQUE(employee_id, period_month)`.
+
+## Multi-Branch Synchronization Architecture
+
+- Primary branch on port 8890 (`branch_role = 'primary'`). Replicas on port 8895+ (`branch_role = 'replica'`).
+- Machine-to-machine API: `/api/sync/ping`, `/api/sync/push`, `/api/sync/pull` secured with `x-sync-secret`.
+- Collision avoidance: each branch has a unique `branch_prefix` (e.g. `B1`, `B2`). Member codes, cards, and invoices use this prefix.
+- Port-isolated auth cookies: `gymsystem_session` vs `gymsystem_session_<port>`.
 
 ## Frontend (`src/`)
 
 ```
 main.tsx → routes/index.tsx (RequireAuth + RequirePermission wrappers)
-             ├─ pages/*.tsx (24 pages)
+             ├─ pages/*.tsx (29 pages)
              ├─ components/ui/* shared primitives; layout/app-layout + sidebar
              ├─ contexts/auth-context.tsx (session, hasPermission via actor role grants)
              └─ api/index.ts (typed RPC wrappers; only place calling fetch)

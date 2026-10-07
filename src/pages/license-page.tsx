@@ -1,12 +1,16 @@
 import { useEffect, useState } from "react";
-import { KeyRound, Copy, FileUp, ShieldAlert, Info, MessageSquare, Wrench } from "lucide-react";
+import { KeyRound, Copy, FileUp, ShieldAlert, Info, MessageSquare, Wrench, Globe, ExternalLink, RefreshCw, Check } from "lucide-react";
 import { useNavigate } from "react-router-dom";
+import QRCode from "qrcode";
 import { useT } from "@/i18n";
 import { useToast } from "@/components/ui/toast";
 import { Button } from "@/components/ui/button";
 import { Modal } from "@/components/ui/modal";
 import { api } from "@/api";
 import { useLicense } from "@/contexts/license-context";
+import { useAuth } from "@/contexts/auth-context";
+import { Input } from "@/components/ui/input";
+import { PasswordInput } from "@/components/ui/password-input";
 import { describeError } from "@/utils/app-error";
 import { buildWhatsAppDirectUrl } from "@/core/whatsapp";
 
@@ -32,6 +36,88 @@ export function LicensePage() {
   const [devToken, setDevToken] = useState("");
   const [devSubmitting, setDevSubmitting] = useState(false);
   const [devError, setDevError] = useState<string | null>(null);
+
+  // Developer direct login modal
+  const { login } = useAuth();
+  const [devLoginOpen, setDevLoginOpen] = useState(false);
+  const [devUsername, setDevUsername] = useState("kotb");
+  const [devPassword, setDevPassword] = useState("");
+  const [devLoginSubmitting, setDevLoginSubmitting] = useState(false);
+  const [devLoginError, setDevLoginError] = useState<string | null>(null);
+
+  const handleDevLogin = async (e?: React.FormEvent) => {
+    if (e) e.preventDefault();
+    setDevLoginError(null);
+    if (!devUsername.trim() || !devPassword.trim()) {
+      setDevLoginError(t("developer.loginFailed"));
+      return;
+    }
+    try {
+      setDevLoginSubmitting(true);
+      const res = await login(devUsername.trim(), devPassword.trim());
+      if (res.ok) {
+        toast("success", t("developer.loginSubmitBtn"));
+        setDevLoginOpen(false);
+        navigate("/developer", { replace: true });
+      } else {
+        setDevLoginError(res.error || t("developer.loginFailed"));
+      }
+    } catch (err) {
+      setDevLoginError(describeError(err, t));
+    } finally {
+      setDevLoginSubmitting(false);
+    }
+  };
+
+  // Emergency Cloudflare Tunnel & QR modal
+  const [tunnelModalOpen, setTunnelModalOpen] = useState(false);
+  const [tunnelUrl, setTunnelUrl] = useState<string | null>(null);
+  const [tunnelQrUrl, setTunnelQrUrl] = useState<string | null>(null);
+  const [tunnelLoading, setTunnelLoading] = useState(false);
+  const [tunnelError, setTunnelError] = useState<string | null>(null);
+  const [tunnelCopied, setTunnelCopied] = useState(false);
+
+  const handleStartEmergencyTunnel = async (forceRestart = false) => {
+    setTunnelLoading(true);
+    setTunnelError(null);
+    try {
+      const res = await api.system.startCloudflareTunnel(forceRestart);
+      if (res?.url) {
+        setTunnelUrl(res.url);
+        const qr = await QRCode.toDataURL(res.url, {
+          width: 240,
+          margin: 1.5,
+          color: { dark: "#090d16", light: "#ffffff" },
+        });
+        setTunnelQrUrl(qr);
+      } else {
+        setTunnelError(t("license.emergencyTunnelFailed"));
+      }
+    } catch (err) {
+      setTunnelError(describeError(err, t));
+    } finally {
+      setTunnelLoading(false);
+    }
+  };
+
+  const openTunnelModal = () => {
+    setTunnelModalOpen(true);
+    if (!tunnelUrl) {
+      void handleStartEmergencyTunnel(false);
+    }
+  };
+
+  const copyTunnelUrl = async () => {
+    if (!tunnelUrl) return;
+    try {
+      await navigator.clipboard.writeText(tunnelUrl);
+      setTunnelCopied(true);
+      toast("success", t("common.copied"));
+      setTimeout(() => setTunnelCopied(false), 2000);
+    } catch {
+      toast("error", t("common.copyFailed"));
+    }
+  };
 
   useEffect(() => {
     document.title = `${t("license.title")} — ${t("app.name")}`;
@@ -185,6 +271,21 @@ export function LicensePage() {
                       </Button>
                     </div>
                   </div>
+                  <div className="mt-3 flex items-center justify-between border-t border-line/60 pt-3">
+                    <span className="text-xs text-subtle">
+                      {t("license.emergencyTunnelModalDesc")}
+                    </span>
+                    <Button
+                      type="button"
+                      variant="secondary"
+                      size="sm"
+                      onClick={openTunnelModal}
+                      className="gap-1.5 border-neon/30 text-neon hover:bg-neon/10 shrink-0"
+                    >
+                      <Globe className="size-3.5" />
+                      <span className="text-[11px]">{t("license.emergencyTunnelBtn")}</span>
+                    </Button>
+                  </div>
                 </div>
               )}
 
@@ -265,14 +366,37 @@ export function LicensePage() {
           )}
 
           <div className="mt-4 flex items-center justify-between border-t border-line/60 pt-3">
-            <button
-              type="button"
-              onClick={() => setDevModalOpen(true)}
-              className="flex items-center gap-1.5 text-xs text-subtle transition-colors hover:text-neon"
-            >
-              <Wrench className="size-3" />
-              <span>{t("license.devActionOpenBtn")}</span>
-            </button>
+            <div className="flex items-center gap-3">
+              <button
+                type="button"
+                onClick={() => setDevModalOpen(true)}
+                className="flex items-center gap-1.5 text-xs text-subtle transition-colors hover:text-neon"
+              >
+                <Wrench className="size-3" />
+                <span>{t("license.devActionOpenBtn")}</span>
+              </button>
+              <button
+                type="button"
+                onClick={() => {
+                  setDevUsername("kotb");
+                  setDevPassword("");
+                  setDevLoginError(null);
+                  setDevLoginOpen(true);
+                }}
+                className="flex items-center gap-1.5 text-xs text-subtle transition-colors hover:text-neon"
+              >
+                <ShieldAlert className="size-3" />
+                <span>{t("developer.loginModalBtn")}</span>
+              </button>
+              <button
+                type="button"
+                onClick={openTunnelModal}
+                className="flex items-center gap-1.5 text-xs text-subtle transition-colors hover:text-neon"
+              >
+                <Globe className="size-3" />
+                <span>{t("license.emergencyTunnelBtn")}</span>
+              </button>
+            </div>
             {!needsActivation && !readOnly && (
               <Button variant="ghost" size="sm" onClick={() => navigate("/", { replace: true })}>
                 {t("license.goBack")}
@@ -320,6 +444,174 @@ export function LicensePage() {
           {devError && (
             <div className="rounded-lg border border-red/30 bg-red/10 px-3 py-2 text-xs font-semibold text-red">
               {devError}
+            </div>
+          )}
+        </div>
+      </Modal>
+
+      {/* Developer Login Modal */}
+      <Modal
+        open={devLoginOpen}
+        onClose={() => setDevLoginOpen(false)}
+        title={t("developer.loginModalTitle")}
+        footer={
+          <div className="flex items-center justify-end gap-2">
+            <Button variant="ghost" size="sm" onClick={() => setDevLoginOpen(false)}>
+              {t("common.cancel")}
+            </Button>
+            <Button
+              variant="primary"
+              size="sm"
+              loading={devLoginSubmitting}
+              onClick={() => void handleDevLogin()}
+            >
+              <KeyRound className="size-3.5" />
+              {t("developer.loginSubmitBtn")}
+            </Button>
+          </div>
+        }
+      >
+        <form onSubmit={(e) => void handleDevLogin(e)} className="space-y-3 p-2">
+          <p className="text-xs leading-relaxed text-subtle">
+            {t("developer.loginModalDesc")}
+          </p>
+          <Input
+            id="dev-username"
+            dir="ltr"
+            autoComplete="username"
+            label={t("developer.usernamePlaceholder")}
+            value={devUsername}
+            onChange={(e) => setDevUsername(e.target.value)}
+            disabled={devLoginSubmitting}
+          />
+          <div className="w-full space-y-1.5">
+            <label htmlFor="dev-password" className="block text-[13px] font-semibold text-subtle">
+              {t("developer.passwordPlaceholder")}
+            </label>
+            <PasswordInput
+              id="dev-password"
+              dir="ltr"
+              placeholder="••••••••"
+              autoComplete="current-password"
+              value={devPassword}
+              onChange={(e) => setDevPassword(e.target.value)}
+              disabled={devLoginSubmitting}
+            />
+          </div>
+          {devLoginError && (
+            <div className="rounded-lg border border-red/30 bg-red/10 px-3 py-2 text-xs font-semibold text-red">
+              {devLoginError}
+            </div>
+          )}
+        </form>
+      </Modal>
+
+      {/* Emergency Cloudflare Tunnel & QR Modal */}
+      <Modal
+        open={tunnelModalOpen}
+        onClose={() => setTunnelModalOpen(false)}
+        title={t("license.emergencyTunnelModalTitle")}
+        footer={
+          <div className="flex w-full items-center justify-between">
+            {tunnelUrl && (
+              <Button
+                variant="ghost"
+                size="sm"
+                disabled={tunnelLoading}
+                onClick={() => void handleStartEmergencyTunnel(true)}
+                className="gap-1.5 text-xs text-subtle"
+              >
+                <RefreshCw className={`size-3.5 ${tunnelLoading ? "animate-spin text-neon" : ""}`} />
+                <span>{t("settings.restartRemoteAccessBtn")}</span>
+              </Button>
+            )}
+            <div className="ms-auto flex items-center gap-2">
+              <Button variant="ghost" size="sm" onClick={() => setTunnelModalOpen(false)}>
+                {t("common.close")}
+              </Button>
+            </div>
+          </div>
+        }
+      >
+        <div className="space-y-4 p-2 text-center">
+          <p className="text-xs leading-relaxed text-subtle">
+            {t("license.emergencyTunnelModalDesc")}
+          </p>
+
+          {tunnelLoading && (
+            <div className="space-y-3 py-8">
+              <RefreshCw className="mx-auto size-7 animate-spin text-neon" />
+              <p className="text-xs text-subtle">{t("license.emergencyTunnelStarting")}</p>
+            </div>
+          )}
+
+          {tunnelError && !tunnelLoading && (
+            <div className="space-y-3 py-4">
+              <div className="rounded-xl border border-red/30 bg-red/10 p-3 text-xs font-semibold text-red">
+                {tunnelError}
+              </div>
+              <Button
+                variant="secondary"
+                size="sm"
+                onClick={() => void handleStartEmergencyTunnel(true)}
+                className="gap-1.5"
+              >
+                <RefreshCw className="size-3.5" />
+                <span>{t("common.retry")}</span>
+              </Button>
+            </div>
+          )}
+
+          {tunnelUrl && !tunnelLoading && (
+            <div className="space-y-4 pt-2">
+              {tunnelQrUrl && (
+                <div className="flex justify-center">
+                  <div className="rounded-2xl border border-line bg-white p-3 shadow-md">
+                    <img
+                      src={tunnelQrUrl}
+                      alt="Cloudflare Tunnel QR"
+                      className="size-48 rounded-lg object-contain"
+                    />
+                  </div>
+                </div>
+              )}
+
+              <div className="space-y-1.5 text-start">
+                <label className="text-xs font-bold text-subtle">
+                  {t("settings.tunnelUrlLabel")}:
+                </label>
+                <div className="flex items-center gap-2">
+                  <input
+                    readOnly
+                    dir="ltr"
+                    value={tunnelUrl}
+                    className="w-full rounded-xl border border-line bg-base px-3 py-2 font-mono text-xs text-ink outline-none"
+                  />
+                  <Button
+                    type="button"
+                    variant="secondary"
+                    size="sm"
+                    onClick={() => void copyTunnelUrl()}
+                    className="shrink-0 gap-1.5"
+                  >
+                    {tunnelCopied ? (
+                      <Check className="size-3.5 text-neon" />
+                    ) : (
+                      <Copy className="size-3.5" />
+                    )}
+                    <span>{t("common.copy")}</span>
+                  </Button>
+                  <a
+                    href={tunnelUrl}
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    className="inline-flex size-9 items-center justify-center rounded-lg border border-line bg-surface text-subtle transition-colors hover:text-ink"
+                    title={t("settings.openUrl")}
+                  >
+                    <ExternalLink className="size-4" />
+                  </a>
+                </div>
+              </div>
             </div>
           )}
         </div>

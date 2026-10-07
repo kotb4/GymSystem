@@ -27,6 +27,22 @@ export function OverviewTab({ ctx }: TabProps) {
     return permissionDeniedNode(t);
   }
 
+  const [invSummary, setInvSummary] = useState<{ remaining: number; total: number } | null>(null);
+
+  useEffect(() => {
+    if (ctx.member.id) {
+      api.invitations.getSummary(ctx.member.id)
+        .then((res) => {
+          if (res) {
+            setInvSummary({ remaining: res.invitationsRemaining, total: res.invitationsTotal });
+          } else {
+            setInvSummary(null);
+          }
+        })
+        .catch(() => setInvSummary(null));
+    }
+  }, [ctx.member.id, ctx.reloadTick]);
+
   const active = ctx.overview?.activeSubscription ?? null;
   const kind = active?.kind ?? "time";
   const sessionsLeft =
@@ -48,6 +64,14 @@ export function OverviewTab({ ctx }: TabProps) {
                 {sessionsLeft != null && (
                   <div className="flex justify-between"><span className="text-subtle">{t("members.statVisitsLeft")}</span><span className="font-bold tabnum">{sessionsLeft}</span></div>
                 )}
+                {invSummary && invSummary.total > 0 && (
+                  <div className="flex justify-between">
+                    <span className="text-subtle">دعوات الضيوف</span>
+                    <span className="font-bold tabnum text-emerald-400">
+                      {invSummary.remaining} من {invSummary.total}
+                    </span>
+                  </div>
+                )}
                 <div className="flex justify-between"><span className="text-subtle">{t("common.status")}</span><Badge variant={subStatusMeta(t, "active").variant} dot>{subStatusMeta(t, "active").label}</Badge></div>
               </div>
             ) : (
@@ -62,6 +86,9 @@ export function OverviewTab({ ctx }: TabProps) {
         <RecentDeliveriesCard memberId={ctx.member.id} reloadTick={ctx.reloadTick} />
         <RecentTrainingCard memberId={ctx.member.id} reloadTick={ctx.reloadTick} />
         <RecentPaymentCard memberId={ctx.member.id} reloadTick={ctx.reloadTick} />
+      </div>
+      <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
+        <RecentStorePurchasesCard memberId={ctx.member.id} reloadTick={ctx.reloadTick} />
       </div>
     </div>
   );
@@ -268,6 +295,87 @@ function RecentPaymentCard({ memberId, reloadTick }: { memberId: string; reloadT
                 <span className="font-bold tabnum text-neon">{formatMinor(i.paidAmountMinor)}</span>
               </li>
             ))}
+          </ul>
+        )}
+      </div>
+    </Card>
+  );
+}
+
+function RecentStorePurchasesCard({ memberId, reloadTick }: { memberId: string; reloadTick: number }) {
+  const t = useT();
+  const { hasPermission } = useAuth();
+  const [items, setItems] = useState<Array<{
+    id: string;
+    saleNo: string;
+    soldAt: string;
+    totalMinor: number;
+    isCredit: boolean;
+    status: "completed" | "voided";
+    returnStatus?: "none" | "partial" | "full";
+    returnedTotalMinor?: number;
+  }>>([]);
+
+  useEffect(() => {
+    if (!hasPermission("store.view")) return;
+    let alive = true;
+    api.store
+      .listSales({ memberId, pageSize: 3, page: 1 })
+      .then((res) => {
+        if (!alive) return;
+        setItems(res.items.map((s) => ({
+          id: s.id,
+          saleNo: s.saleNo,
+          soldAt: s.soldAt,
+          totalMinor: s.totalMinor,
+          isCredit: s.isCredit,
+          status: s.status,
+          returnStatus: s.returnStatus,
+          returnedTotalMinor: s.returnedTotalMinor,
+        })));
+      })
+      .catch(() => undefined);
+    return () => {
+      alive = false;
+    };
+  }, [hasPermission, memberId, reloadTick]);
+
+  if (!hasPermission("store.view")) return null;
+  return (
+    <Card>
+      <CardHeader title={t("store.tabSales")} />
+      <div className="px-5 pb-4 text-sm">
+        {items.length === 0 ? (
+          <p className="text-faint text-center py-3 text-[12px]">{t("store.noMemberPurchases")}</p>
+        ) : (
+          <ul className="space-y-1.5">
+            {items.map((i) => {
+              const isVoided = i.status === "voided";
+              const isFullyReturned = i.returnStatus === "full";
+              const isPartiallyReturned = i.returnStatus === "partial";
+              return (
+                <li key={i.id} className={`flex justify-between items-center py-1 border-b border-line/40 last:border-0 ${isVoided || isFullyReturned ? "opacity-60" : ""}`}>
+                  <div className="flex items-center gap-1.5 flex-wrap">
+                    <span dir="ltr" className={`tabnum text-xs font-semibold ${isVoided || isFullyReturned ? "line-through text-subtle" : ""}`}>{i.saleNo}</span>
+                    {isVoided ? (
+                      <Badge variant="danger">{t("exp.statusVoided")}</Badge>
+                    ) : isFullyReturned ? (
+                      <Badge variant="danger">{t("store.statusFullyReturned")}</Badge>
+                    ) : isPartiallyReturned ? (
+                      <Badge variant="warning">{t("store.statusPartiallyReturned")}</Badge>
+                    ) : i.isCredit ? (
+                      <span className="text-[10px] text-amber px-1 rounded bg-amber/10">{t("store.creditSale")}</span>
+                    ) : null}
+                  </div>
+                  <div className="flex items-center gap-2">
+                    <span dir="ltr" className="tabnum text-[11px] text-subtle">{i.soldAt.slice(0, 10)}</span>
+                    <span className={`font-bold tabnum ${isVoided || isFullyReturned ? "line-through text-subtle" : "text-emerald"}`}>
+                      {formatMinor(i.totalMinor)}
+                    </span>
+                  </div>
+                </li>
+              );
+            })}
           </ul>
         )}
       </div>

@@ -35,9 +35,10 @@ export function SessionDetailsModal({
   const { toast } = useToast();
   const [bookings, setBookings] = useState<BookingRow[]>([]);
   const [pickerOpen, setPickerOpen] = useState(false);
-  const [confirmAction, setConfirmAction] = useState<"complete" | "cancel" | "uncancel" | null>(null);
+  const [confirmAction, setConfirmAction] = useState<"complete" | "cancel" | "uncancel" | "delete" | null>(null);
   const [busy, setBusy] = useState(false);
   const canManage = hasPermission("classes.manage");
+  const canPurge = hasPermission("classes.purge");
 
   const reloadBookings = useCallback(() => {
     api.classes.listBookings(session.id).then(setBookings).catch(console.error);
@@ -98,6 +99,11 @@ export function SessionDetailsModal({
             ) : (
               <Button size="sm" variant="ghost" onClick={() => setConfirmAction("cancel")}>{t("cls.cancelSession")}</Button>
             ))}
+            {canPurge && (
+              <Button size="sm" variant="ghost" className="text-red hover:bg-red/10 hover:text-red" onClick={() => setConfirmAction("delete")}>
+                {t("common.delete")}
+              </Button>
+            )}
             {hasPermission("classes.checkin") && (
               <Button size="sm" variant="secondary" disabled={session.status !== "scheduled"} onClick={() => setPickerOpen(true)}>
                 {t("cls.book")}
@@ -161,6 +167,29 @@ export function SessionDetailsModal({
         title={t("cls.uncancelSession")}
         message={t("cls.uncancelSessionConfirmMsg")}
         confirmLabel={t("common.confirm")}
+        loading={busy}
+      />
+      <ConfirmDialog
+        open={confirmAction === "delete"}
+        onClose={() => setConfirmAction(null)}
+        onConfirm={() => {
+          setBusy(true);
+          api.classes.deleteSession(session.id)
+            .then(() => {
+              toast("success", t("toast.deleted"));
+              onChanged();
+              onClose();
+            })
+            .catch((err) => toast("error", describeError(err, t)))
+            .finally(() => {
+              setBusy(false);
+              setConfirmAction(null);
+            });
+        }}
+        title={t("cls.deleteSession")}
+        message={t("cls.deleteSessionConfirm")}
+        confirmLabel={t("common.delete")}
+        tone="danger"
         loading={busy}
       />
     </Modal>

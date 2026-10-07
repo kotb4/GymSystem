@@ -1,12 +1,13 @@
 import { useEffect, useState } from "react";
-import { ScrollText } from "lucide-react";
+import { ScrollText, ShieldAlert } from "lucide-react";
 import { useT } from "@/i18n";
 import { AUDIT_ACTIONS, type AuditAction } from "@/core/audit-actions";
-import { api, type AuditListQuery } from "@/api";
+import { api, type AuditListQuery, type FraudAlertsSummary } from "@/api";
 import { parseDateKey } from "@/core/dates";
 import { formatDateShort } from "@/services/format";
 import { Card, CardHeader } from "@/components/ui/card";
 import { Select } from "@/components/ui/select";
+import { Badge } from "@/components/ui/badge";
 import { DataTable, type Column } from "@/components/ui/table";
 import { EmptyState } from "@/components/ui/empty-state";
 import { Pagination } from "@/components/ui/pagination";
@@ -31,6 +32,20 @@ export function AuditPage() {
     items: Array<Omit<Row, "details"> & { metadata?: unknown }>;
     total: number;
   }>({ items: [], total: 0 });
+  const [fraudSummary, setFraudSummary] = useState<FraudAlertsSummary | null>(null);
+
+  useEffect(() => {
+    let alive = true;
+    api.fraudAlerts
+      .scan(14)
+      .then((res) => {
+        if (alive) setFraudSummary(res);
+      })
+      .catch((err) => console.error(err));
+    return () => {
+      alive = false;
+    };
+  }, []);
 
   useEffect(() => {
     let alive = true;
@@ -106,8 +121,72 @@ export function AuditPage() {
   ];
 
   return (
-    <Card>
-      <CardHeader title={t("nav.audit")} />
+    <div className="space-y-5">
+      {/* Anti-Fraud & Operational Risk Alerts Card */}
+      {fraudSummary && fraudSummary.totalAlerts > 0 && (
+        <Card>
+          <CardHeader
+            title="تنبيهات الأمان والرقابة المالية (Anti-Fraud & Audit Alerts)"
+            description={`تم رصد ${fraudSummary.totalAlerts} عمليات تتطلب مراجعة إدارية خلال آخر ${fraudSummary.scanWindowDays} يوماً (إلغاءات، خصومات استثنائية، أو فروق نقدية)`}
+            action={
+              <div className="flex items-center gap-2">
+                {fraudSummary.criticalCount > 0 && (
+                  <Badge variant="danger">حرجة: {fraudSummary.criticalCount}</Badge>
+                )}
+                {fraudSummary.highCount > 0 && (
+                  <Badge variant="warning">مرتفعة: {fraudSummary.highCount}</Badge>
+                )}
+                <Badge variant="neutral">إجمالي التنبيهات: {fraudSummary.totalAlerts}</Badge>
+              </div>
+            }
+          />
+          <div className="divide-y divide-line/60 overflow-hidden">
+            {fraudSummary.alerts.slice(0, 10).map((alert) => (
+              <div key={alert.id} className="p-4 flex items-center justify-between text-sm">
+                <div className="flex items-start gap-3">
+                  <div
+                    className={`mt-0.5 p-1.5 rounded-lg border ${
+                      alert.severity === "critical"
+                        ? "bg-red/10 border-red/30 text-red"
+                        : alert.severity === "high"
+                          ? "bg-amber/10 border-amber/30 text-amber"
+                          : "bg-blue/10 border-blue/30 text-blue"
+                    }`}
+                  >
+                    <ShieldAlert className="size-4" />
+                  </div>
+                  <div>
+                    <div className="font-bold text-foreground">{alert.description}</div>
+                    <div className="text-xs text-subtle flex items-center gap-2 mt-1">
+                      {alert.actorName && <span>بواسطة: {alert.actorName}</span>}
+                      <span>• التاريخ: {alert.timestamp.slice(0, 16)}</span>
+                    </div>
+                  </div>
+                </div>
+
+                <Badge
+                  variant={
+                    alert.severity === "critical"
+                      ? "danger"
+                      : alert.severity === "high"
+                        ? "warning"
+                        : "neutral"
+                  }
+                >
+                  {alert.severity === "critical"
+                    ? "خطورة حرجة"
+                    : alert.severity === "high"
+                      ? "خطورة مرتفعة"
+                      : "تنبيه تشغيلي"}
+                </Badge>
+              </div>
+            ))}
+          </div>
+        </Card>
+      )}
+
+      <Card>
+        <CardHeader title={t("nav.audit")} />
       <div className="flex flex-col gap-3 border-b border-line px-5 py-3.5 sm:flex-row sm:items-center">
         <div className="sm:w-64">
           <Select
@@ -136,5 +215,6 @@ export function AuditPage() {
         </>
       )}
     </Card>
+  </div>
   );
 }

@@ -21,6 +21,7 @@ export interface PackageRow extends Row {
   freeze_allowance_days: number;
   allowed_freezes: number;
   pt_sessions: number;
+  invitations_count: number | null;
   allowed_areas: string | null;
   description: string | null;
   is_active: number;
@@ -40,6 +41,7 @@ export interface Package {
   freezeAllowanceDays: number;
   allowedFreezes: number;
   ptSessions: number;
+  invitationsCount: number;
   allowedAreas: AccessArea[];
   description: string | null;
   isActive: boolean;
@@ -58,6 +60,7 @@ export interface PackageInput {
   freezeAllowanceDays?: number;
   allowedFreezes?: number;
   ptSessions?: number;
+  invitationsCount?: number;
   allowedAreas?: AccessArea[];
   description?: string | null;
 }
@@ -72,6 +75,7 @@ export interface PackagePatch {
   freezeAllowanceDays?: number;
   allowedFreezes?: number;
   ptSessions?: number;
+  invitationsCount?: number;
   allowedAreas?: AccessArea[];
   description?: string | null;
   isActive?: boolean;
@@ -97,6 +101,7 @@ function toPackage(row: PackageRow): Package {
     freezeAllowanceDays: Number(row.freeze_allowance_days ?? 0),
     allowedFreezes: Number(row.allowed_freezes ?? 0),
     ptSessions: Number(row.pt_sessions ?? 0),
+    invitationsCount: Math.max(0, Number(row.invitations_count ?? 0)),
     allowedAreas: parseAreas(row.allowed_areas),
     description: row.description,
     isActive: Number(row.is_active) === 1,
@@ -148,6 +153,7 @@ interface PlanSync {
   price: number;
   kind: "time" | "sessions";
   sessionsCount: number | null;
+  invitationsCount: number;
   isActive: number;
 }
 
@@ -159,6 +165,7 @@ function planSyncFor(input: {
   price: number;
   unlimitedVisits: boolean;
   visitLimit: number | null;
+  invitationsCount: number;
   isActive: number;
 }): PlanSync {
   const kind = syntheticKind(input.model, input.unlimitedVisits);
@@ -167,16 +174,23 @@ function planSyncFor(input: {
     planId: crypto.randomUUID(),
     name: input.name,
     durationDays: input.durationDays,
-    price: input.price,
+    price: Math.round(input.price) / 100,
     kind,
     sessionsCount,
+    invitationsCount: input.invitationsCount,
     isActive: input.isActive,
   };
 }
 
 function insertSyntheticPlan(db: Db, sync: PlanSync): void {
+  const existing = db.first<{ id: string }>("SELECT id FROM membership_plans WHERE name = ?", [sync.name]);
+  if (existing) {
+    sync.planId = existing.id;
+    updateSyntheticPlan(db, existing.id, sync);
+    return;
+  }
   db.run(
-    "INSERT INTO membership_plans (id, name, duration_days, price, description, color, kind, sessions_count, is_active, created_at, updated_at)\nVALUES (?, ?, ?, ?, NULL, NULL, ?, ?, ?, ?, ?)",
+    "INSERT INTO membership_plans (id, name, duration_days, price, description, color, kind, sessions_count, invitations_count, is_active, created_at, updated_at)\nVALUES (?, ?, ?, ?, NULL, NULL, ?, ?, ?, ?, ?, ?)",
     [
       sync.planId,
       sync.name,
@@ -184,6 +198,7 @@ function insertSyntheticPlan(db: Db, sync: PlanSync): void {
       sync.price,
       sync.kind,
       sync.sessionsCount,
+      sync.invitationsCount,
       sync.isActive,
       nowStamp(),
       nowStamp(),
@@ -193,13 +208,14 @@ function insertSyntheticPlan(db: Db, sync: PlanSync): void {
 
 function updateSyntheticPlan(db: Db, planId: string, sync: PlanSync): void {
   db.run(
-    "UPDATE membership_plans SET name = ?, duration_days = ?, price = ?, kind = ?, sessions_count = ?, is_active = ?, updated_at = ? WHERE id = ?",
+    "UPDATE membership_plans SET name = ?, duration_days = ?, price = ?, kind = ?, sessions_count = ?, invitations_count = ?, is_active = ?, updated_at = ? WHERE id = ?",
     [
       sync.name,
       sync.durationDays,
       sync.price,
       sync.kind,
       sync.sessionsCount,
+      sync.invitationsCount,
       sync.isActive,
       nowStamp(),
       planId,
@@ -217,6 +233,7 @@ interface NormalizedPackage {
   freezeAllowanceDays: number;
   allowedFreezes: number;
   ptSessions: number;
+  invitationsCount: number;
   allowedAreas: AccessArea[];
   description: string | null;
 }
@@ -231,6 +248,7 @@ function normalizePackageInput(input: {
   freezeAllowanceDays?: number;
   allowedFreezes?: number;
   ptSessions?: number;
+  invitationsCount?: number;
   allowedAreas?: AccessArea[];
   description?: string | null;
 }): NormalizedPackage {
@@ -280,6 +298,8 @@ function normalizePackageInput(input: {
     throw errValidation("errors.packagePtsInvalid");
   }
 
+  const invitationsCount = Math.max(0, Math.round(Number(input.invitationsCount || 0)));
+
   const allowedAreas = input.allowedAreas ?? [];
   for (const area of allowedAreas) {
     if (!(ACCESS_AREAS as readonly string[]).includes(area)) {
@@ -297,6 +317,7 @@ function normalizePackageInput(input: {
     freezeAllowanceDays,
     allowedFreezes,
     ptSessions,
+    invitationsCount,
     allowedAreas,
     description: input.description?.trim() || null,
   };
@@ -329,13 +350,14 @@ export async function createPackage(
     price: norm.price,
     unlimitedVisits: norm.unlimitedVisits,
     visitLimit: norm.visitLimit,
+    invitationsCount: norm.invitationsCount,
     isActive: 1,
   });
 
   await db.transaction(async () => {
     insertSyntheticPlan(db, planSync);
     db.run(
-      "INSERT INTO packages (id, name, model, duration_days, price, visit_limit, unlimited_visits, freeze_allowance_days, allowed_freezes, pt_sessions, allowed_areas, description, is_active, synthetic_plan_id, created_at, updated_at)\nVALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 1, ?, ?, ?)",
+      "INSERT INTO packages (id, name, model, duration_days, price, visit_limit, unlimited_visits, freeze_allowance_days, allowed_freezes, pt_sessions, invitations_count, allowed_areas, description, is_active, synthetic_plan_id, created_at, updated_at)\nVALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 1, ?, ?, ?)",
       [
         id,
         norm.name,
@@ -347,6 +369,7 @@ export async function createPackage(
         norm.freezeAllowanceDays,
         norm.allowedFreezes,
         norm.ptSessions,
+        norm.invitationsCount,
         norm.allowedAreas.length ? norm.allowedAreas.join(",") : null,
         norm.description,
         planSync.planId,
@@ -384,6 +407,7 @@ export async function updatePackage(
     freezeAllowanceDays?: number;
     allowedFreezes?: number;
     ptSessions?: number;
+    invitationsCount?: number;
     allowedAreas?: AccessArea[];
     description?: string | null;
   } = {
@@ -406,6 +430,10 @@ export async function updatePackage(
     allowedFreezes:
       patch.allowedFreezes !== undefined ? patch.allowedFreezes : Number(row.allowed_freezes ?? 0),
     ptSessions: patch.ptSessions !== undefined ? patch.ptSessions : Number(row.pt_sessions ?? 0),
+    invitationsCount:
+      patch.invitationsCount !== undefined
+        ? patch.invitationsCount
+        : Number(row.invitations_count ?? 0),
     allowedAreas:
       patch.allowedAreas !== undefined ? patch.allowedAreas : parseAreas(row.allowed_areas),
     description: patch.description !== undefined ? patch.description : row.description,
@@ -419,7 +447,7 @@ export async function updatePackage(
 
   await db.transaction(async () => {
     db.run(
-      "UPDATE packages SET name = ?, model = ?, duration_days = ?, price = ?, visit_limit = ?, unlimited_visits = ?, freeze_allowance_days = ?, allowed_freezes = ?, pt_sessions = ?, allowed_areas = ?, description = ?, is_active = ?, updated_at = ? WHERE id = ?",
+      "UPDATE packages SET name = ?, model = ?, duration_days = ?, price = ?, visit_limit = ?, unlimited_visits = ?, freeze_allowance_days = ?, allowed_freezes = ?, pt_sessions = ?, invitations_count = ?, allowed_areas = ?, description = ?, is_active = ?, updated_at = ? WHERE id = ?",
       [
         norm.name,
         norm.model,
@@ -430,6 +458,7 @@ export async function updatePackage(
         norm.freezeAllowanceDays,
         norm.allowedFreezes,
         norm.ptSessions,
+        norm.invitationsCount,
         norm.allowedAreas.length ? norm.allowedAreas.join(",") : null,
         norm.description,
         isActive,
@@ -439,15 +468,19 @@ export async function updatePackage(
     );
     const planId = row.synthetic_plan_id;
     if (planId) {
-      updateSyntheticPlan(db, planId, {
-        planId,
+      const sync = planSyncFor({
         name: norm.name,
+        model: norm.model,
         durationDays: norm.durationDays,
         price: norm.price,
-        kind: syntheticKind(norm.model, norm.unlimitedVisits),
-        sessionsCount:
-          syntheticKind(norm.model, norm.unlimitedVisits) === "sessions" ? norm.visitLimit : null,
+        unlimitedVisits: norm.unlimitedVisits,
+        visitLimit: norm.visitLimit,
+        invitationsCount: norm.invitationsCount,
         isActive,
+      });
+      updateSyntheticPlan(db, planId, {
+        ...sync,
+        planId,
       });
     }
     recordAudit(db, actor, "PACKAGE_UPDATED", "package", packageId, {
@@ -502,6 +535,7 @@ export async function duplicatePackage(
     freezeAllowanceDays: Number(src.freeze_allowance_days ?? 0),
     allowedFreezes: Number(src.allowed_freezes ?? 0),
     ptSessions: Number(src.pt_sessions ?? 0),
+    invitationsCount: Number(src.invitations_count ?? 0),
     allowedAreas: parseAreas(src.allowed_areas),
     description: src.description,
   });
@@ -514,13 +548,14 @@ export async function duplicatePackage(
     price: norm.price,
     unlimitedVisits: norm.unlimitedVisits,
     visitLimit: norm.visitLimit,
+    invitationsCount: norm.invitationsCount,
     isActive: Number(src.is_active),
   });
 
   await db.transaction(async () => {
     insertSyntheticPlan(db, planSync);
     db.run(
-      "INSERT INTO packages (id, name, model, duration_days, price, visit_limit, unlimited_visits, freeze_allowance_days, allowed_freezes, pt_sessions, allowed_areas, description, is_active, synthetic_plan_id, created_at, updated_at)\nVALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+      "INSERT INTO packages (id, name, model, duration_days, price, visit_limit, unlimited_visits, freeze_allowance_days, allowed_freezes, pt_sessions, invitations_count, allowed_areas, description, is_active, synthetic_plan_id, created_at, updated_at)\nVALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
       [
         id,
         norm.name,
@@ -532,6 +567,7 @@ export async function duplicatePackage(
         norm.freezeAllowanceDays,
         norm.allowedFreezes,
         norm.ptSessions,
+        norm.invitationsCount,
         norm.allowedAreas.length ? norm.allowedAreas.join(",") : null,
         norm.description,
         Number(src.is_active),
@@ -548,6 +584,54 @@ export async function duplicatePackage(
 
   return getPackageById(db, id);
 }
+
+export async function deletePackage(
+  db: Db,
+  actor: ServiceActor,
+  packageId: string,
+): Promise<{ success: boolean; softDeactivated?: boolean }> {
+  requirePermission(actor, "packages.edit");
+  const pkg = getPackageRow(db, packageId);
+  if (!pkg) throw errNotFound("errors.packageNotFound");
+
+  const subscriptionsCount = db.count(
+    "SELECT COUNT(*) FROM member_subscriptions WHERE package_id = ? OR plan_id = ?",
+    [packageId, pkg.synthetic_plan_id ?? ""],
+  );
+
+  if (subscriptionsCount > 0) {
+    // If subscriptions exist, deactivate it instead of breaking foreign keys
+    await db.transaction(async () => {
+      db.run("UPDATE packages SET is_active = 0, updated_at = ? WHERE id = ?", [
+        nowStamp(),
+        packageId,
+      ]);
+      if (pkg.synthetic_plan_id) {
+        db.run("UPDATE membership_plans SET is_active = 0, updated_at = ? WHERE id = ?", [
+          nowStamp(),
+          pkg.synthetic_plan_id,
+        ]);
+      }
+      recordAudit(db, actor, "PACKAGE_DEACTIVATED", "package", packageId, {
+        name: pkg.name,
+        reason: "has_subscriptions",
+        subscriptionsCount,
+      });
+    });
+    return { success: true, softDeactivated: true };
+  }
+
+  await db.transaction(async () => {
+    db.run("DELETE FROM packages WHERE id = ?", [packageId]);
+    if (pkg.synthetic_plan_id) {
+      db.run("DELETE FROM membership_plans WHERE id = ?", [pkg.synthetic_plan_id]);
+    }
+    recordAudit(db, actor, "PACKAGE_DELETED", "package", packageId, { name: pkg.name });
+  });
+
+  return { success: true, softDeactivated: false };
+}
+
 
 export interface PackageStat {
   packageId: string;

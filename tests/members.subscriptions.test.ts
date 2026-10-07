@@ -64,8 +64,18 @@ describe("members service", () => {
   it("creates members with sequential codes and audits them", async () => {
     const a = await member({ fullName: "أحمد الأول" });
     const b = await member({ fullName: "أحمد الثاني" });
-    expect(a.memberCode).toBe("MEM-000001");
-    expect(b.memberCode).toBe("MEM-000002");
+    expect(a.memberCode).toBe("B1-MEM-000001");
+    expect(b.memberCode).toBe("B1-MEM-000002");
+
+    // Test with custom branch prefix
+    db.run("UPDATE branch_info SET branch_prefix = 'B2'");
+    const c = await member({ fullName: "أحمد الثالث" });
+    expect(c.memberCode).toBe("B2-MEM-000003");
+
+    // Test with empty prefix fallback
+    db.run("UPDATE branch_info SET branch_prefix = ''");
+    const d = await member({ fullName: "أحمد الرابع" });
+    expect(d.memberCode).toBe("MEM-000004");
   });
 
   it("rejects duplicate phone numbers", async () => {

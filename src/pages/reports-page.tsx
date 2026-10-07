@@ -1,12 +1,13 @@
-﻿import { useEffect, useMemo, useState } from "react";
-import { BarChart3, CalendarCheck, CalendarDays, Clock3, Layers, ReceiptText, Repeat, ScrollText, TrendingDown, TrendingUp, UserRoundX, Users, Banknote } from "lucide-react";
+import { useEffect, useMemo, useState } from "react";
+import { BarChart3, CalendarCheck, CalendarDays, Clock3, Layers, ReceiptText, Repeat, ScrollText, TrendingDown, TrendingUp, UserRoundX, Users, Banknote, Building2 } from "lucide-react";
 import { useAuth } from "@/contexts/auth-context";
 import { useT } from "@/i18n";
-import { api } from "@/api";
+import { api, type BranchFinancialSummary } from "@/api";
 import type { PeriodReport } from "@/core/services/financial-report.service";
 import type {
   AttendanceAnalytics,
   MemberVisitRow,
+  PeakHoursHeatmapData,
 } from "@/core/services/attendance-analytics.service";
 import type { StaffActivityEntry } from "@/core/services/staff-activity.service";
 import type {
@@ -19,6 +20,7 @@ import { formatMinor } from "@/core/money";
 import { addDaysKey, todayKey } from "@/core/dates";
 import { formatNumber } from "@/services/format";
 import type { ServiceActor } from "@/core/permissions";
+import { cn } from "@/utils/cn";
 
 import type { ChartDataset } from "@/types";
 import { Card, CardHeader } from "@/components/ui/card";
@@ -30,6 +32,7 @@ import { EmptyState } from "@/components/ui/empty-state";
 import { DataTable, type Column } from "@/components/ui/table";
 import { Pagination } from "@/components/ui/pagination";
 import { AttendanceChart } from "@/components/charts/attendance-chart";
+import { BranchFilter } from "@/components/ui/branch-filter";
 
 type PeriodValue = "today" | "week" | "month" | "custom";
 type ReportView = "finance" | "attendance" | "retention" | "staff";
@@ -69,6 +72,7 @@ export function ReportsPage() {
 
   const [view, setView] = useState<ReportView>("finance");
   const [period, setPeriod] = useState<PeriodValue>("month");
+  const [selectedBranch, setSelectedBranch] = useState<string>("all");
   const [customFrom, setCustomFrom] = useState(rangeFor("month").fromKey);
   const [customTo, setCustomTo] = useState(todayKey());
   const [appliedCustom, setAppliedCustom] = useState<{ fromKey: string; toKey: string }>(rangeFor("month"));
@@ -80,6 +84,11 @@ export function ReportsPage() {
     voids: 1,
   });
   const DETAIL_PAGE_SIZE = 50;
+
+  const handleBranchChange = (branchId: string) => {
+    setSelectedBranch(branchId);
+    setDetailPages({ payments: 1, expenses: 1, refunds: 1, voids: 1 });
+  };
 
   useEffect(() => {
     if (!actor || !hasPermission("reports.view")) return;
@@ -97,6 +106,7 @@ export function ReportsPage() {
         refundsPage: detailPages.refunds,
         voidsPage: detailPages.voids,
         pageSize: DETAIL_PAGE_SIZE,
+        branchId: selectedBranch,
       })
       .then((r) => {
         if (alive) setReport(r);
@@ -105,7 +115,7 @@ export function ReportsPage() {
     return () => {
       alive = false;
     };
-  }, [actor, period, appliedCustom, hasPermission, view, detailPages.payments, detailPages.expenses, detailPages.refunds, detailPages.voids]);
+  }, [actor, period, appliedCustom, hasPermission, view, selectedBranch, detailPages.payments, detailPages.expenses, detailPages.refunds, detailPages.voids]);
 
   const chartDataset = useMemo<ChartDataset | null>(() => {
     if (!report) return null;
@@ -247,17 +257,85 @@ export function ReportsPage() {
     { key: "method", header: t("pay.colMethod"), render: (row) => <span className="text-subtle">{row.methodLabel}</span> },
   ];
 
+  const branchSummaryColumns: Column<BranchFinancialSummary>[] = [
+    {
+      key: "branchName",
+      header: t("rpt.colBranch"),
+      render: (r) => (
+        <div>
+          <div className="font-bold text-ink">{r.branchName}</div>
+          <div className="text-[11px] text-faint font-mono" dir="ltr">{r.branchId}</div>
+        </div>
+      ),
+    },
+    {
+      key: "revenue",
+      header: t("rpt.revenue"),
+      render: (r) => (
+        <span dir="ltr" className="font-extrabold tabnum text-emerald">
+          {formatMinor(r.revenueMinor)}
+        </span>
+      ),
+    },
+    {
+      key: "refunds",
+      header: t("rpt.refunds"),
+      render: (r) => (
+        <span dir="ltr" className="tabnum text-amber-500">
+          {formatMinor(r.refundsMinor)}
+        </span>
+      ),
+    },
+    {
+      key: "expenses",
+      header: t("rpt.expenses"),
+      render: (r) => (
+        <span dir="ltr" className="tabnum text-red">
+          {formatMinor(r.expensesMinor)}
+        </span>
+      ),
+    },
+    {
+      key: "net",
+      header: t("rpt.netResult"),
+      render: (r) => (
+        <span dir="ltr" className={cn("font-extrabold tabnum", r.netResultMinor >= 0 ? "text-emerald" : "text-red")}>
+          {formatMinor(r.netResultMinor)}
+        </span>
+      ),
+    },
+    {
+      key: "count",
+      header: t("rpt.paymentCount"),
+      render: (r) => (
+        <span className="tabnum text-subtle">{t("rpt.count", { count: r.paymentCount })}</span>
+      ),
+    },
+  ];
+
   if (!hasPermission("reports.view")) {
     return <EmptyState icon={<BarChart3 />} title={t("errors.forbidden")} />;
   }
 
-  const activeRange = period === "custom" ? appliedCustom : rangeFor(period);
+  const activeRange = useMemo(
+    () => ({
+      ...(period === "custom" ? appliedCustom : rangeFor(period)),
+      branchId: selectedBranch,
+    }),
+    [period, appliedCustom, selectedBranch],
+  );
 
   return (
     <div className="space-y-5">
-      <section>
-        <h2 className="text-2xl font-extrabold tracking-tight">{t("rpt.title")}</h2>
-        <p className="mt-1 text-sm text-subtle">{t("rpt.subtitle")}</p>
+      <section className="flex flex-wrap items-center justify-between gap-4">
+        <div>
+          <h2 className="text-2xl font-extrabold tracking-tight">{t("rpt.title")}</h2>
+          <p className="mt-1 text-sm text-subtle">{t("rpt.subtitle")}</p>
+        </div>
+        <BranchFilter
+          value={selectedBranch}
+          onChange={handleBranchChange}
+        />
       </section>
 
       <Tabs
@@ -328,6 +406,27 @@ export function ReportsPage() {
               accent="amber"
             />
           </section>
+
+          {selectedBranch !== "all" && (
+            <div className="flex items-center gap-2 px-4 py-2.5 rounded-xl bg-neon/10 border border-neon/20 text-xs text-neon font-semibold">
+              <Building2 className="size-4 shrink-0" />
+              <span>{t("rpt.branchSingleNote", { branch: selectedBranch })}</span>
+            </div>
+          )}
+
+          {selectedBranch === "all" && report.byBranch && report.byBranch.length > 0 && (
+            <Card>
+              <CardHeader
+                title={t("rpt.branchBreakdownTitle")}
+                description={t("rpt.branchBreakdownSubtitle")}
+              />
+              <DataTable
+                columns={branchSummaryColumns}
+                data={report.byBranch}
+                rowKey={(r) => r.branchId}
+              />
+            </Card>
+          )}
 
           {chartDataset && chartDataset.points.length > 0 && (
             <Card>
@@ -448,10 +547,11 @@ export function ReportsPage() {
   );
 }
 
-function AttendanceReportView({ range }: { range: { fromKey: string; toKey: string } }) {
+function AttendanceReportView({ range }: { range: { fromKey: string; toKey: string; branchId?: string } }) {
   const t = useT();
   const { actor, hasPermission } = useAuth();
   const [analytics, setAnalytics] = useState<AttendanceAnalytics | null>(null);
+  const [heatmap, setHeatmap] = useState<PeakHoursHeatmapData | null>(null);
 
   useEffect(() => {
     if (!actor || !hasPermission("checkin.view_history")) return;
@@ -465,6 +565,17 @@ function AttendanceReportView({ range }: { range: { fromKey: string; toKey: stri
         console.error(err);
         if (alive) setAnalytics(null);
       });
+
+    api.reports
+      .peakHoursHeatmap(range)
+      .then((h) => {
+        if (alive) setHeatmap(h);
+      })
+      .catch((err) => {
+        console.error(err);
+        if (alive) setHeatmap(null);
+      });
+
     return () => {
       alive = false;
     };
@@ -540,6 +651,85 @@ function AttendanceReportView({ range }: { range: { fromKey: string; toKey: stri
         </Card>
       )}
 
+      {/* 7x24 Peak Hours Heatmap */}
+      {heatmap && heatmap.totalVisits > 0 && (
+        <Card>
+          <CardHeader
+            title="خريطة أوقات الذروة وازدحام الجيم (Peak Hours Heatmap)"
+            description={`توزيع زيارات الأعضاء على مدار ساعات اليوم وأيام الأسبوع (أكثر الأيام ازدحاماً: ${
+              ["الأحد", "الإثنين", "الثلاثاء", "الأربعاء", "الخميس", "الجمعة", "السبت"][
+                heatmap.busiestDayOfWeek
+              ]
+            }، أكثر الساعات: ${String(heatmap.busiestHour).padStart(2, "0")}:00)`}
+          />
+          <div className="p-5 overflow-x-auto">
+            <div className="min-w-[700px] space-y-2">
+              <div className="grid grid-cols-[80px_repeat(24,1fr)] gap-1 text-[10px] text-faint text-center">
+                <span className="text-start font-bold">اليوم \ الساعة</span>
+                {Array.from({ length: 24 }).map((_, h) => (
+                  <span key={h} dir="ltr" className="tabnum font-mono">
+                    {h}
+                  </span>
+                ))}
+              </div>
+
+              {["الأحد", "الإثنين", "الثلاثاء", "الأربعاء", "الخميس", "الجمعة", "السبت"].map(
+                (dayName, dow) => {
+                  const dayCells = heatmap.matrix.filter((m) => m.dayOfWeek === dow);
+                  return (
+                    <div
+                      key={dow}
+                      className="grid grid-cols-[80px_repeat(24,1fr)] gap-1 items-center"
+                    >
+                      <span className="text-xs font-bold text-subtle text-start">{dayName}</span>
+                      {Array.from({ length: 24 }).map((_, hour) => {
+                        const cell = dayCells.find((c) => c.hour === hour);
+                        const count = cell?.count ?? 0;
+                        const intensity =
+                          heatmap.maxCount > 0 ? count / heatmap.maxCount : 0;
+                        const bgStyle =
+                          count === 0
+                            ? "bg-white/[0.02] border-line/40 text-transparent"
+                            : intensity > 0.75
+                              ? "bg-neon text-background font-black border-neon"
+                              : intensity > 0.5
+                                ? "bg-neon/60 text-foreground font-bold border-neon/70"
+                                : intensity > 0.25
+                                  ? "bg-neon/30 text-foreground border-neon/40"
+                                  : "bg-neon/10 text-subtle border-neon/20";
+
+                        return (
+                          <div
+                            key={hour}
+                            title={`${dayName} الساعة ${hour}:00 — ${count} زيارة`}
+                            className={`h-7 rounded flex items-center justify-center text-[10px] border transition-all hover:scale-110 cursor-default select-none ${bgStyle}`}
+                          >
+                            {count > 0 ? count : ""}
+                          </div>
+                        );
+                      })}
+                    </div>
+                  );
+                },
+              )}
+
+              <div className="flex items-center justify-end gap-3 pt-3 text-[11px] text-subtle">
+                <span>تدرج الازدحام:</span>
+                <span className="flex items-center gap-1.5">
+                  <span className="size-3 rounded bg-white/[0.02] border border-line" /> هادئ
+                </span>
+                <span className="flex items-center gap-1.5">
+                  <span className="size-3 rounded bg-neon/30 border border-neon/40" /> متوسط
+                </span>
+                <span className="flex items-center gap-1.5">
+                  <span className="size-3 rounded bg-neon border border-neon" /> ذروة
+                </span>
+              </div>
+            </div>
+          </div>
+        </Card>
+      )}
+
       <Card>
         <CardHeader title={t("rpt.peakHoursTitle")} />
         {analytics.peakHours.length === 0 ? (
@@ -586,7 +776,7 @@ function AttendanceReportView({ range }: { range: { fromKey: string; toKey: stri
   );
 }
 
-function RetentionView({ range }: { range: { fromKey: string; toKey: string } }) {
+function RetentionView({ range }: { range: { fromKey: string; toKey: string; branchId?: string } }) {
   const t = useT();
   const { actor, hasPermission } = useAuth();
   const [data, setData] = useState<RetentionInsights | null>(null);
@@ -766,7 +956,7 @@ function StaffActivityView({
   range,
 }: {
   actor: ServiceActor | null;
-  range: { fromKey: string; toKey: string };
+  range: { fromKey: string; toKey: string; branchId?: string };
 }) {
   const t = useT();
   const [entries, setEntries] = useState<StaffActivityEntry[] | null>(null);

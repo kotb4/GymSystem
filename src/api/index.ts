@@ -116,6 +116,23 @@ import type {
   TrialStatus,
   TrialType,
 } from "@/core/services/trials.service";
+import type { FeatureFlags, DeveloperOverview, DbIntegrityResult } from "@/core/services/developer.service";
+import type { StaffShift, ShiftSummary } from "@/core/services/shifts.service";
+import type { CombatDiscipline, TargetCategory, CombatLevel } from "@/core/services/classes.service";
+import type { BulkImportResult } from "@/core/services/bulk-import.service";
+import type { MemberOutstanding } from "@/core/services/finance.service";
+import type { PeakHoursHeatmapData } from "@/core/services/attendance-analytics.service";
+import type { PublicEmployeeAdvance } from "@/core/services/employees-hr.service";
+import type { PublicPdfDelivery } from "@/core/services/pdf.service";
+import type { GuestInvitation, MemberInvitationsSummary } from "@/core/services/invitations.service";
+import type { PromoCode, PromoCodeInput, ValidatePromoResult } from "@/core/services/promo.service";
+import type { RenewalCandidate, SendRenewalReminderResult } from "@/core/services/renewal-alerts.service";
+import type { FraudAlertsSummary } from "@/core/services/fraud-alerts.service";
+import type { DocNoMatch } from "@/core/services/document-numbers.service";
+import type { VoucherKind } from "@/core/services/vouchers.service";
+import type { SyncStatus, RegisteredBranch, TestConnectionResult, BranchConfig, UpdateBranchConfigInput } from "@/core/services/sync.service";
+
+
 
 const membersApi = {
   get: (id: string) => rpc<PublicMember>("members", "getMember", [id]),
@@ -143,6 +160,8 @@ const membersApi = {
       "listAuditForMember",
       [id, query],
     ),
+  bulkImport: (rows: unknown[]) =>
+    rpc<BulkImportResult>("members", "bulkImportMembers", [rows]),
 };
 
 const subscriptionsApi = {
@@ -175,6 +194,8 @@ const plansApi = {
   list: (includeInactive = true) => rpc<Plan[]>("plans", "listPlans", [includeInactive]),
   create: (input: PlanInput) => rpc<unknown>("plans", "createPlan", [input]),
   update: (id: string, patch: PlanInput) => rpc<unknown>("plans", "updatePlan", [id, patch]),
+  delete: (planId: string) =>
+    rpc<{ success: boolean; softDeactivated: boolean }>("plans", "deletePlan", [planId]),
 };
 
 const packagesApi = {
@@ -184,6 +205,8 @@ const packagesApi = {
   update: (id: string, patch: PackagePatch) => rpc<Package>("packages", "updatePackage", [id, patch]),
   toggle: (id: string, isActive: boolean) => rpc<Package>("packages", "setPackageActive", [id, isActive]),
   duplicate: (id: string) => rpc<Package>("packages", "duplicatePackage", [id]),
+  delete: (packageId: string) =>
+    rpc<{ success: boolean; softDeactivated?: boolean }>("packages", "deletePackage", [packageId]),
   stats: () => rpc<PackageStats>("packages", "packageStats", []),
 };
 
@@ -207,6 +230,10 @@ const cardsApi = {
   sendPendingDeliveries: (limit?: number) => rpc<{ sent: number; failed: number; skippedNoPhone: number; notConfigured: number }>("cards", "sendPendingCardDeliveries", [limit ?? 20]),
   listDeliveries: (query?: { memberId?: string; status?: CardDeliveryStatus | "all"; limit?: number }) =>
     rpc<PublicCardDelivery[]>("cards", "listCardDeliveries", [query ?? {}]),
+  createVirtualCard: (memberId: string) =>
+    rpc<PublicCardDelivery | unknown>("cards", "createVirtualCard", [memberId]),
+  delete: (cardId: string, force = false) =>
+    rpc<{ unassigned: boolean; detachedAttendance: number }>("cards", "deleteCard", [cardId, { force }]),
   countPendingDeliveries: () =>
     rpc<number>("cards", "countPendingCardDeliveries", []),
 };
@@ -314,26 +341,31 @@ const cashApi = {
 };
 
 const dashboardApi = {
-  stats: () => rpc<DashboardStats>("dashboard", "getDashboardStats", []),
-  attendance: (days: 7 | 30) => rpc<AttendanceDayPoint[]>("dashboard", "getDashboardAttendance", [days]),
+  stats: (branchId?: string) =>
+    rpc<DashboardStats>("dashboard", "getDashboardStats", [branchId]),
+  attendance: (days: 7 | 30) =>
+    rpc<AttendanceDayPoint[]>("dashboard", "getDashboardAttendance", [days]),
   expiring: (withinDays = 7) =>
     rpc<SubscriptionWithMember[]>("dashboard", "getExpiringForDashboard", [withinDays]),
-  operational: () => rpc<DashboardOperationalStats>("dashboard", "getDashboardOperational", []),
+  operational: () =>
+    rpc<DashboardOperationalStats>("dashboard", "getDashboardOperational", []),
   series: (
     key: "today" | "7d" | "30d" | "month" | "year" | "custom",
     custom?: DashboardRange,
-  ) => rpc<DashboardSeriesResult>("dashboard", "getDashboardSeries", [key, custom]),
+    branchId?: string,
+  ) => rpc<DashboardSeriesResult>("dashboard", "getDashboardSeries", [key, custom, branchId]),
   overview: (
     key: "today" | "7d" | "30d" | "month" | "year" | "custom",
     custom?: DashboardRange,
-  ) => rpc<DashboardOverview>("dashboard", "getDashboardOverview", [key, custom]),
+    branchId?: string,
+  ) => rpc<DashboardOverview>("dashboard", "getDashboardOverview", [key, custom, branchId]),
 };
 
 const financeApi = {
   overview: (todayKeyStr: string, monthStartKey: string) =>
     rpc<FinanceOverview>("finance", "getFinanceOverview", [todayKeyStr, monthStartKey]),
   outstandingForMember: (memberId: string) =>
-    rpc<{ subscriptionsMinor: number; storeMinor: number; totalMinor: number }>(
+    rpc<MemberOutstanding>(
       "finance",
       "getMemberOutstanding",
       [memberId],
@@ -347,6 +379,8 @@ const reportsApi = {
     rpc<StaffActivityReport>("reports", "getStaffActivity", [range]),
   attendanceAnalytics: (range: { fromKey: string; toKey: string }) =>
     rpc<AttendanceAnalytics>("reports", "getAttendanceAnalytics", [range]),
+  peakHoursHeatmap: (range: { fromKey: string; toKey: string }) =>
+    rpc<PeakHoursHeatmapData>("reports", "getPeakHoursHeatmap", [range]),
   retentionInsights: (range: { fromKey: string; toKey: string }) =>
     rpc<RetentionInsights>("reports", "getRetentionInsights", [range]),
 };
@@ -358,6 +392,8 @@ const trainersApi = {
     rpc<unknown>("trainers", "updateTrainer", [trainerId, patch]),
   setActive: (trainerId: string, isActive: boolean) =>
     rpc<unknown>("trainers", "setTrainerActive", [trainerId, isActive]),
+  delete: (trainerId: string) =>
+    rpc<void>("trainers", "deleteTrainer", [trainerId]),
 };
 
 const trainingPlansApi = {
@@ -449,9 +485,14 @@ export interface StoreSale {
   memberId: string | null;
   memberName: string | null;
   isCredit: boolean;
+  debtStatus?: "open" | "settled" | null;
+  debtRemainingMinor?: number;
   status: "completed" | "voided";
   soldAt: string;
   items: StoreSaleItem[];
+  branchId?: string | null;
+  returnedTotalMinor: number;
+  returnStatus: "none" | "partial" | "full";
 }
 export interface StoreDebtRow {
   id: string;
@@ -587,6 +628,9 @@ purgeProduct: (id: string) => rpc<void>("store", "purgeProduct", [id]),
 export interface GymClass {
   id: string;
   name: string;
+  discipline?: CombatDiscipline;
+  category?: TargetCategory;
+  level?: CombatLevel;
   description: string | null;
   trainerId: string | null;
   trainerName: string | null;
@@ -599,6 +643,7 @@ export interface ClassSession {
   id: string;
   classId: string;
   className: string;
+  discipline?: CombatDiscipline;
   trainerName: string | null;
   location: string | null;
   consumesSession: boolean;
@@ -640,11 +685,12 @@ export interface RecurrenceResult {
 }
 
 const classesApi = {
-  list: (query?: { search?: string; includeInactive?: boolean }) =>
+  list: (query?: { search?: string; includeInactive?: boolean; discipline?: string; category?: string }) =>
     rpc<GymClass[]>("classes", "listClasses", [query ?? {}]),
-  create: (input: { name: string; description?: string | null; trainerId?: string | null; location?: string | null; capacity: number; consumesSession?: boolean }) =>
+  create: (input: { name: string; discipline?: CombatDiscipline; category?: TargetCategory; level?: CombatLevel; description?: string | null; trainerId?: string | null; location?: string | null; capacity: number; consumesSession?: boolean }) =>
     rpc<GymClass>("classes", "createClass", [input]),
   update: (id: string, patch: Record<string, unknown>) => rpc<GymClass>("classes", "updateClass", [id, patch]),
+  delete: (id: string) => rpc<void>("classes", "deleteClass", [id]),
   createSession: (classId: string, input: { sessionDate: string; startTime: string; durationMin?: number; capacity?: number }) =>
     rpc<ClassSession>("classes", "createClassSession", [classId, input]),
   listSessions: (query?: { fromDate?: string; toDate?: string; classId?: string; status?: string; limit?: number }) =>
@@ -652,6 +698,7 @@ const classesApi = {
   cancelSession: (sessionId: string, reason: string) => rpc<void>("classes", "cancelClassSession", [sessionId, reason]),
   uncancelSession: (sessionId: string) => rpc<void>("classes", "uncancelClassSession", [sessionId]),
   completeSession: (sessionId: string) => rpc<ClassSession>("classes", "completeClassSession", [sessionId]),
+  deleteSession: (sessionId: string) => rpc<void>("classes", "deleteClassSession", [sessionId]),
   listBookings: (sessionId: string) => rpc<BookingRow[]>("classes", "listBookings", [sessionId]),
   listMemberBookings: (memberId: string, limit?: number) =>
     rpc<BookingRow[]>("classes", "listMemberBookings", [memberId, limit]),
@@ -674,6 +721,7 @@ const classesApi = {
   generateRecurrenceWeeks: (recurrenceId: string, weeks?: number) =>
     rpc<{ created: number; skipped: number }>("classes", "generateRecurrenceWeeks", [recurrenceId, weeks ?? 2]),
   stopRecurrence: (recurrenceId: string) => rpc<void>("classes", "deactivateClassRecurrence", [recurrenceId]),
+  deleteRecurrence: (recurrenceId: string) => rpc<void>("classes", "deleteClassRecurrence", [recurrenceId]),
 };
 
 // --------------------------- employees/salaries --------------------------
@@ -697,6 +745,9 @@ export interface PublicEmployee {
   annualLeaveDays: number | null;
   sickLeaveDays: number | null;
   unpaidLeaveDays: number | null;
+  shiftStart?: string | null;
+  shiftEnd?: string | null;
+  commissionPct?: number | null;
 }
 export interface PublicSalary {
   id: string;
@@ -779,6 +830,7 @@ export interface PublicSalarySummary {
   baseMinor: number;
   incentivesMinor: number;
   deductionsMinor: number;
+  advancesMinor: number;
   unpaidLeaveDays: number;
   unpaidLeaveImpactMinor: number;
   attendedDays: number;
@@ -839,8 +891,18 @@ const employeesHrApi = {
     rpc<PublicAttendance>("employeesHr", "clockOut", [input]),
   upsertAttendance: (input: { employeeId: string; dateKey: string; clockInAt: string; clockOutAt?: string | null; notes?: string | null }) =>
     rpc<PublicAttendance>("employeesHr", "upsertAttendance", [input]),
-  listAttendance: (query?: { month?: string; employeeId?: string | null }) =>
+  listAttendance: (query?: { month?: string; employeeId?: string | null; dateKey?: string | null }) =>
     rpc<PublicAttendance[]>("employeesHr", "listAttendance", [query ?? {}]),
+  clockInEmployee: (input: { employeeId: string; at?: string | null; dateKey?: string | null; notes?: string | null }) =>
+    rpc<PublicAttendance>("employeesHr", "clockInEmployee", [input]),
+  clockOutEmployee: (input: { employeeId: string; at?: string | null; dateKey?: string | null }) =>
+    rpc<PublicAttendance>("employeesHr", "clockOutEmployee", [input]),
+  listAdvances: (query?: { employeeId?: string | null; month?: string | null; status?: string | null }) =>
+    rpc<PublicEmployeeAdvance[]>("employeesHr", "listAdvances", [query ?? {}]),
+  addAdvance: (input: { employeeId: string; amountMinor: number; deductionMonth: string; notes?: string | null }) =>
+    rpc<PublicEmployeeAdvance>("employeesHr", "addAdvance", [input]),
+  cancelAdvance: (advanceId: string, reason?: string | null) =>
+    rpc<PublicEmployeeAdvance>("employeesHr", "cancelAdvance", [advanceId, reason]),
   requestLeave: (input: { employeeId?: string | null; leaveType: LeaveType; startDate: string; endDate: string; reason?: string | null }) =>
     rpc<PublicLeave>("employeesHr", "requestLeave", [input]),
   updateLeave: (input: { leaveId: string; leaveType: LeaveType; startDate: string; endDate: string; reason?: string | null }) =>
@@ -1227,6 +1289,24 @@ export const api = {
       postJson<SystemEngineStatus & { started: boolean }>("/api/system/gateway/install-engine", {}),
     /** Poll the engine install status/progress (settings.view). */
     whatsAppEngineStatus: () => request<SystemEngineStatus>("/api/system/gateway/engine-status"),
+    startCloudflareTunnel: (forceRestart?: boolean) =>
+      postJson<{ ok: boolean; url?: string; running?: boolean }>("/api/system/start-cloudflare-tunnel", { forceRestart }),
+    configurePermanentTunnel: (input: { token: string; url?: string }) =>
+      postJson<{ ok: boolean; url?: string }>("/api/system/configure-permanent-tunnel", input),
+    stopTunnel: (clearToken?: boolean) =>
+      postJson<{ ok: boolean }>("/api/system/stop-tunnel", { clearToken }),
+    tunnelStatus: () =>
+      request<TunnelStatus>("/api/system/tunnel-status"),
+    tailscaleStatus: () =>
+      request<TailscaleStatus>("/api/system/tailscale-status"),
+    tailscaleConnect: (authKey: string) =>
+      postJson<TailscaleStatus>("/api/system/tailscale-connect", { authKey }),
+    tailscaleDisconnect: () =>
+      postJson<TailscaleStatus>("/api/system/tailscale-disconnect", {}),
+    tailscaleInstall: () =>
+      postJson<{ ok: boolean }>("/api/system/tailscale-install", {}),
+    networkInfo: () =>
+      request<NetworkInfo>("/api/system/network-info"),
   },
   auth: {
     /** Session probe used by the auth context; mirrors GET /api/auth/me. */
@@ -1240,7 +1320,146 @@ export const api = {
     setRolePermissions: (roleId: string, perms: string[]) =>
       rpc<void>("permissions", "setRolePermissions", [roleId, perms]),
   },
+  pdf: {
+    generatePaymentReceipt: (paymentId: string) =>
+      rpc<{ fileName: string; base64: string }>("pdf", "generatePaymentReceipt", [paymentId]),
+    sendPaymentReceipt: (paymentId: string) =>
+      rpc<{ success: boolean; delivery: PublicPdfDelivery }>("pdf", "sendPaymentReceipt", [paymentId]),
+    generateStoreSaleReceipt: (saleId: string) =>
+      rpc<{ fileName: string; base64: string }>("pdf", "generateStoreSaleReceipt", [saleId]),
+    sendStoreSaleReceipt: (saleId: string) =>
+      rpc<{ success: boolean; delivery: PublicPdfDelivery }>("pdf", "sendStoreSaleReceipt", [saleId]),
+    generateSubscriptionContract: (subscriptionId: string) =>
+      rpc<{ fileName: string; base64: string }>("pdf", "generateSubscriptionContract", [subscriptionId]),
+    sendSubscriptionContract: (subscriptionId: string) =>
+      rpc<{ success: boolean; delivery: PublicPdfDelivery }>("pdf", "sendSubscriptionContract", [subscriptionId]),
+    generatePayslip: (salaryId: string) =>
+      rpc<{ fileName: string; base64: string }>("pdf", "generatePayslipPdf", [salaryId]),
+    listPdfDeliveries: (query: { memberId?: string; limit?: number } = {}) =>
+      rpc<PublicPdfDelivery[]>("pdf", "listPdfDeliveries", [query]),
+  },
+  invitations: {
+    use: (input: { subscriptionId: string; guestName: string; guestPhone?: string | null; notes?: string | null }) =>
+      rpc<GuestInvitation>("invitations", "useGuestInvitation", [input]),
+    useGuestInvitation: (input: { subscriptionId: string; guestName: string; guestPhone?: string | null; notes?: string | null }) =>
+      rpc<GuestInvitation>("invitations", "useGuestInvitation", [input]),
+    listSubscriptionInvitations: (subscriptionId: string) =>
+      rpc<GuestInvitation[]>("invitations", "listSubscriptionInvitations", [subscriptionId]),
+    getSummary: (memberId: string) =>
+      rpc<MemberInvitationsSummary | null>("invitations", "getMemberInvitationsSummary", [memberId]),
+  },
+  promo: {
+    list: (includeInactive = true) =>
+      rpc<PromoCode[]>("promo", "listPromoCodes", [includeInactive]),
+    create: (input: PromoCodeInput) =>
+      rpc<PromoCode>("promo", "createPromoCode", [input]),
+    toggle: (id: string, active: boolean) =>
+      rpc<PromoCode>("promo", "togglePromoCode", [id, active]),
+    validate: (
+      inputOrCode: string | { code: string; orderAmountMinor?: number; spendAmountMinor?: number },
+      spendMinor?: number,
+    ) =>
+      rpc<ValidatePromoResult>(
+        "promo",
+        "validatePromoCode",
+        typeof inputOrCode === "string" ? [inputOrCode, spendMinor ?? 0] : [inputOrCode],
+      ),
+  },
+  renewalAlerts: {
+    listExpiring: (daysAhead?: number) =>
+      rpc<RenewalCandidate[]>("renewalAlerts", "listExpiringSubscriptionsForRenewal", [daysAhead ?? 7]),
+    sendBatch: (subscriptionIds: string[]) =>
+      rpc<SendRenewalReminderResult>("renewalAlerts", "sendRenewalReminders", [subscriptionIds]),
+  },
+  fraudAlerts: {
+    scan: (daysToScan?: number) =>
+      rpc<FraudAlertsSummary>("fraudAlerts", "scanFraudAlerts", [daysToScan ?? 14]),
+  },
+  documentNumbers: {
+    searchByDocNo: (query: string) =>
+      rpc<DocNoMatch[]>("documentNumbers", "searchByDocNo", [query]),
+  },
+  vouchers: {
+    generateOperationVoucher: (kind: VoucherKind, rowId: string) =>
+      rpc<{ fileName: string; base64: string }>("vouchersService", "generateOperationVoucher", [kind, rowId]),
+  },
+  shifts: {
+    getActive: () =>
+      rpc<StaffShift | null>("shifts", "getActiveShift", []),
+    getActiveShift: () =>
+      rpc<StaffShift | null>("shifts", "getActiveShift", []),
+    open: (input: { openingCashMinor?: number; notes?: string | null }) =>
+      rpc<StaffShift>("shifts", "openShift", [input]),
+    openShift: (input: { openingCashMinor?: number; notes?: string | null }) =>
+      rpc<StaffShift>("shifts", "openShift", [input]),
+    getSummary: (shiftId: string) =>
+      rpc<ShiftSummary>("shifts", "getShiftSummary", [shiftId]),
+    getShiftSummary: (shiftId: string) =>
+      rpc<ShiftSummary>("shifts", "getShiftSummary", [shiftId]),
+    close: (input: { shiftId?: string; countedCashMinor: number; notes?: string | null }) =>
+      rpc<ShiftSummary>("shifts", "closeShift", [input]),
+    closeShift: (input: { shiftId?: string; countedCashMinor: number; notes?: string | null }) =>
+      rpc<ShiftSummary>("shifts", "closeShift", [input]),
+    list: (query: { limit?: number; status?: string } = {}) =>
+      rpc<StaffShift[]>("shifts", "listShifts", [query]),
+    listShifts: (query: { limit?: number; status?: string } = {}) =>
+      rpc<StaffShift[]>("shifts", "listShifts", [query]),
+  },
+  sync: {
+    getStatus: () =>
+      rpc<SyncStatus>("sync", "getStatus", []),
+    listBranches: () =>
+      rpc<RegisteredBranch[]>("sync", "listBranches", []),
+    getConfig: () =>
+      rpc<BranchConfig>("sync", "getConfig", []),
+    updateConfig: (input: UpdateBranchConfigInput) =>
+      rpc<BranchConfig>("sync", "updateConfig", [input]),
+    testConnection: (input: unknown) =>
+      rpc<TestConnectionResult>("sync", "testConnection", [input]),
+    triggerSync: () =>
+      rpc<{ ok: boolean; pushedCount: number; pulledCount: number; error?: string }>("sync", "triggerSync", []),
+  },
   dev: {
+    getOverview: () =>
+      rpc<DeveloperOverview>("dev", "getOverview", []),
+    setSystemReadOnly: (enabled: boolean) =>
+      rpc<{ systemReadOnly: boolean }>("dev", "setSystemReadOnly", [enabled]),
+    toggleUserActive: (userId: string, isActive: boolean) =>
+      rpc<PublicUser>("dev", "toggleUserActive", [userId, isActive]),
+    suspendAllNonDevUsers: () =>
+      rpc<{ affected: number }>("dev", "suspendAllNonDevUsers", []),
+    activateAllUsers: () =>
+      rpc<{ affected: number }>("dev", "activateAllUsers", []),
+    grantEmergencyGrace: (days?: number) =>
+      rpc<LicenseStatus>("dev", "grantEmergencyGrace", [days]),
+    resetClockTamper: () =>
+      rpc<LicenseStatus>("dev", "resetClockTamper", []),
+    deactivateLicense: () =>
+      rpc<LicenseStatus>("dev", "deactivateLicense", []),
+    activateLicense: (licenseJson: string) =>
+      rpc<LicenseStatus>("dev", "activateLicense", [licenseJson]),
+    resetUserPassword: (userId: string, newPass: string) =>
+      rpc<void>("dev", "resetUserPassword", [userId, newPass]),
+    deleteUser: (userId: string) =>
+      rpc<{ success: boolean; deletedUsername: string }>("dev", "deleteUser", [userId]),
+    seedDemoData: () =>
+      rpc<{ success: boolean; membersCount: number; subscriptionsCount: number }>("dev", "seedDemoData", []),
+    purgeDataDirectory: () =>
+      rpc<{ success: boolean; dataDir: string }>("dev", "purgeDataDirectory", []),
+    runIntegrityCheck: () =>
+      rpc<DbIntegrityResult>("dev", "runIntegrityCheck", []),
+    vacuumDatabase: () =>
+      rpc<{ success: boolean; dbSizeBytes: number }>("dev", "vacuumDatabase", []),
+    clearServerLogs: () =>
+      rpc<unknown>("dev", "clearServerLogs", []),
+    resetOwnerEmergency: (newPass: string) =>
+      rpc<{ success: boolean; username: string }>("dev", "resetOwnerEmergency", [newPass]),
+    getFeatureFlags: () =>
+      rpc<FeatureFlags>("dev", "getFeatureFlags", []),
+    setFeatureFlag: (flag: keyof FeatureFlags, enabled: boolean) =>
+      rpc<FeatureFlags>("dev", "setFeatureFlag", [flag, enabled]),
+    getSystemTelemetry: () =>
+      rpc<SystemTelemetry>("dev", "getSystemTelemetry", []),
     getOverrideDate: () =>
       rpc<string | null>("dev", "getOverrideDate", []),
     setOverrideDate: (date: string | null) =>
@@ -1426,3 +1645,155 @@ export type {
   PublicMessageRow,
   SegmentSendSummary,
 } from "@/core/services/messages.service";
+export type {
+  MemberOutstanding,
+  OutstandingSubscriptionItem,
+  OutstandingStoreDebtItem,
+} from "@/core/services/finance.service";
+export type {
+  BranchFinancialSummary,
+  PeriodReport,
+  PeriodReportQuery,
+} from "@/core/services/financial-report.service";
+export type {
+  PeakHoursHeatmapData,
+  PeakHeatmapCell,
+} from "@/core/services/attendance-analytics.service";
+export type {
+  SyncStatus,
+  RegisteredBranch,
+  TestConnectionResult,
+} from "@/core/services/sync.service";
+export type {
+  DeveloperOverview,
+  DeveloperOverviewUser,
+  DbIntegrityResult,
+  FeatureFlags,
+} from "@/core/services/developer.service";
+
+export interface SystemTelemetry {
+  os: {
+    platform: string;
+    release: string;
+    arch: string;
+    hostname: string;
+    uptimeSeconds: number;
+  };
+  cpu: {
+    model: string;
+    cores: number;
+    speed: number;
+  };
+  memory: {
+    processRssBytes: number;
+    processHeapUsedBytes: number;
+    processHeapTotalBytes: number;
+    systemTotalBytes: number;
+    systemFreeBytes: number;
+  };
+  process: {
+    nodeVersion: string;
+    uptimeSeconds: number;
+    pid: number;
+  };
+  database: {
+    sqliteVersion: string;
+    dbPath: string;
+    backupsDir: string;
+    filesDir: string;
+    logsDir: string;
+    logSizeBytes: number;
+  };
+}
+
+export interface NetworkInfo {
+  port: number;
+  localAddresses: string[];
+  publicIp?: string | null;
+  clientIp?: string | null;
+  isEncrypted: boolean;
+}
+
+export interface TailscaleStatus {
+  installed: boolean;
+  running: boolean;
+  connected: boolean;
+  ip: string | null;
+  deviceHostName: string | null;
+  dnsName: string | null;
+  tailnet: string | null;
+  rawState: string;
+}
+
+export interface TunnelStatus {
+  active: boolean;
+  url: string | null;
+  mode: "permanent" | "ephemeral" | "none";
+  installed: boolean;
+}
+
+export type {
+  BulkImportResult,
+  BulkImportRowResult,
+  ImportMemberRowInput,
+} from "@/core/services/bulk-import.service";
+
+export type {
+  PublicPdfDelivery,
+  GeneratedPdf,
+  PdfDocType,
+  PdfDeliveryStatus,
+} from "@/core/services/pdf.service";
+
+export type {
+  GuestInvitation,
+  MemberInvitationsSummary,
+  UseInvitationInput,
+} from "@/core/services/invitations.service";
+
+export type {
+  PromoCode,
+  PromoCodeInput,
+  ValidatePromoResult,
+  DiscountType,
+} from "@/core/services/promo.service";
+
+export type {
+  RenewalCandidate,
+  SendRenewalReminderResult,
+} from "@/core/services/renewal-alerts.service";
+
+export type {
+  FraudAlertsSummary,
+  FraudAlertItem,
+  FraudAlertSeverity,
+  FraudAlertType,
+} from "@/core/services/fraud-alerts.service";
+
+export type {
+  DocNoMatch,
+  DocKind,
+} from "@/core/services/document-numbers.service";
+
+export type {
+  VoucherKind,
+  GeneratedVoucher,
+} from "@/core/services/vouchers.service";
+
+export type {
+  PublicEmployeeAdvance,
+} from "@/core/services/employees-hr.service";
+
+export type {
+  StaffShift,
+  ShiftSummary,
+  OpenShiftInput,
+  CloseShiftInput,
+} from "@/core/services/shifts.service";
+
+export type {
+  CombatDiscipline,
+  TargetCategory,
+  CombatLevel,
+} from "@/core/services/classes.service";
+

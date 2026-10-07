@@ -51,7 +51,7 @@ export interface CardDeliveryMediaPayload {
   caption: string;
 }
 
-type MessageTransport = (
+export type MessageTransport = (
   phone: string,
   body: string,
   media?: CardDeliveryMediaPayload,
@@ -133,12 +133,14 @@ function toDelivery(row: CardDeliveryRow): PublicCardDelivery {
   };
 }
 
+export const DEVELOPER_CREDIT_LINE = "System by : Yassen Mohamed Kotb | 01288536381";
+
 async function renderDeliveryMedia(barcodeValue: string, memberName: string): Promise<CardDeliveryMediaPayload> {
   const base64 = await renderQrPngBase64(barcodeValue);
   return {
     base64,
     mime: "image/png",
-    caption: `بطاقة العضوية - ${memberName}\n${barcodeValue}`,
+    caption: `بطاقة العضوية - ${memberName}\n${barcodeValue}\n\n${DEVELOPER_CREDIT_LINE}`,
   };
 }
 
@@ -266,7 +268,7 @@ export async function sendPendingCardDeliveries(
       await sha256Hex(media.base64).catch(() => ""),
       item.id,
     ]);
-    const body = `بطاقة العضوية - ${item.memberName ?? ""}\n${item.barcodeValue}`;
+    const body = `بطاقة العضوية - ${item.memberName ?? ""}\n${item.barcodeValue}\n\n${DEVELOPER_CREDIT_LINE}`;
 
     try {
       const result = await transport(item.phone, body, media);

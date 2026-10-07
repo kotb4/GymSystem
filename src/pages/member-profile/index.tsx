@@ -15,6 +15,7 @@ import { QuickActions, type QuickAction } from "./quick-actions";
 import { MemberFormModal } from "@/components/members/member-form-modal";
 import { AssignCardModal } from "@/components/cards/assign-card-modal";
 import { SubscriptionFormModal } from "@/components/subscriptions/subscription-form-modal";
+import { GuestInvitationsModal } from "@/components/subscriptions/guest-invitations-modal";
 import { useMemberOverview } from "./helpers";
 import type { MemberProfileContext, TabKey } from "./types";
 import { OverviewTab } from "./tabs/overview-tab";
@@ -29,8 +30,9 @@ import { ReferralsTab } from "./tabs/referrals-tab";
 import { LoyaltyTab } from "./tabs/loyalty-tab";
 import { CheckinModal } from "./modals/checkin-modal";
 import { AddNoteModal } from "./modals/add-note-modal";
-import { RecordPaymentModal } from "./modals/record-payment-modal";
 import { TrainingPlanFormModal } from "./modals/training-plan-form-modal";
+import { PaymentFormModal } from "@/components/finance/payment-form-modal";
+import { SettleMemberDuesModal } from "@/components/finance/settle-member-dues-modal";
 import type { Permission } from "@/core/permissions";
 
 interface TabDef {
@@ -38,26 +40,28 @@ interface TabDef {
   labelKey: string;
   perm?: Permission;
   anyPerm?: Permission[];
+  featureFlag?: string;
+  anyFeatureFlag?: string[];
 }
 
 const ALL_TABS: TabDef[] = [
   { key: "overview", labelKey: "members.tabOverview", perm: "members.view" },
-  { key: "membership", labelKey: "members.tabMembership", anyPerm: ["cards.view", "subscriptions.view"] },
-  { key: "payments", labelKey: "members.tabPayments", perm: "payments.view" },
-  { key: "attendance", labelKey: "members.tabAttendance", perm: "checkin.view_history" },
-  { key: "pt-classes", labelKey: "members.tabPtClasses", anyPerm: ["members.view", "classes.view"] },
-  { key: "inbody", labelKey: "members.tabInbody", perm: "assessments.view" },
+  { key: "membership", labelKey: "members.tabMembership", anyPerm: ["cards.view", "subscriptions.view"], anyFeatureFlag: ["featureSubscriptionsEnabled", "featureCardsEnabled"] },
+  { key: "payments", labelKey: "members.tabPayments", perm: "payments.view", featureFlag: "featureTreasuryEnabled" },
+  { key: "attendance", labelKey: "members.tabAttendance", perm: "checkin.view_history", featureFlag: "featureAttendanceEnabled" },
+  { key: "pt-classes", labelKey: "members.tabPtClasses", anyPerm: ["members.view", "classes.view"], featureFlag: "featureClassesEnabled" },
+  { key: "inbody", labelKey: "members.tabInbody", perm: "assessments.view", featureFlag: "featureInbodyEnabled" },
   { key: "notes", labelKey: "members.tabNotes", perm: "members.edit" },
   { key: "activity", labelKey: "members.tabActivity", perm: "audit.view" },
-  { key: "referrals", labelKey: "referral.tabReferrals", perm: "referrals.view" },
-  { key: "loyalty", labelKey: "members.tabLoyalty", perm: "loyalty.view" },
+  { key: "referrals", labelKey: "referral.tabReferrals", perm: "referrals.view", featureFlag: "featureReferralsEnabled" },
+  { key: "loyalty", labelKey: "members.tabLoyalty", perm: "loyalty.view", featureFlag: "featureLoyaltyEnabled" },
 ];
 
 export function MemberProfilePage() {
   const t = useT();
   const navigate = useNavigate();
   const { memberId = "" } = useParams();
-  const { actor, hasPermission } = useAuth();
+  const { actor, hasPermission, isFeatureEnabled } = useAuth();
 
   const [member, setMember] = useState<PublicMember | null>(null);
   const [missing, setMissing] = useState(false);
@@ -71,6 +75,7 @@ export function MemberProfilePage() {
   const [noteOpen, setNoteOpen] = useState(false);
   const [paymentOpen, setPaymentOpen] = useState(false);
   const [ptOpen, setPtOpen] = useState(false);
+  const [invitationsOpen, setInvitationsOpen] = useState(false);
   const [outstandingMinor, setOutstandingMinor] = useState(0);
 
   const { overview, loading: overviewLoading } = useMemberOverview(memberId, tick);
@@ -110,11 +115,11 @@ export function MemberProfilePage() {
       setTab("overview");
       return;
     }
-    if (!ALL_TABS.find((t) => t.key === tab && canShowTab(t, hasPermission))) {
-      const next = ALL_TABS.find((t) => canShowTab(t, hasPermission));
+    if (!ALL_TABS.find((t) => t.key === tab && canShowTab(t, hasPermission, isFeatureEnabled))) {
+      const next = ALL_TABS.find((t) => canShowTab(t, hasPermission, isFeatureEnabled));
       if (next) setTab(next.key);
     }
-  }, [hasPermission, tab]);
+  }, [hasPermission, isFeatureEnabled, tab]);
 
   if (missing) {
     return (
@@ -133,7 +138,7 @@ export function MemberProfilePage() {
     return <p className="py-16 text-center text-sm text-faint">{t("common.loading")}</p>;
   }
 
-  const tabs = ALL_TABS.filter((tb) => canShowTab(tb, hasPermission)).map((tb) => ({
+  const tabs = ALL_TABS.filter((tb) => canShowTab(tb, hasPermission, isFeatureEnabled)).map((tb) => ({
     value: tb.key,
     label: t(tb.labelKey),
   }));
@@ -150,14 +155,13 @@ export function MemberProfilePage() {
     switch (a) {
       case "checkin": setCheckinOpen(true); break;
       case "renew":
-        if (overview?.activeSubscription) {
-          setSubModalOpen(true);
-        }
+        setSubModalOpen(true);
         break;
       case "freeze":
         setSubModalOpen(true);
         break;
       case "recordPayment": setPaymentOpen(true); break;
+      case "inviteGuest": setInvitationsOpen(true); break;
       case "addNote": setNoteOpen(true); break;
       case "addPt": setPtOpen(true); break;
       case "addMeasurement":
@@ -173,13 +177,16 @@ export function MemberProfilePage() {
         member={member}
         onReload={reload}
         onEdit={() => setEditOpen(true)}
+        onNewSubscription={() => setSubModalOpen(true)}
+        onRecordPayment={() => setPaymentOpen(true)}
+        onInviteGuest={() => setInvitationsOpen(true)}
       />
       <SummaryStats
         overview={overview}
         outstandingMinor={outstandingMinor}
         loading={overviewLoading}
       />
-      <OutstandingStrip memberId={member.id} version={tick} />
+      <OutstandingStrip memberId={member.id} version={tick} onPay={() => setPaymentOpen(true)} />
       <QuickActions
         onAction={onQuickAction}
         activeSubscriptionId={overview?.activeSubscription?.id ?? null}
@@ -202,26 +209,43 @@ export function MemberProfilePage() {
       <SubscriptionFormModal open={subModalOpen} onClose={() => setSubModalOpen(false)} onSaved={reload} presetMember={member} />
       <CheckinModal open={checkinOpen} onClose={() => setCheckinOpen(false)} member={member} onChecked={reload} />
       <AddNoteModal open={noteOpen} onClose={() => setNoteOpen(false)} member={member} onSaved={reload} />
-      <RecordPaymentModal
-        open={paymentOpen}
-        onClose={() => setPaymentOpen(false)}
-        member={member}
-        activeSub={null}
-        onSaved={reload}
-      />
+      {outstandingMinor > 0 ? (
+        <SettleMemberDuesModal
+          open={paymentOpen}
+          onClose={() => setPaymentOpen(false)}
+          member={member}
+          onSaved={reload}
+        />
+      ) : (
+        <PaymentFormModal
+          open={paymentOpen}
+          onClose={() => setPaymentOpen(false)}
+          presetMember={member}
+          onSaved={reload}
+        />
+      )}
       <TrainingPlanFormModal
         open={ptOpen}
         onClose={() => setPtOpen(false)}
         member={member}
         onSaved={() => { setPtOpen(false); reload(); }}
       />
+      <GuestInvitationsModal
+        open={invitationsOpen}
+        onClose={() => { setInvitationsOpen(false); reload(); }}
+        memberId={member.id}
+        memberName={member.fullName}
+      />
     </div>
   );
 }
 
 type HasPermFn = (p: Permission) => boolean;
+type IsFlagEnabledFn = (flag: string) => boolean;
 
-function canShowTab(tab: TabDef, hasPermission: HasPermFn): boolean {
+function canShowTab(tab: TabDef, hasPermission: HasPermFn, isFeatureEnabled: IsFlagEnabledFn): boolean {
+  if (tab.featureFlag && !isFeatureEnabled(tab.featureFlag)) return false;
+  if (tab.anyFeatureFlag && !tab.anyFeatureFlag.some((f) => isFeatureEnabled(f))) return false;
   if (tab.perm) return hasPermission(tab.perm);
   if (tab.anyPerm) return tab.anyPerm.some((p) => hasPermission(p));
   return true;

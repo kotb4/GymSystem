@@ -87,6 +87,38 @@ describe("classes CRUD", () => {
     expect(updated.capacity).toBe(30);
   });
 
+  it("creates, lists and updates a combat class with discipline, category and level", async () => {
+    const cls = await createClass(db, owner, {
+      name: "كيك بوكسينج ناشئين",
+      discipline: "kickboxing",
+      category: "teens",
+      level: "beginner",
+      location: "بساط تاتامي",
+      capacity: 15,
+      consumesSession: true,
+    });
+    expect(cls.name).toBe("كيك بوكسينج ناشئين");
+    expect(cls.discipline).toBe("kickboxing");
+    expect(cls.category).toBe("teens");
+    expect(cls.level).toBe("beginner");
+    expect(cls.location).toBe("بساط تاتامي");
+
+    // Filter by discipline
+    const kickboxingList = listClasses(db, owner, { discipline: "kickboxing" });
+    expect(kickboxingList.length).toBe(1);
+    expect(kickboxingList[0].id).toBe(cls.id);
+
+    const mmaList = listClasses(db, owner, { discipline: "mma" });
+    expect(mmaList.length).toBe(0);
+
+    const updated = await updateClass(db, owner, cls.id, {
+      discipline: "muay_thai",
+      level: "intermediate",
+    });
+    expect(updated.discipline).toBe("muay_thai");
+    expect(updated.level).toBe("intermediate");
+  });
+
   it("denies trainer from creating classes", async () => {
     await expect(createClass(db, trainer, { name: "ممنوع", capacity: 10 })).rejects.toMatchObject({ code: "FORBIDDEN" });
   });

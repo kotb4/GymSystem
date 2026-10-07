@@ -988,6 +988,10 @@ describe("reports and dashboard", () => {
     expect(out.subscriptionsMinor).toBe(10_000);
     expect(out.storeMinor).toBe(0);
     expect(out.totalMinor).toBe(10_000);
+    expect(out.subscriptions).toHaveLength(1);
+    expect(out.subscriptions[0].remainingMinor).toBe(10_000);
+    expect(out.subscriptions[0].paidMinor).toBe(40_000);
+    expect(out.storeDebts).toHaveLength(0);
 
     const payment = listPayments(db, owner, { subscriptionId: sub.id }).items[0];
     expect(payment.status).toBe("partial");

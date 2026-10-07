@@ -22,12 +22,13 @@ export interface AppDirs {
 }
 
 /**
- * Secure default bind address: loopback only. The app is a local desktop
- * application; exposing it on 0.0.0.0 would put the HTTP API (and the
- * unauthenticated first-run setup route) on the LAN. Opt into LAN exposure
- * explicitly via `GYMSYSTEM_HOST`. See ADR-023 (supersedes ADR-010).
+ * Default bind address: 0.0.0.0 listens on all interfaces (localhost, LAN, and
+ * Tailscale mesh VPN) so remote branch sync and client devices can reach the server.
+ * Sensitive first-run setup routes remain loopback-only via
+ * isDirectPhysicalLocalRequest() (ADR-035). Opt into loopback-only explicitly via
+ * `GYMSYSTEM_HOST=127.0.0.1`.
  */
-export const DEFAULT_HTTP_HOST = "127.0.0.1";
+export const DEFAULT_HTTP_HOST = "0.0.0.0";
 
 /** Resolve the bind host: env override wins, else loopback default. */
 export function resolveHttpHost(override?: string): string {
@@ -38,10 +39,12 @@ export function resolveHttpHost(override?: string): string {
 function resolveRoot(): string {
   const override = process.env.GYMSYSTEM_DATA_DIR;
   if (override && override.trim() !== "") return path.resolve(override.trim());
+  const exeBase = path.basename(process.execPath).toLowerCase();
+  const isBranch2 = exeBase.includes("branch2") || exeBase.includes("branch-2") || exeBase.includes("b2");
   if (process.platform === "win32" && process.env.LOCALAPPDATA) {
-    return path.join(process.env.LOCALAPPDATA, "GymSystem");
+    return path.join(process.env.LOCALAPPDATA, isBranch2 ? "GymSystem_Branch2" : "GymSystem");
   }
-  return path.join(os.homedir(), ".gymsystem");
+  return path.join(os.homedir(), isBranch2 ? ".gymsystem_branch2" : ".gymsystem");
 }
 
 function ensureDir(dir: string): string {

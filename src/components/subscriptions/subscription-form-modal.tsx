@@ -1,4 +1,4 @@
-﻿import { useEffect, useState, type FormEvent } from "react";
+import { useEffect, useState, type FormEvent } from "react";
 import { useAuth } from "@/contexts/auth-context";
 import { useT } from "@/i18n";
 import { useToast } from "@/components/ui/toast";
@@ -151,7 +151,7 @@ export function SubscriptionFormModal({ open, onClose, onSaved, presetMember }: 
         memberId: member.id,
         planId: effectivePlanId,
         startDate,
-        price: packageId ? undefined : price === "" ? undefined : Number(price),
+        price: price === "" ? undefined : Number(price),
         ...(packageId ? { packageId } : {}),
       });
       if (payMode !== "later" && hasPermission("payments.create") && paidNowMinor > 0) {
@@ -224,30 +224,34 @@ export function SubscriptionFormModal({ open, onClose, onSaved, presetMember }: 
               )}
             </button>
           </div>
-          {pkgList.length > 0 && (
-            <Select
-              label={t("packages.tabPackages")}
-              value={packageId}
-              onChange={(e) => onPkgChange(e.target.value)}
-              disabled={submitting}
-              options={[
-                { value: "", label: `${t("common.select")}…` },
-                ...pkgList.map((p) => ({
-                  value: p.id,
-                  label: `${p.name} — ${p.durationDays} ${t("common.days")} — ${formatMinor(p.price)}`,
-                })),
-              ]}
-            />
-          )}
+          {/* Unified Plan / Package Selection Dropdown */}
           <Select
-            label={t("subs.pickPlan")}
-            value={planId}
-            onChange={(e) => onPlanChange(e.target.value)}
-            disabled={submitting || plans.length === 0}
-            options={plans.map((p) => ({
-              value: p.id,
-              label: `${p.name} — ${p.durationDays} ${t("common.days")} — ${p.price}`,
-            }))}
+            label={pkgList.length > 0 ? t("packages.tabPackages") : t("subs.pickPlan")}
+            value={packageId ? `pkg:${packageId}` : planId ? `plan:${planId}` : ""}
+            onChange={(e) => {
+              const val = e.target.value;
+              if (val.startsWith("pkg:")) {
+                onPkgChange(val.slice(4));
+              } else if (val.startsWith("plan:")) {
+                onPlanChange(val.slice(5));
+              } else {
+                setPackageId("");
+                setPlanId("");
+                setPrice("");
+              }
+            }}
+            disabled={submitting || (pkgList.length === 0 && plans.length === 0)}
+            options={[
+              { value: "", label: `${t("common.select")}…` },
+              ...pkgList.map((p) => ({
+                value: `pkg:${p.id}`,
+                label: `${p.name} — ${p.durationDays} ${t("common.days")} — ${formatMinor(p.price)}${p.invitationsCount > 0 ? ` (${p.invitationsCount} دعوة ضيف)` : ""}`,
+              })),
+              ...plans.map((p) => ({
+                value: `plan:${p.id}`,
+                label: `${p.name} — ${p.durationDays} ${t("common.days")} — ${p.price}${p.invitationsCount > 0 ? ` (${p.invitationsCount} دعوة ضيف)` : ""}`,
+              })),
+            ]}
           />
           <Input
             label={t("subs.startAt")}

@@ -64,11 +64,12 @@ function str(v: unknown): string {
 export function getRetentionInsights(
   db: Db,
   actor: ServiceActor,
-  range: { fromKey: string; toKey: string },
+  range: { fromKey: string; toKey: string; branchId?: string },
 ): RetentionInsights {
   requirePermission(actor, "reports.view");
   assertRange(range.fromKey, range.toKey);
-  const { fromKey, toKey } = range;
+  const { fromKey, toKey, branchId } = range;
+  const targetBranch = branchId && branchId !== "all" ? branchId : undefined;
   const today = todayKey();
   const threshold = getInactiveDays(db);
   const cutoffStamp = `${addDaysKey(today, -threshold)} 23:59:59`;
@@ -79,6 +80,10 @@ export function getRetentionInsights(
   let inactiveSql =
     "SELECT m.id AS member_id,\n  m.member_code AS member_code,\n  m.full_name AS member_name,\n  m.department AS department,\n  (SELECT MAX(a.checkin_at) FROM attendance a WHERE a.member_id = m.id AND a.deleted_at IS NULL) AS last_visit\nFROM members m\nWHERE m.deleted_at IS NULL AND m.status = 'active'\nAND EXISTS (SELECT 1 FROM member_subscriptions s WHERE s.member_id = m.id AND s.status = 'active' AND s.end_date >= ?)\nAND COALESCE((SELECT MAX(a.checkin_at) FROM attendance a WHERE a.member_id = m.id AND a.deleted_at IS NULL), '') <= ?";
   const inactiveParams: Array<string | number> = [today, cutoffStamp];
+  if (targetBranch) {
+    inactiveSql += " AND COALESCE(m.branch_id, 'main') = ?";
+    inactiveParams.push(targetBranch);
+  }
   if (!bypass) {
     const scoped = departmentScopeCondition(actor);
     inactiveSql += scoped.sql;
@@ -103,6 +108,10 @@ export function getRetentionInsights(
   // ---- Visitors in range (dept-scoped): total, unique, new vs returning.
   let visitorFilter = "a.deleted_at IS NULL AND substr(a.checkin_at, 1, 10) >= ? AND substr(a.checkin_at, 1, 10) <= ?";
   const visitorParams: Array<string | number> = [fromKey, toKey];
+  if (targetBranch) {
+    visitorFilter += " AND COALESCE(a.branch_id, 'main') = ?";
+    visitorParams.push(targetBranch);
+  }
   if (!bypass) {
     // Scope by the visiting member's department.
     const scope = departmentScopeCondition(actor);

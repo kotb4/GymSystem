@@ -8,7 +8,9 @@ import {
 } from "@/core/money";
 import { requirePermission, type ServiceActor } from "@/core/permissions";
 import type { Db, Row } from "@/db/engine";
+import { assignDocNo } from "./document-numbers.service";
 import { recordAudit } from "./audit.service";
+import { getLocalBranchId } from "@/core/branch";
 import { getMemberRowById } from "./members.service";
 import {
   assertDepartmentAccess,
@@ -39,6 +41,7 @@ export interface PaymentRow extends Row {
   voided_by: string | null;
   voided_at: string | null;
   void_reason: string | null;
+  branch_id: string | null;
   created_at: string;
   updated_at: string;
 }
@@ -71,6 +74,11 @@ referenceNo: string | null;
   voidedAt: string | null;
   voidReason: string | null;
   refundReason: string | null;
+  /** Reference number of the most recent refund, shown so staff can quote it. */
+  lastRefundNo: string | null;
+  /** System reference number, e.g. B1-RCP-2026-000001 */
+  receiptNo: string | null;
+  branchId: string | null;
 }
 
 export interface RecordPaymentInput {
@@ -123,10 +131,13 @@ function mapRow(row: PaymentRow & Record<string, unknown>): Payment {
     voidedAt: row.voided_at == null ? null : String(row.voided_at),
     voidReason: row.void_reason == null ? null : String(row.void_reason),
     refundReason: row.refund_reason == null ? null : String(row.refund_reason),
+    lastRefundNo: row.last_refund_no == null ? null : String(row.last_refund_no),
+    receiptNo: row.receipt_no == null ? null : String(row.receipt_no),
+    branchId: (row.branch_id as string) ?? "main",
   };
 }
 
-    const PAYMENT_SELECT = `SELECT p.*, m.member_code AS member_code, m.full_name AS full_name,\n  pm.label_ar AS method_label, u.full_name AS creator_name, pl.name AS plan_name,\n  EXISTS(SELECT 1 FROM member_subscriptions cs WHERE cs.id = p.subscription_id AND cs.status = 'cancelled') AS sub_cancelled,\n  (SELECT pr.reason FROM payment_refunds pr WHERE pr.payment_id = p.id ORDER BY pr.created_at DESC LIMIT 1) AS refund_reason\nFROM payments p\nJOIN members m ON m.id = p.member_id\nJOIN payment_methods pm ON pm.code = p.method_code\nJOIN users u ON u.id = p.created_by\nLEFT JOIN member_subscriptions s ON s.id = p.subscription_id\nLEFT JOIN membership_plans pl ON pl.id = s.plan_id`;
+    const PAYMENT_SELECT = `SELECT p.*, m.member_code AS member_code, m.full_name AS full_name,\n  pm.label_ar AS method_label, u.full_name AS creator_name, pl.name AS plan_name,\n  EXISTS(SELECT 1 FROM member_subscriptions cs WHERE cs.id = p.subscription_id AND cs.status = 'cancelled') AS sub_cancelled,\n  (SELECT pr.reason FROM payment_refunds pr WHERE pr.payment_id = p.id ORDER BY pr.created_at DESC LIMIT 1) AS refund_reason,\n  (SELECT pr.refund_no FROM payment_refunds pr WHERE pr.payment_id = p.id ORDER BY pr.created_at DESC LIMIT 1) AS last_refund_no\nFROM payments p\nJOIN members m ON m.id = p.member_id\nJOIN payment_methods pm ON pm.code = p.method_code\nJOIN users u ON u.id = p.created_by\nLEFT JOIN member_subscriptions s ON s.id = p.subscription_id\nLEFT JOIN membership_plans pl ON pl.id = s.plan_id`;
 
 function getPaymentRow(db: Db, paymentId: string): (PaymentRow & Record<string, unknown>) | null {
   return db.first<PaymentRow & Record<string, unknown>>(`${PAYMENT_SELECT}\nWHERE p.id = ?`, [
@@ -202,7 +213,7 @@ export async function recordPayment(
   const status: PaymentStatus = split.remainingMinor === 0 ? "paid" : "partial";
 
   try {
-    await db.transaction(async () => {
+    db.transaction(() => {
       // The remaining-balance guard MUST run inside the same BEGIN IMMEDIATE
       // transaction as the INSERT. Doing the read here (after the write lock is
       // acquired) serializes concurrent payments against the same subscription:
@@ -215,7 +226,7 @@ export async function recordPayment(
         }
       }
       db.run(
-        "INSERT INTO payments (id, member_id, subscription_id, base_amount_minor, discount_kind, discount_input, discount_amount_minor, net_amount_minor, paid_amount_minor, refunded_amount_minor, remaining_amount_minor, method_code, status, reference_no, notes, client_ref, paid_at, created_by, created_at, updated_at)\nVALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 0, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+        "INSERT INTO payments (id, member_id, subscription_id, base_amount_minor, discount_kind, discount_input, discount_amount_minor, net_amount_minor, paid_amount_minor, refunded_amount_minor, remaining_amount_minor, method_code, status, reference_no, notes, client_ref, paid_at, created_by, created_at, updated_at, branch_id)\nVALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 0, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
         [
           id,
           input.memberId,
@@ -236,6 +247,7 @@ export async function recordPayment(
           actor.userId,
           stamp,
           stamp,
+          getLocalBranchId(db),
         ],
       );
       insertLedgerEntry(db, {
@@ -356,10 +368,11 @@ export async function refundPayment(
         refundable: (freshRefundable / 100).toFixed(2),
       });
     }
-    db.run(
-      "INSERT INTO payment_refunds (id, payment_id, amount_minor, reason, method_code, created_by, created_at)\nVALUES (?, ?, ?, ?, ?, ?, ?)",
-      [refundId, paymentId, refundMinor, trimmedReason, method, actor.userId, stamp],
-    );
+  db.run(
+    "INSERT INTO payment_refunds (id, payment_id, amount_minor, reason, method_code, created_by, created_at)\nVALUES (?, ?, ?, ?, ?, ?, ?)",
+    [refundId, paymentId, refundMinor, trimmedReason, method, actor.userId, stamp],
+  );
+  assignDocNo(db, "refund", refundId, stamp);
     const newRefunded = Number(freshRow.refunded_amount_minor) + refundMinor;
     const nextStatus: PaymentStatus = newRefunded >= Number(freshRow.paid_amount_minor) ? "refunded" : (row.status as PaymentStatus);
     db.run("UPDATE payments SET refunded_amount_minor = ?, status = ?, updated_at = ? WHERE id = ?", [

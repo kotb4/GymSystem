@@ -39,6 +39,15 @@ import { referral } from "./referral.rpc";
 import { loyalty } from "./loyalty.rpc";
 import { messages } from "./messages.rpc";
 import { license } from "./license.rpc";
+import { documentNumbers } from "./document-numbers.rpc";
+import { fraudAlerts } from "./fraud-alerts.rpc";
+import { invitations } from "./invitations.rpc";
+import { pdf } from "./pdf.rpc";
+import { promo } from "./promo.rpc";
+import { renewalAlerts } from "./renewal-alerts.rpc";
+import { shifts } from "./shifts.rpc";
+import { sync } from "./sync.rpc";
+import { vouchersService } from "./vouchers.rpc";
 
 /**
  * The frontend never touches SQLite. It calls whitelisted service functions
@@ -82,6 +91,15 @@ export const REGISTRY: Record<string, Record<string, Exposed>> = {
   loyalty,
   messages,
   license,
+  documentNumbers,
+  fraudAlerts,
+  invitations,
+  pdf,
+  promo,
+  renewalAlerts,
+  shifts,
+  sync,
+  vouchersService,
 };
 
 export interface SerializedError {
@@ -139,9 +157,11 @@ export async function invokeRpc(
   const { db } = getDbContext();
   try {
     refreshLicenseClock();
+    if (!Object.hasOwn(REGISTRY, serviceName)) throw errForbidden();
     const service = REGISTRY[serviceName];
-    const exposed = service?.[fnName];
-    if (!service || !exposed) throw errForbidden();
+    if (!service || !Object.hasOwn(service, fnName)) throw errForbidden();
+    const exposed = service[fnName];
+    if (!exposed || typeof exposed.fn !== "function") throw errForbidden();
     const blocked = rpcBlockReason(serviceName, fnName);
     if (blocked) throw errLicenseLocked(blocked);
     const callArgs = [db, ...(exposed.actor ? [actor] : []), ...args] as never[];

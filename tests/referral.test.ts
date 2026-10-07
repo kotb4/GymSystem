@@ -2,6 +2,9 @@ import { beforeEach, describe, expect, it } from "vitest";
 import { buildActor, setup } from "@/core/services/auth.service";
 import { createUser } from "@/core/services/users.service";
 import { createMember } from "@/core/services/members.service";
+import { createPlan } from "@/core/services/plans.service";
+import { createSubscription } from "@/core/services/subscriptions.service";
+import { addDaysKey } from "@/core/dates";
 import {
   createReferral,
   convertReferral,
@@ -106,6 +109,23 @@ describe("referral: conversion grants reward", () => {
     expect(rewards).toHaveLength(1);
     expect(rewards[0].status).toBe("granted");
     expect(rewards[0].rewardValue).toBe(getReferralSettings(db, owner).rewardValue);
+  });
+
+  it("automatically extends referrer active subscription by reward free days", async () => {
+    const referrer = await member("المحيل النشط", "01011111199");
+    const referred = await member("المشترك الجديد", "01033333399");
+    const plan = await createPlan(db, owner, { name: "خطة شهرية", durationDays: 30, price: 500 });
+    const sub = await createSubscription(db, owner, { memberId: referrer.id, planId: plan.id, startDate: "2026-10-01" });
+    const originalEndDate = sub.endDate;
+
+    const referral = createReferral(db, owner, {
+      referrerMemberId: referrer.id,
+      referredName: referred.fullName,
+    });
+    convertReferral(db, owner, referral.id, referred.id);
+
+    const updatedSub = db.first<{ end_date: string }>("SELECT end_date FROM member_subscriptions WHERE id = ?", [sub.id]);
+    expect(updatedSub?.end_date).toBe(addDaysKey(originalEndDate, 7));
   });
 
   it("blocks duplicate reward when the member is already a joined referral", async () => {

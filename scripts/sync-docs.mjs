@@ -96,14 +96,19 @@ function replaceIn(path, patterns, label) {
   }
 }
 
-/* AGENTS.md — host bind in the ASCII diagram + dev:server command + audit actions count */
+/* AGENTS.md — host bind, counts for services, migrations, permissions, audits, tests, pages */
 const agentsPatterns = [
   { re: /HTTP on 127\.0\.0\.1:8890 only/, to: `HTTP on ${facts.host}:8890` },
   { re: /Build \+ run backend \(127\.0\.0\.1:8890\)/, to: `Build + run backend (${facts.host}:8890)` },
   { re: /Audit action enum \(\d+ actions\)/, to: `Audit action enum (${facts.auditActions} actions)` },
   { re: /permissions\.ts          Roles, \d+ permissions, DB-backed grant cache/, to: `permissions.ts          Roles, ${facts.permissions} permissions, DB-backed grant cache` },
+  { re: /ALL business logic \(\d+ files, backend-only\)/, to: `ALL business logic (${facts.services} files, backend-only)` },
+  { re: /Versioned migrations v1\.\.v\d+ \(applied at every boot\)/, to: `Versioned migrations v1..v${facts.migrations} (applied at every boot)` },
+  { re: /Vitest suites \(\d+ files, node env\)/, to: `Vitest suites (${facts.tests} files, node env)` },
+  { re: /currently v1\.\.v\d+\)/, to: `currently v1..v${facts.migrations})` },
+  { re: /\d+ route pages/, to: `${facts.pages} route pages` },
 ];
-replaceIn("AGENTS.md", agentsPatterns, "host");
+replaceIn("AGENTS.md", agentsPatterns, "numbers");
 
 /* .ai/project.md — runtime bind line */
 if (facts.host) {

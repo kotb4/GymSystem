@@ -1,6 +1,6 @@
-﻿import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useState } from "react";
 import { useNavigate, useSearchParams } from "react-router-dom";
-import { ArrowLeft, CalendarPlus, CalendarX2, CreditCard, Info, PauseCircle, PlayCircle, RotateCcw, Snowflake, Trash2 } from "lucide-react";
+import { ArrowLeft, BellRing, CalendarPlus, CalendarX2, CreditCard, Info, PauseCircle, PlayCircle, RotateCcw, Snowflake, Tag, Ticket, Trash2 } from "lucide-react";
 import { useAuth } from "@/contexts/auth-context";
 import { useT } from "@/i18n";
 import { useToast } from "@/components/ui/toast";
@@ -13,6 +13,7 @@ import { formatMinor } from "@/core/money";
 import { formatDateShort, formatNumber } from "@/services/format";
 import { subStatusMeta } from "@/utils/status-meta";
 import { Card, CardHeader } from "@/components/ui/card";
+import { SearchInput } from "@/components/ui/search-input";
 import { Tabs } from "@/components/ui/tabs";
 import { Select } from "@/components/ui/select";
 import { Badge } from "@/components/ui/badge";
@@ -26,7 +27,11 @@ import { ConfirmDialog } from "@/components/ui/confirm-dialog";
 import { SubscriptionFormModal } from "@/components/subscriptions/subscription-form-modal";
 import { PlanFormModal } from "@/components/subscriptions/plan-form-modal";
 import { FreezeSubscriptionModal } from "@/components/subscriptions/freeze-subscription-modal";
+import { PromoCodesModal } from "@/components/subscriptions/promo-codes-modal";
+import { RenewalAlertsModal } from "@/components/subscriptions/renewal-alerts-modal";
 import { PackagesPage } from "@/pages/packages-page";
+import { BranchBadge } from "@/components/ui/branch-badge";
+import { SubscriptionContractActions } from "@/components/subscriptions/subscription-contract-actions";
 
 const EFFECTIVE_OPTIONS = ["all", "active", "upcoming", "expired", "suspended", "frozen", "cancelled"] as const;
 
@@ -40,21 +45,34 @@ export function SubscriptionsPage() {
   const [tab, setTab] = useState("subs");
   const [showPlans, setShowPlans] = useState(false);
   const [effective, setEffective] = useState<string>("all");
+  const [search, setSearch] = useState("");
+  const [debounced, setDebounced] = useState("");
   const [page, setPage] = useState(1);
   const [data, setData] = useState<{ items: SubscriptionWithMember[]; total: number }>({ items: [], total: 0 });
   const [plans, setPlans] = useState<Plan[]>([]);
   const [subModalOpen, setSubModalOpen] = useState(false);
   const [planModalOpen, setPlanModalOpen] = useState(false);
   const [editPlan, setEditPlan] = useState<Plan | null>(null);
+  const [deletePlanTarget, setDeletePlanTarget] = useState<Plan | null>(null);
   const [cancelTarget, setCancelTarget] = useState<SubscriptionWithMember | null>(null);
   const [undoCancelTarget, setUndoCancelTarget] = useState<SubscriptionWithMember | null>(null);
   const [purgeTarget, setPurgeTarget] = useState<SubscriptionWithMember | null>(null);
   const [detailsTarget, setDetailsTarget] = useState<SubscriptionWithMember | null>(null);
   const [freezeTarget, setFreezeTarget] = useState<SubscriptionWithMember | null>(null);
   const [freezeHistory, setFreezeHistory] = useState<FreezeInfo[]>([]);
+  const [promoModalOpen, setPromoModalOpen] = useState(false);
+  const [renewalModalOpen, setRenewalModalOpen] = useState(false);
   const [busy, setBusy] = useState(false);
   const [reloadTick, setReloadTick] = useState(0);
   const reload = () => setReloadTick((v) => v + 1);
+
+  useEffect(() => {
+    const timer = window.setTimeout(() => {
+      setDebounced(search.trim());
+      setPage(1);
+    }, 300);
+    return () => window.clearTimeout(timer);
+  }, [search]);
 
   useEffect(() => {
     if (!actor) return;
@@ -64,6 +82,7 @@ export function SubscriptionsPage() {
         page,
         pageSize: appConfig.pageSize,
         effective: effective as (typeof EFFECTIVE_OPTIONS)[number],
+        search: debounced || undefined,
       })
       .then((result) => {
         if (alive) setData(result);
@@ -72,7 +91,7 @@ export function SubscriptionsPage() {
     return () => {
       alive = false;
     };
-  }, [actor, effective, page, reloadTick]);
+  }, [actor, effective, debounced, page, reloadTick]);
 
   const reloadPlans = useCallback(() => {
     if (!actor) return;
@@ -118,6 +137,25 @@ export function SubscriptionsPage() {
       setPurgeTarget(null);
       reload();
       setPage(1);
+    } catch (err) {
+      toast("error", describeError(err, t));
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const onPlanDeleteConfirm = async () => {
+    if (!actor || !deletePlanTarget) return;
+    setBusy(true);
+    try {
+      const res = await api.plans.delete(deletePlanTarget.id);
+      if (res.softDeactivated) {
+        toast("info", "تم إلغاء تفعيل الخطة بدلاً من حذفها النهائي نظراً لوجود اشتراكات سابقة مسجلة بها");
+      } else {
+        toast("success", "تم حذف الخطة بنجاح نهائياً");
+      }
+      setDeletePlanTarget(null);
+      reloadPlans();
     } catch (err) {
       toast("error", describeError(err, t));
     } finally {
@@ -238,6 +276,11 @@ export function SubscriptionsPage() {
       key: "plan",
       header: t("subs.planCol"),
       render: (row) => <span className="font-semibold">{row.planName}</span>,
+    },
+    {
+      key: "branch",
+      header: t("common.branch"),
+      render: (row) => <BranchBadge branchId={row.subscription.branchId} />,
     },
     {
       key: "period",
@@ -409,6 +452,7 @@ export function SubscriptionsPage() {
             <Snowflake className="size-4" />
           </button>
         )}
+        <SubscriptionContractActions subscriptionId={row.id} size="sm" />
           {hasPermission("subscriptions.purge") && (
             <button
               type="button"
@@ -457,21 +501,31 @@ export function SubscriptionsPage() {
           <CardHeader
             title={t("nav.subscriptions")}
             action={
-              hasPermission("subscriptions.create") ? (
-                <div className="flex flex-wrap items-center gap-2">
+              <div className="flex flex-wrap items-center gap-2">
+                {hasPermission("subscriptions.edit") && (
+                  <Button variant="secondary" onClick={() => setRenewalModalOpen(true)}>
+                    <BellRing className="size-4 text-emerald" />
+                    <span>تذكيرات التجديد (WhatsApp)</span>
+                  </Button>
+                )}
+                {hasPermission("promo.view") && (
+                  <Button variant="secondary" onClick={() => setPromoModalOpen(true)}>
+                    <Tag className="size-4 text-neon" />
+                    <span>أكواد الخصم</span>
+                  </Button>
+                )}
+                {hasPermission("plans.view") && (
                   <Button variant="secondary" onClick={() => setShowPlans((v) => !v)}>
                     {t("plans.secondaryManage")}
                   </Button>
+                )}
+                {hasPermission("subscriptions.create") && (
                   <Button onClick={() => setSubModalOpen(true)}>
                     <CalendarPlus className="size-4" />
                     {t("subs.addSubscription")}
                   </Button>
-                </div>
-              ) : hasPermission("plans.view") ? (
-                <Button variant="secondary" onClick={() => setShowPlans((v) => !v)}>
-                  {t("plans.secondaryManage")}
-                </Button>
-              ) : undefined
+                )}
+              </div>
             }
           />
           {showPlans ? (
@@ -495,28 +549,38 @@ export function SubscriptionsPage() {
                   setEditPlan(plan);
                   setPlanModalOpen(true);
                 }}
+                onDelete={(plan) => {
+                  setDeletePlanTarget(plan);
+                }}
               />
             </>
           ) : (
             <>
               <div className="flex flex-col gap-3 border-b border-line px-5 py-3.5 sm:flex-row sm:items-center">
-            <div className="sm:w-52">
-              <Select
-                value={effective}
-                onChange={(e) => {
-                  setEffective(e.target.value);
-                  setPage(1);
-                }}
-                options={EFFECTIVE_OPTIONS.map((s) => ({
-                  value: s,
-                  label: s === "all" ? t("common.all") : t(`status.${s}`),
-                }))}
-              />
-            </div>
-            <p className="text-xs font-semibold text-faint tabnum sm:ms-auto">
-              {formatNumber(data.total)}
-            </p>
-          </div>
+                <div className="w-full sm:w-72">
+                  <SearchInput
+                    value={search}
+                    onValueChange={setSearch}
+                    placeholder={t("common.searchPlaceholder")}
+                  />
+                </div>
+                <div className="sm:w-52">
+                  <Select
+                    value={effective}
+                    onChange={(e) => {
+                      setEffective(e.target.value);
+                      setPage(1);
+                    }}
+                    options={EFFECTIVE_OPTIONS.map((s) => ({
+                      value: s,
+                      label: s === "all" ? `${t("subs.filterEffective")}: ${t("common.all")}` : t(`status.${s}`),
+                    }))}
+                  />
+                </div>
+                <p className="text-xs font-semibold text-faint tabnum sm:ms-auto">
+                  {formatNumber(data.total)}
+                </p>
+              </div>
 
           {rows.length === 0 ? (
             <EmptyState
@@ -679,6 +743,25 @@ export function SubscriptionsPage() {
           );
         })()}
       </Modal>
+
+      <PromoCodesModal
+        open={promoModalOpen}
+        onClose={() => setPromoModalOpen(false)}
+      />
+
+      <RenewalAlertsModal
+        open={renewalModalOpen}
+        onClose={() => setRenewalModalOpen(false)}
+      />
+
+      <ConfirmDialog
+        open={deletePlanTarget !== null}
+        title="حذف الخطة"
+        message={deletePlanTarget ? `هل أنت متأكد من حذف الخطة «${deletePlanTarget.name}»؟` : ""}
+        onClose={() => setDeletePlanTarget(null)}
+        onConfirm={onPlanDeleteConfirm}
+        loading={busy}
+      />
     </div>
   );
 }
@@ -689,12 +772,14 @@ function PlansGrid({
   canEdit,
   onAdd,
   onEdit,
+  onDelete,
 }: {
   plans: Plan[];
   canCreate: boolean;
   canEdit: boolean;
   onAdd: () => void;
   onEdit: (plan: Plan) => void;
+  onDelete: (plan: Plan) => void;
 }) {
   const t = useT();
 
@@ -729,16 +814,33 @@ function PlansGrid({
               <p dir="ltr" className="mt-2 text-2xl font-extrabold tabnum text-neon">
                 {formatNumber(plan.price)}
               </p>
-              <p className="text-[11px] text-faint">
-                {plan.durationDays} {t("common.days")}
-              </p>
+              <div className="flex items-center justify-between text-[11px] text-faint">
+                <span>{plan.durationDays} {t("common.days")}</span>
+                {plan.invitationsCount > 0 && (
+                  <span className="text-neon flex items-center gap-1 font-semibold">
+                    <Ticket className="size-3" />
+                    {plan.invitationsCount} دعوة ضيف
+                  </span>
+                )}
+              </div>
               {plan.description && (
                 <p className="mt-2 line-clamp-2 text-[12px] leading-relaxed text-subtle">{plan.description}</p>
               )}
               {canEdit && (
-                <Button variant="secondary" size="sm" className="mt-3 w-full" onClick={() => onEdit(plan)}>
-                  {t("common.edit")}
-                </Button>
+                <div className="mt-3 flex items-center gap-2">
+                  <Button variant="secondary" size="sm" className="flex-1" onClick={() => onEdit(plan)}>
+                    {t("common.edit")}
+                  </Button>
+                  <Button
+                    variant="ghost"
+                    size="sm"
+                    className="text-red hover:bg-red/10 hover:text-red px-2.5"
+                    onClick={() => onDelete(plan)}
+                    title="حذف الخطة"
+                  >
+                    <Trash2 className="size-3.5" />
+                  </Button>
+                </div>
               )}
             </div>
           ))}

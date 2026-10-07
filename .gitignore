@@ -1,4 +1,4 @@
-﻿node_modules
+node_modules
 dist
 *.local
 .env
@@ -18,3 +18,10 @@ license-cli/issued/
 whatsapp-gateway/node_modules
 whatsapp-gateway/package-lock.json
 dist-exe
+brain/
+_*.cjs
+_*.js
+_*.mjs
+*.tmp
+# Playwright CLI output (may contain credentials)
+.playwright-cli/

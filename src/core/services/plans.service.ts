@@ -13,6 +13,7 @@ export interface PlanRow extends Row {
   color: string | null;
   kind: PlanKind;
   sessions_count: number | null;
+  invitations_count: number | null;
   is_active: number;
   created_at: string;
   updated_at: string;
@@ -29,6 +30,7 @@ export interface Plan {
   color: string | null;
   kind: PlanKind;
   sessionsCount: number | null;
+  invitationsCount: number;
   isActive: boolean;
   createdAt: string;
   updatedAt: string;
@@ -42,6 +44,7 @@ export interface PlanInput {
   color?: string | null;
   kind?: PlanKind;
   sessionsCount?: number | null;
+  invitationsCount?: number;
 }
 
 function normalizeKind(kind: PlanKind | undefined): PlanKind {
@@ -58,6 +61,7 @@ function toPlan(row: PlanRow): Plan {
     color: row.color,
     kind: (row.kind ?? "time") as PlanKind,
     sessionsCount: row.sessions_count == null ? null : Number(row.sessions_count),
+    invitationsCount: Math.max(0, Number(row.invitations_count || 0)),
     isActive: Number(row.is_active) === 1,
     createdAt: row.created_at,
     updatedAt: row.updated_at,
@@ -109,9 +113,10 @@ export async function createPlan(
   }
 
   const id = crypto.randomUUID();
+  const invitationsCount = Math.max(0, Math.round(input.invitationsCount ?? 0));
   await db.transaction(async () => {
     db.run(
-      "INSERT INTO membership_plans (id, name, duration_days, price, description, color, kind, sessions_count, is_active, created_at, updated_at)\nVALUES (?, ?, ?, ?, ?, ?, ?, ?, 1, ?, ?)",
+      "INSERT INTO membership_plans (id, name, duration_days, price, description, color, kind, sessions_count, invitations_count, is_active, created_at, updated_at)\nVALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 1, ?, ?)",
       [
         id,
         name,
@@ -121,6 +126,7 @@ export async function createPlan(
         input.color?.trim() || null,
         kind,
         sessionsCount,
+        invitationsCount,
         nowStamp(),
         nowStamp(),
       ],
@@ -130,6 +136,7 @@ export async function createPlan(
       durationDays: input.durationDays,
       kind,
       sessionsCount,
+      invitationsCount,
     });
   });
 
@@ -147,6 +154,7 @@ export interface PlanPatch {
   isActive?: boolean;
   kind?: PlanKind;
   sessionsCount?: number | null;
+  invitationsCount?: number;
 }
 
 export async function updatePlan(
@@ -195,15 +203,61 @@ export async function updatePlan(
     sessionsCount = null;
   }
 
+  const invitationsCount =
+    patch.invitationsCount !== undefined
+      ? Math.max(0, Math.round(patch.invitationsCount))
+      : Math.max(0, Number(row.invitations_count || 0));
+
   await db.transaction(async () => {
     db.run(
-      "UPDATE membership_plans SET name = ?, duration_days = ?, price = ?, description = ?, color = ?, kind = ?, sessions_count = ?, is_active = ?, updated_at = ? WHERE id = ?",
-      [name, durationDays, price, description, color, kind, sessionsCount, isActive, nowStamp(), planId],
+      "UPDATE membership_plans SET name = ?, duration_days = ?, price = ?, description = ?, color = ?, kind = ?, sessions_count = ?, invitations_count = ?, is_active = ?, updated_at = ? WHERE id = ?",
+      [name, durationDays, price, description, color, kind, sessionsCount, invitationsCount, isActive, nowStamp(), planId],
     );
-    recordAudit(db, actor, "PLAN_UPDATED", "plan", planId, { name });
+    recordAudit(db, actor, "PLAN_UPDATED", "plan", planId, { name, invitationsCount });
   });
 
   const fresh = getPlanRow(db, planId);
   if (!fresh) throw errNotFound("errors.planNotFound");
   return toPlan(fresh);
 }
+
+export async function deletePlan(
+  db: Db,
+  actor: ServiceActor,
+  planId: string,
+): Promise<{ success: boolean; softDeactivated?: boolean }> {
+  requirePermission(actor, "plans.edit");
+  const plan = getPlanRow(db, planId);
+  if (!plan) throw errNotFound("errors.planNotFound");
+
+  const subscriptionsCount = db.count(
+    "SELECT COUNT(*) FROM member_subscriptions WHERE plan_id = ?",
+    [planId],
+  );
+
+  if (subscriptionsCount > 0) {
+    // If subscriptions exist, deactivate it instead of breaking foreign keys
+    await db.transaction(async () => {
+      db.run("UPDATE membership_plans SET is_active = 0, updated_at = ? WHERE id = ?", [
+        nowStamp(),
+        planId,
+      ]);
+      recordAudit(db, actor, "PLAN_DEACTIVATED", "plan", planId, {
+        name: plan.name,
+        reason: "has_subscriptions",
+        subscriptionsCount,
+      });
+    });
+    return { success: true, softDeactivated: true };
+  }
+
+  await db.transaction(async () => {
+    // Also remove any package referencing this as synthetic_plan_id if unreferenced
+    db.run("DELETE FROM packages WHERE synthetic_plan_id = ?", [planId]);
+    db.run("DELETE FROM membership_plans WHERE id = ?", [planId]);
+    recordAudit(db, actor, "PLAN_DELETED", "plan", planId, { name: plan.name });
+  });
+
+  return { success: true, softDeactivated: false };
+}
+

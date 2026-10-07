@@ -9,7 +9,6 @@ import { requirePermission, roleHasPermission, type ServiceActor } from "@/core/
 import type { Db } from "@/db/engine";
 import {
   attendanceSeries,
-  countCheckInsOnDate,
   type AttendanceDayPoint,
 } from "./attendance.service";
 import {
@@ -163,16 +162,26 @@ export interface DashboardStats {
   checkinsToday: number;
 }
 
-export function getDashboardStats(db: Db, actor: ServiceActor): DashboardStats {
+export function getDashboardStats(db: Db, actor: ServiceActor, branchId?: string): DashboardStats {
   requirePermission(actor, "members.view");
+  const targetBranch = branchId && branchId !== "all" ? branchId : undefined;
+  const branchClause = targetBranch ? " AND COALESCE(branch_id, 'main') = ?" : "";
+  const branchParams = targetBranch ? [targetBranch] : [];
+
   return {
-    totalMembers: db.count("SELECT COUNT(*) FROM members WHERE status != 'archived'"),
-    activeMembers: db.count("SELECT COUNT(*) FROM members WHERE status = 'active'"),
-    activeSubscriptions: countActiveSubscriptions(db),
+    totalMembers: db.count(`SELECT COUNT(*) FROM members WHERE status != 'archived'${branchClause}`, branchParams),
+    activeMembers: db.count(`SELECT COUNT(*) FROM members WHERE status = 'active'${branchClause}`, branchParams),
+    activeSubscriptions: targetBranch
+      ? db.count("SELECT COUNT(*) FROM member_subscriptions WHERE status = 'active' AND COALESCE(branch_id, 'main') = ?", [targetBranch])
+      : countActiveSubscriptions(db),
     frozenSubscriptions: db.count(
-      "SELECT COUNT(*) FROM member_subscriptions WHERE status = 'suspended'",
+      `SELECT COUNT(*) FROM member_subscriptions WHERE status = 'suspended'${branchClause}`,
+      branchParams,
     ),
-    checkinsToday: countCheckInsOnDate(db, todayKey()),
+    checkinsToday: db.count(
+      `SELECT COUNT(*) FROM attendance WHERE deleted_at IS NULL AND substr(checkin_at, 1, 10) = ?${branchClause}`,
+      [todayKey(), ...branchParams],
+    ),
   };
 }
 
@@ -265,9 +274,12 @@ interface LedgerDay {
 }
 
 /** Revenue/expenses per day from financial_ledger (excludes cancelled-sub rows, mirrors finance.service). */
-function ledgerDayMap(db: Db, fromKey: string, toKey: string): Map<string, DayPoint> {
+function ledgerDayMap(db: Db, fromKey: string, toKey: string, branchId?: string): Map<string, DayPoint> {
   const fromStamp = `${fromKey} 00:00:00`;
   const toStamp = `${addDaysKey(toKey, 1)} 00:00:00`;
+  const targetBranch = branchId && branchId !== "all" ? branchId : undefined;
+  const branchClause = targetBranch ? " AND COALESCE(_lp.branch_id, _le.branch_id, _lpr.branch_id, 'main') = ?" : "";
+  const params = targetBranch ? [fromStamp, toStamp, targetBranch] : [fromStamp, toStamp];
   const rows = db.all<LedgerDay>(
     `SELECT substr(l.occurred_at, 1, 10) AS day,
       COALESCE(SUM(CASE WHEN l.direction = 1 AND l.entry_type NOT IN ('refund', 'reversal_payment') THEN l.amount_minor ELSE 0 END), 0) AS inflow,
@@ -275,13 +287,14 @@ function ledgerDayMap(db: Db, fromKey: string, toKey: string): Map<string, DayPo
       COALESCE(SUM(CASE WHEN l.entry_type = 'refund' THEN l.amount_minor ELSE 0 END), 0) AS refunds
     FROM financial_ledger l
     LEFT JOIN payments _lp ON l.ref_table = 'payments' AND l.ref_id = _lp.id
+    LEFT JOIN expenses _le ON l.ref_table = 'expenses' AND l.ref_id = _le.id
     LEFT JOIN member_subscriptions _ls ON _lp.subscription_id = _ls.id AND _ls.status = 'cancelled'
     LEFT JOIN payment_refunds _lr ON l.ref_table = 'payment_refunds' AND l.ref_id = _lr.id
     LEFT JOIN payments _lpr ON _lr.payment_id = _lpr.id
     LEFT JOIN member_subscriptions _lsr ON _lpr.subscription_id = _lsr.id AND _lsr.status = 'cancelled'
-    WHERE l.occurred_at >= ? AND l.occurred_at < ? AND _ls.id IS NULL AND _lsr.id IS NULL
+    WHERE l.occurred_at >= ? AND l.occurred_at < ? AND _ls.id IS NULL AND _lsr.id IS NULL${branchClause}
     GROUP BY day`,
-    [fromStamp, toStamp],
+    params,
   );
   const map = new Map<string, DayPoint>();
   for (const r of rows) {
@@ -292,12 +305,15 @@ function ledgerDayMap(db: Db, fromKey: string, toKey: string): Map<string, DayPo
 }
 
 /** Attendance per day (deleted rows excluded). */
-function attendanceDayMap(db: Db, fromKey: string, toKey: string): Map<string, DayPoint> {
+function attendanceDayMap(db: Db, fromKey: string, toKey: string, branchId?: string): Map<string, DayPoint> {
   const fromStamp = `${fromKey} 00:00:00`;
   const toStamp = `${addDaysKey(toKey, 1)} 00:00:00`;
+  const targetBranch = branchId && branchId !== "all" ? branchId : undefined;
+  const branchClause = targetBranch ? " AND COALESCE(branch_id, 'main') = ?" : "";
+  const params = targetBranch ? [fromStamp, toStamp, targetBranch] : [fromStamp, toStamp];
   const rows = db.all<{ day: string; cnt: number }>(
-    "SELECT substr(checkin_at, 1, 10) AS day, COUNT(*) AS cnt FROM attendance WHERE deleted_at IS NULL AND checkin_at >= ? AND checkin_at < ? GROUP BY day",
-    [fromStamp, toStamp],
+    `SELECT substr(checkin_at, 1, 10) AS day, COUNT(*) AS cnt FROM attendance WHERE deleted_at IS NULL AND checkin_at >= ? AND checkin_at < ?${branchClause} GROUP BY day`,
+    params,
   );
   const map = new Map<string, DayPoint>();
   for (const r of rows) {
@@ -307,12 +323,15 @@ function attendanceDayMap(db: Db, fromKey: string, toKey: string): Map<string, D
 }
 
 /** New members per day (soft-deleted excluded). */
-function newMembersDayMap(db: Db, fromKey: string, toKey: string): Map<string, DayPoint> {
+function newMembersDayMap(db: Db, fromKey: string, toKey: string, branchId?: string): Map<string, DayPoint> {
   const fromStamp = `${fromKey} 00:00:00`;
   const toStamp = `${addDaysKey(toKey, 1)} 00:00:00`;
+  const targetBranch = branchId && branchId !== "all" ? branchId : undefined;
+  const branchClause = targetBranch ? " AND COALESCE(branch_id, 'main') = ?" : "";
+  const params = targetBranch ? [fromStamp, toStamp, targetBranch] : [fromStamp, toStamp];
   const rows = db.all<{ day: string; cnt: number }>(
-    "SELECT substr(created_at, 1, 10) AS day, COUNT(*) AS cnt FROM members WHERE deleted_at IS NULL AND created_at >= ? AND created_at < ? GROUP BY day",
-    [fromStamp, toStamp],
+    `SELECT substr(created_at, 1, 10) AS day, COUNT(*) AS cnt FROM members WHERE deleted_at IS NULL AND created_at >= ? AND created_at < ?${branchClause} GROUP BY day`,
+    params,
   );
   const map = new Map<string, DayPoint>();
   for (const r of rows) {
@@ -322,16 +341,19 @@ function newMembersDayMap(db: Db, fromKey: string, toKey: string): Map<string, D
 }
 
 /** Renewals per day = subscriptions created in the period that are NOT the member's first subscription. */
-function renewalsDayMap(db: Db, fromKey: string, toKey: string): Map<string, DayPoint> {
+function renewalsDayMap(db: Db, fromKey: string, toKey: string, branchId?: string): Map<string, DayPoint> {
   const fromStamp = `${fromKey} 00:00:00`;
   const toStamp = `${addDaysKey(toKey, 1)} 00:00:00`;
+  const targetBranch = branchId && branchId !== "all" ? branchId : undefined;
+  const branchClause = targetBranch ? " AND COALESCE(s.branch_id, 'main') = ?" : "";
+  const params = targetBranch ? [fromStamp, toStamp, targetBranch] : [fromStamp, toStamp];
   const rows = db.all<{ day: string; cnt: number }>(
     `SELECT substr(s.created_at, 1, 10) AS day, COUNT(*) AS cnt
      FROM member_subscriptions s
-     WHERE s.created_at >= ? AND s.created_at < ?
+     WHERE s.created_at >= ? AND s.created_at < ?${branchClause}
        AND s.id != (SELECT MIN(id) FROM member_subscriptions s2 WHERE s2.member_id = s.member_id)
      GROUP BY day`,
-    [fromStamp, toStamp],
+    params,
   );
   const map = new Map<string, DayPoint>();
   for (const r of rows) {
@@ -369,6 +391,7 @@ export function getDashboardSeries(
   actor: ServiceActor,
   rangeKey: "today" | "7d" | "30d" | "month" | "year" | "custom",
   custom?: DashboardRange,
+  branchId?: string,
 ): DashboardSeriesResult {
   const range = resolveDashboardRange(rangeKey, custom);
   const bucket = pickDashboardBucket(range.fromKey, range.toKey);
@@ -378,11 +401,11 @@ export function getDashboardSeries(
   const canMembers = roleHasPermission(actor.roleId, "members.view");
 
   const maps: Map<string, DayPoint>[] = [];
-  if (canFinance) maps.push(ledgerDayMap(db, range.fromKey, range.toKey));
+  if (canFinance) maps.push(ledgerDayMap(db, range.fromKey, range.toKey, branchId));
   if (canMembers) {
-    maps.push(attendanceDayMap(db, range.fromKey, range.toKey));
-    maps.push(newMembersDayMap(db, range.fromKey, range.toKey));
-    maps.push(renewalsDayMap(db, range.fromKey, range.toKey));
+    maps.push(attendanceDayMap(db, range.fromKey, range.toKey, branchId));
+    maps.push(newMembersDayMap(db, range.fromKey, range.toKey, branchId));
+    maps.push(renewalsDayMap(db, range.fromKey, range.toKey, branchId));
   }
   const dayMap = mergeDayMaps(...maps);
 
@@ -438,8 +461,9 @@ export function getDashboardOverview(
   actor: ServiceActor,
   rangeKey: "today" | "7d" | "30d" | "month" | "year" | "custom",
   custom?: DashboardRange,
+  branchId?: string,
 ): DashboardOverview {
-  const series = getDashboardSeries(db, actor, rangeKey, custom);
+  const series = getDashboardSeries(db, actor, rangeKey, custom, branchId);
   const range = series.range;
   const bucket = series.bucket;
 
@@ -452,11 +476,15 @@ export function getDashboardOverview(
   const prevFromKey = addDaysKey(range.fromKey, -spanDays);
   const prevToKey = addDaysKey(range.fromKey, -1);
 
+  const targetBranch = branchId && branchId !== "all" ? branchId : undefined;
+  const branchClause = targetBranch ? " AND COALESCE(branch_id, 'main') = ?" : "";
+  const branchParams = targetBranch ? [targetBranch] : [];
+
   let finance: DashboardFinanceSection | null = null;
   if (canFinance) {
     const curr = sumDayMap(seriesDayMapOf(series), range.fromKey, range.toKey);
     const prev = sumDayMap(
-      ledgerOnly(db, prevFromKey, prevToKey),
+      ledgerOnly(db, prevFromKey, prevToKey, branchId),
       prevFromKey,
       prevToKey,
     );
@@ -471,9 +499,9 @@ export function getDashboardOverview(
   if (canMembers) {
     const curr = sumDayMap(seriesDayMapOf(series), range.fromKey, range.toKey);
     const prev = mergeDayMaps(
-      attendanceDayMap(db, prevFromKey, prevToKey),
-      newMembersDayMap(db, prevFromKey, prevToKey),
-      renewalsDayMap(db, prevFromKey, prevToKey),
+      attendanceDayMap(db, prevFromKey, prevToKey, branchId),
+      newMembersDayMap(db, prevFromKey, prevToKey, branchId),
+      renewalsDayMap(db, prevFromKey, prevToKey, branchId),
     );
     const prevSum = sumDayMap(prev, prevFromKey, prevToKey);
     growth = {
@@ -486,11 +514,15 @@ export function getDashboardOverview(
   let members: DashboardMembersSection | null = null;
   if (canMembers) {
     members = {
-      totalMembers: db.count("SELECT COUNT(*) FROM members WHERE deleted_at IS NULL"),
-      activeMembers: db.count("SELECT COUNT(*) FROM members WHERE status = 'active' AND deleted_at IS NULL"),
-      activeSubscriptions: canSubs ? countActiveSubscriptions(db) : 0,
+      totalMembers: db.count(`SELECT COUNT(*) FROM members WHERE deleted_at IS NULL${branchClause}`, branchParams),
+      activeMembers: db.count(`SELECT COUNT(*) FROM members WHERE status = 'active' AND deleted_at IS NULL${branchClause}`, branchParams),
+      activeSubscriptions: canSubs
+        ? (targetBranch
+            ? db.count("SELECT COUNT(*) FROM member_subscriptions WHERE status = 'active' AND COALESCE(branch_id, 'main') = ?", [targetBranch])
+            : countActiveSubscriptions(db))
+        : 0,
       frozenSubscriptions: canSubs
-        ? db.count("SELECT COUNT(*) FROM member_subscriptions WHERE status = 'suspended'")
+        ? db.count(`SELECT COUNT(*) FROM member_subscriptions WHERE status = 'suspended'${branchClause}`, branchParams)
         : 0,
     };
   }
@@ -505,21 +537,33 @@ export function getDashboardOverview(
 
   let operations: DashboardOperationsSection | null = null;
   if (canSubs) {
+    const subBranchClause = targetBranch ? " AND COALESCE(s.branch_id, 'main') = ?" : "";
     const outstanding = db.first<{ cnt: number; total_minor: number }>(
-      "WITH paid AS (\n  SELECT subscription_id, SUM(paid_amount_minor) AS paid_minor, SUM(discount_amount_minor) AS discount_minor\n  FROM payments\n  WHERE subscription_id IS NOT NULL AND status IN ('partial', 'paid')\n  GROUP BY subscription_id\n)\nSELECT COUNT(*) AS cnt,\n  COALESCE(SUM(MAX(CAST(ROUND(s.price * 100) AS INTEGER) - COALESCE(p.paid_minor, 0) - COALESCE(p.discount_minor, 0), 0)), 0) AS total_minor\nFROM member_subscriptions s\nLEFT JOIN paid p ON p.subscription_id = s.id\nWHERE s.status = 'active'",
+      `WITH paid AS (
+  SELECT subscription_id, SUM(paid_amount_minor) AS paid_minor, SUM(discount_amount_minor) AS discount_minor
+  FROM payments
+  WHERE subscription_id IS NOT NULL AND status IN ('partial', 'paid')
+  GROUP BY subscription_id
+)
+SELECT COUNT(*) AS cnt,
+  COALESCE(SUM(MAX(CAST(ROUND(s.price * 100) AS INTEGER) - COALESCE(p.paid_minor, 0) - COALESCE(p.discount_minor, 0), 0)), 0) AS total_minor
+FROM member_subscriptions s
+LEFT JOIN paid p ON p.subscription_id = s.id
+WHERE s.status = 'active'${subBranchClause}`,
+      branchParams,
     );
     const today = todayKey();
     operations = {
       outstandingTotalMinor: Number(outstanding?.total_minor ?? 0),
       outstandingMembers: Number(outstanding?.cnt ?? 0),
       expiredSubscriptions: db.count(
-        "SELECT COUNT(*) FROM member_subscriptions WHERE status = 'active' AND end_date < ?",
-        [today],
+        `SELECT COUNT(*) FROM member_subscriptions WHERE status = 'active' AND end_date < ?${branchClause}`,
+        [today, ...branchParams],
       ),
       lostCards: canMembers ? db.count("SELECT COUNT(*) FROM cards WHERE status = 'lost'") : 0,
       expiringWithin7: db.count(
-        "SELECT COUNT(*) FROM member_subscriptions WHERE status = 'active' AND end_date >= ? AND end_date <= ?",
-        [today, addDaysKey(today, 6)],
+        `SELECT COUNT(*) FROM member_subscriptions WHERE status = 'active' AND end_date >= ? AND end_date <= ?${branchClause}`,
+        [today, addDaysKey(today, 6), ...branchParams],
       ),
     };
   }
@@ -549,6 +593,6 @@ function seriesDayMapOf(series: DashboardSeriesResult): Map<string, DayPoint> {
   return map;
 }
 
-function ledgerOnly(db: Db, fromKey: string, toKey: string): Map<string, DayPoint> {
-  return ledgerDayMap(db, fromKey, toKey);
+function ledgerOnly(db: Db, fromKey: string, toKey: string, branchId?: string): Map<string, DayPoint> {
+  return ledgerDayMap(db, fromKey, toKey, branchId);
 }

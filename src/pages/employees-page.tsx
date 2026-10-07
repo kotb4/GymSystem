@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useState, type ChangeEvent } from "react";
-import { Pencil, Trash2, UserPlus } from "lucide-react";
+import { Link } from "react-router-dom";
+import { Fingerprint, Pencil, Trash2, UserPlus } from "lucide-react";
 import { useAuth } from "@/contexts/auth-context";
 import { useT } from "@/i18n";
 import { useToast } from "@/components/ui/toast";
@@ -22,6 +23,7 @@ import {
   LeavesTab,
   DeductionsTab,
   IncentivesTab,
+  AdvancesTab,
   SalarySummaryTab,
   ActivityTab,
   MonthlyHoursTab,
@@ -43,6 +45,7 @@ export function EmployeesPage() {
     ...(canHr ? [{ value: "hours", label: t("hr.monthlyHours") }] : []),
     ...(hasPermission("hr.manage") ? [{ value: "deductions", label: t("hr.tabDeductions") }] : []),
     ...(hasPermission("hr.manage") ? [{ value: "incentives", label: t("hr.tabIncentives") }] : []),
+    ...(canHr || canSalaries ? [{ value: "advances", label: t("hr.tabAdvances") }] : []),
     ...(canSalaries || canActivity ? [{ value: "salary", label: t("hr.tabSalarySummary") }] : []),
     ...(canActivity ? [{ value: "activity", label: t("hr.tabActivity") }] : []),
   ];
@@ -52,8 +55,18 @@ export function EmployeesPage() {
   return (
     <div className="space-y-4">
       <Card>
-        <CardHeader title={t("nav.employees")} />
-        <div className="px-5 pb-1">
+        <div className="flex flex-col gap-4 p-5 sm:flex-row sm:items-center sm:justify-between">
+          <h2 className="text-xl font-extrabold">{t("nav.employees")}</h2>
+          {hasPermission("hr.employee_checkin") && (
+            <Link to="/employee-checkin">
+              <Button variant="secondary" size="sm">
+                <Fingerprint className="size-4 text-neon" />
+                {t("nav.employeeCheckIn")}
+              </Button>
+            </Link>
+          )}
+        </div>
+        <div className="border-t border-line/60 px-5 py-3">
           <Tabs items={visibleTabs} value={activeTab} onChange={setTab} />
         </div>
       </Card>
@@ -63,6 +76,7 @@ export function EmployeesPage() {
       {activeTab === "hours" && canHr && <MonthlyHoursTab />}
       {activeTab === "deductions" && hasPermission("hr.manage") && <DeductionsTab />}
       {activeTab === "incentives" && hasPermission("hr.manage") && <IncentivesTab />}
+      {activeTab === "advances" && (canHr || canSalaries) && <AdvancesTab />}
       {activeTab === "salary" && (canSalaries || canActivity) && <SalarySummaryTab />}
       {activeTab === "activity" && canActivity && <ActivityTab />}
     </div>
@@ -187,6 +201,9 @@ function EmployeeFormModal({ target, canSeeSalary, onClose, onSaved }: {
     isActive: target?.isActive ?? true,
     notes: target?.notes ?? "",
     barcode: target?.barcode ?? "",
+    shiftStart: target?.shiftStart ?? "",
+    shiftEnd: target?.shiftEnd ?? "",
+    commissionPct: target?.commissionPct != null ? String(target.commissionPct) : "",
   });
   const [busy, setBusy] = useState(false);
   const [users, setUsers] = useState<PublicUser[]>([]);
@@ -210,6 +227,9 @@ function EmployeeFormModal({ target, canSeeSalary, onClose, onSaved }: {
         department: form.department,
         specialization: form.specialization || null,
         joinedDate: form.joinedDate || null,
+        shiftStart: form.shiftStart || null,
+        shiftEnd: form.shiftEnd || null,
+        commissionPct: form.commissionPct === "" ? null : Number(form.commissionPct),
         notes: form.notes || null,
         isActive: form.isActive,
       };
@@ -251,7 +271,14 @@ function EmployeeFormModal({ target, canSeeSalary, onClose, onSaved }: {
           ]} />
           <Input label={t("emp.joinedDate")} type="date" dir="ltr" value={form.joinedDate} onChange={set("joinedDate")} />
         </div>
-        <Input label={t("emp.specialization")} value={form.specialization} onChange={set("specialization")} />
+        <div className="grid grid-cols-2 gap-3">
+          <Input label={t("emp.shiftStart")} type="time" dir="ltr" value={form.shiftStart} onChange={set("shiftStart")} />
+          <Input label={t("emp.shiftEnd")} type="time" dir="ltr" value={form.shiftEnd} onChange={set("shiftEnd")} />
+        </div>
+        <div className="grid grid-cols-2 gap-3">
+          <Input label={t("emp.specialization")} value={form.specialization} onChange={set("specialization")} />
+          <Input label={t("emp.commissionPct")} type="number" step="0.1" min={0} max={100} dir="ltr" value={form.commissionPct} onChange={set("commissionPct")} />
+        </div>
         <Input label={t("emp.barcode")} dir="ltr" className="font-mono uppercase tracking-widest" placeholder="EMP-000001" value={form.barcode} onChange={set("barcode")} />
         {canLinkUser && (
           <Select label={t("emp.userId")} value={linkedUserId} onChange={(e) => setLinkedUserId(e.target.value)} options={[

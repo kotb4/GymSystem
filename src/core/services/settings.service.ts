@@ -5,6 +5,7 @@ import type { Db, Row } from "@/db/engine";
 
 export const SETTING_KEYS = {
   gymName: "gym_name",
+  receiptTitle: "receipt_title",
   currencySymbol: "currency_symbol",
   duplicateWindowSeconds: "checkin_duplicate_window_seconds",
   demoSeeded: "demo_seeded",
@@ -45,6 +46,26 @@ export const SETTING_KEYS = {
   messagesPacingMinSeconds: "messages_pacing_min_seconds",
   messagesPacingMaxSeconds: "messages_pacing_max_seconds",
   messagesCooldownDays: "messages_cooldown_days",
+  tunnelUrl: "tunnel_url",
+  tunnelToken: "tunnel_token",
+  systemReadOnly: "system_readonly",
+  featurePosEnabled: "feature_pos_enabled",
+  featureClassesEnabled: "feature_classes_enabled",
+  featureInbodyEnabled: "feature_inbody_enabled",
+  featureWhatsappEnabled: "feature_whatsapp_enabled",
+  featureMultibranchEnabled: "feature_multibranch_enabled",
+  featureAttendanceEnabled: "feature_attendance_enabled",
+  featureMembersEnabled: "feature_members_enabled",
+  featureSubscriptionsEnabled: "feature_subscriptions_enabled",
+  featureCardsEnabled: "feature_cards_enabled",
+  featureTreasuryEnabled: "feature_treasury_enabled",
+  featureExpensesEnabled: "feature_expenses_enabled",
+  featureReportsEnabled: "feature_reports_enabled",
+  featureCrmEnabled: "feature_crm_enabled",
+  featureLoyaltyEnabled: "feature_loyalty_enabled",
+  featureReferralsEnabled: "feature_referrals_enabled",
+  featureEmployeesEnabled: "feature_employees_enabled",
+  featureHrCheckinEnabled: "feature_hr_checkin_enabled",
 } as const;
 
 export type SettingKey = (string & {}) | (typeof SETTING_KEYS)[keyof typeof SETTING_KEYS];
@@ -67,14 +88,15 @@ function intInRange(value: string, min: number, max: number): number {
 }
 
 const SPECS: Record<string, KeySpec> = {
-  [SETTING_KEYS.gymName]: { validate: (v) => v },
+  [SETTING_KEYS.gymName]: { validate: (v) => v, allowEmpty: true },
+  [SETTING_KEYS.receiptTitle]: { validate: (v) => v, allowEmpty: true },
   [SETTING_KEYS.currencySymbol]: { validate: (v) => v },
   [SETTING_KEYS.duplicateWindowSeconds]: {
     validate: (v) => String(intInRange(v, 0, 3600)),
   },
-  [SETTING_KEYS.gymPhone]: { validate: (v) => v },
-  [SETTING_KEYS.gymAddress]: { validate: (v) => v },
-  [SETTING_KEYS.workingHours]: { validate: (v) => v.slice(0, 120) },
+  [SETTING_KEYS.gymPhone]: { validate: (v) => v, allowEmpty: true },
+  [SETTING_KEYS.gymAddress]: { validate: (v) => v, allowEmpty: true },
+  [SETTING_KEYS.workingHours]: { validate: (v) => v.slice(0, 120), allowEmpty: true },
   [SETTING_KEYS.workingDays]: {
     validate: (v) => {
       if (!WORKING_DAYS_RE.test(v)) throw errValidation("errors.settingWorkingDaysInvalid");
@@ -88,12 +110,14 @@ const SPECS: Record<string, KeySpec> = {
     },
   },
   [SETTING_KEYS.scannerPrefix]: {
+    allowEmpty: true,
     validate: (v) => {
       if (!PRINTABLE_RE.test(v)) throw errValidation("errors.settingPrefixInvalid");
       return v;
     },
   },
   [SETTING_KEYS.scannerSuffix]: {
+    allowEmpty: true,
     validate: (v) => {
       if (!PRINTABLE_RE.test(v)) throw errValidation("errors.settingSuffixInvalid");
       return v;
@@ -116,6 +140,12 @@ const SPECS: Record<string, KeySpec> = {
     },
   },
   [SETTING_KEYS.soundEnabled]: {
+    validate: (v) => {
+      if (v !== "1" && v !== "0") throw errValidation("errors.settingBoolInvalid");
+      return v;
+    },
+  },
+  [SETTING_KEYS.systemReadOnly]: {
     validate: (v) => {
       if (v !== "1" && v !== "0") throw errValidation("errors.settingBoolInvalid");
       return v;
@@ -211,6 +241,125 @@ const SPECS: Record<string, KeySpec> = {
   [SETTING_KEYS.messagesPacingMinSeconds]: { validate: (v) => String(intInRange(v, 2, 60)) },
   [SETTING_KEYS.messagesPacingMaxSeconds]: { validate: (v) => String(intInRange(v, 3, 120)) },
   [SETTING_KEYS.messagesCooldownDays]: { validate: (v) => String(intInRange(v, 0, 90)) },
+  [SETTING_KEYS.tunnelUrl]: {
+    allowEmpty: true,
+    validate: (v) => {
+      const trimmed = v.trim();
+      if (trimmed === "") return "";
+      if (!/^https?:\/\/.{1,300}$/.test(trimmed)) throw errValidation("errors.settingTunnelUrlInvalid");
+      return trimmed;
+    },
+  },
+  [SETTING_KEYS.tunnelToken]: {
+    allowEmpty: true,
+    validate: (v) => {
+      const trimmed = v.trim();
+      if (trimmed.length > 2000) throw errValidation("errors.settingTunnelTokenInvalid");
+      return trimmed;
+    },
+  },
+  [SETTING_KEYS.featurePosEnabled]: {
+    validate: (v) => {
+      if (v !== "1" && v !== "0") throw errValidation("errors.settingBoolInvalid");
+      return v;
+    },
+  },
+  [SETTING_KEYS.featureClassesEnabled]: {
+    validate: (v) => {
+      if (v !== "1" && v !== "0") throw errValidation("errors.settingBoolInvalid");
+      return v;
+    },
+  },
+  [SETTING_KEYS.featureInbodyEnabled]: {
+    validate: (v) => {
+      if (v !== "1" && v !== "0") throw errValidation("errors.settingBoolInvalid");
+      return v;
+    },
+  },
+  [SETTING_KEYS.featureWhatsappEnabled]: {
+    validate: (v) => {
+      if (v !== "1" && v !== "0") throw errValidation("errors.settingBoolInvalid");
+      return v;
+    },
+  },
+  [SETTING_KEYS.featureMultibranchEnabled]: {
+    validate: (v) => {
+      if (v !== "1" && v !== "0") throw errValidation("errors.settingBoolInvalid");
+      return v;
+    },
+  },
+  [SETTING_KEYS.featureAttendanceEnabled]: {
+    validate: (v) => {
+      if (v !== "1" && v !== "0") throw errValidation("errors.settingBoolInvalid");
+      return v;
+    },
+  },
+  [SETTING_KEYS.featureMembersEnabled]: {
+    validate: (v) => {
+      if (v !== "1" && v !== "0") throw errValidation("errors.settingBoolInvalid");
+      return v;
+    },
+  },
+  [SETTING_KEYS.featureSubscriptionsEnabled]: {
+    validate: (v) => {
+      if (v !== "1" && v !== "0") throw errValidation("errors.settingBoolInvalid");
+      return v;
+    },
+  },
+  [SETTING_KEYS.featureCardsEnabled]: {
+    validate: (v) => {
+      if (v !== "1" && v !== "0") throw errValidation("errors.settingBoolInvalid");
+      return v;
+    },
+  },
+  [SETTING_KEYS.featureTreasuryEnabled]: {
+    validate: (v) => {
+      if (v !== "1" && v !== "0") throw errValidation("errors.settingBoolInvalid");
+      return v;
+    },
+  },
+  [SETTING_KEYS.featureExpensesEnabled]: {
+    validate: (v) => {
+      if (v !== "1" && v !== "0") throw errValidation("errors.settingBoolInvalid");
+      return v;
+    },
+  },
+  [SETTING_KEYS.featureReportsEnabled]: {
+    validate: (v) => {
+      if (v !== "1" && v !== "0") throw errValidation("errors.settingBoolInvalid");
+      return v;
+    },
+  },
+  [SETTING_KEYS.featureCrmEnabled]: {
+    validate: (v) => {
+      if (v !== "1" && v !== "0") throw errValidation("errors.settingBoolInvalid");
+      return v;
+    },
+  },
+  [SETTING_KEYS.featureLoyaltyEnabled]: {
+    validate: (v) => {
+      if (v !== "1" && v !== "0") throw errValidation("errors.settingBoolInvalid");
+      return v;
+    },
+  },
+  [SETTING_KEYS.featureReferralsEnabled]: {
+    validate: (v) => {
+      if (v !== "1" && v !== "0") throw errValidation("errors.settingBoolInvalid");
+      return v;
+    },
+  },
+  [SETTING_KEYS.featureEmployeesEnabled]: {
+    validate: (v) => {
+      if (v !== "1" && v !== "0") throw errValidation("errors.settingBoolInvalid");
+      return v;
+    },
+  },
+  [SETTING_KEYS.featureHrCheckinEnabled]: {
+    validate: (v) => {
+      if (v !== "1" && v !== "0") throw errValidation("errors.settingBoolInvalid");
+      return v;
+    },
+  },
 };
 
 const EDITABLE_KEYS = new Set<string>(Object.keys(SPECS));
@@ -519,5 +668,47 @@ export function getMessagesPacingMaxSeconds(db: Db): number {
 
 export function getMessagesCooldownDays(db: Db): number {
   return toInt(readSetting(db, SETTING_KEYS.messagesCooldownDays), 7, 0, 90);
+}
+
+export interface PublicFeatureFlags {
+  featureAttendanceEnabled: boolean;
+  featureMembersEnabled: boolean;
+  featureSubscriptionsEnabled: boolean;
+  featureCardsEnabled: boolean;
+  featureTreasuryEnabled: boolean;
+  featureExpensesEnabled: boolean;
+  featurePosEnabled: boolean;
+  featureReportsEnabled: boolean;
+  featureClassesEnabled: boolean;
+  featureInbodyEnabled: boolean;
+  featureWhatsappEnabled: boolean;
+  featureCrmEnabled: boolean;
+  featureLoyaltyEnabled: boolean;
+  featureReferralsEnabled: boolean;
+  featureEmployeesEnabled: boolean;
+  featureHrCheckinEnabled: boolean;
+  featureMultibranchEnabled: boolean;
+}
+
+export function readPublicFeatureFlags(db: Db): PublicFeatureFlags {
+  return {
+    featureAttendanceEnabled: (readSetting(db, SETTING_KEYS.featureAttendanceEnabled) ?? "1") !== "0",
+    featureMembersEnabled: (readSetting(db, SETTING_KEYS.featureMembersEnabled) ?? "1") !== "0",
+    featureSubscriptionsEnabled: (readSetting(db, SETTING_KEYS.featureSubscriptionsEnabled) ?? "1") !== "0",
+    featureCardsEnabled: (readSetting(db, SETTING_KEYS.featureCardsEnabled) ?? "1") !== "0",
+    featureTreasuryEnabled: (readSetting(db, SETTING_KEYS.featureTreasuryEnabled) ?? "1") !== "0",
+    featureExpensesEnabled: (readSetting(db, SETTING_KEYS.featureExpensesEnabled) ?? "1") !== "0",
+    featurePosEnabled: (readSetting(db, SETTING_KEYS.featurePosEnabled) ?? "1") !== "0",
+    featureReportsEnabled: (readSetting(db, SETTING_KEYS.featureReportsEnabled) ?? "1") !== "0",
+    featureClassesEnabled: (readSetting(db, SETTING_KEYS.featureClassesEnabled) ?? "1") !== "0",
+    featureInbodyEnabled: (readSetting(db, SETTING_KEYS.featureInbodyEnabled) ?? "1") !== "0",
+    featureWhatsappEnabled: (readSetting(db, SETTING_KEYS.featureWhatsappEnabled) ?? "1") !== "0",
+    featureCrmEnabled: (readSetting(db, SETTING_KEYS.featureCrmEnabled) ?? "1") !== "0",
+    featureLoyaltyEnabled: (readSetting(db, SETTING_KEYS.featureLoyaltyEnabled) ?? "1") !== "0",
+    featureReferralsEnabled: (readSetting(db, SETTING_KEYS.featureReferralsEnabled) ?? "1") !== "0",
+    featureEmployeesEnabled: (readSetting(db, SETTING_KEYS.featureEmployeesEnabled) ?? "1") !== "0",
+    featureHrCheckinEnabled: (readSetting(db, SETTING_KEYS.featureHrCheckinEnabled) ?? "1") !== "0",
+    featureMultibranchEnabled: (readSetting(db, SETTING_KEYS.featureMultibranchEnabled) ?? "1") !== "0",
+  };
 }
 

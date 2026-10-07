@@ -7,15 +7,17 @@ export type BadgeVariant =
   | "danger"
   | "info"
   | "violet"
+  | "primary"
   | "neutral";
 
 const VARIANTS: Record<BadgeVariant, string> = {
-  success: "bg-neon/10 text-neon ring-neon/25",
-  warning: "bg-amber/10 text-amber ring-amber/25",
-  danger: "bg-red/10 text-red ring-red/25",
-  info: "bg-cyan/10 text-cyan ring-cyan/25",
-  violet: "bg-violet/10 text-violet ring-violet/25",
-  neutral: "bg-white/5 text-subtle ring-white/10",
+  success: "bg-emerald-500/10 text-emerald-400 ring-emerald-500/20",
+  warning: "bg-amber/10 text-amber ring-amber/20",
+  danger: "bg-red/10 text-red ring-red/20",
+  info: "bg-cyan/10 text-cyan ring-cyan/20",
+  violet: "bg-violet/10 text-violet ring-violet/20",
+  primary: "bg-primary/10 text-primary ring-primary/25",
+  neutral: "bg-white/[0.05] text-subtle ring-white/10",
 };
 
 export interface BadgeProps extends HTMLAttributes<HTMLSpanElement> {

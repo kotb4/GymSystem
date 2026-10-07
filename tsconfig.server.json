@@ -16,6 +16,6 @@
       "@/*": ["./src/*"]
     }
   },
-  "include": ["server", "src/db/engine.ts", "src/db/migrations.ts", "src/db/seed.ts", "src/core", "src/services/format"],
+  "include": ["server", "src/db/engine.ts", "src/db/migrations.ts", "src/db/seed.ts", "src/core", "src/services/format", "src/types"],
   "exclude": ["src/core/barcode"]
 }

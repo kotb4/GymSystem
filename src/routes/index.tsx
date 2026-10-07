@@ -19,6 +19,7 @@ import { CardsPage } from "@/pages/cards-page";
 import { StaffPage } from "@/pages/staff-page";
 import { AuditPage } from "@/pages/audit-page";
 import { SettingsPage } from "@/pages/settings-page";
+import { DocSearchPage } from "@/pages/doc-search-page";
 import { PaymentsPage } from "@/pages/payments-page";
 import { ExpensesPage } from "@/pages/expenses-page";
 import { ReportsPage } from "@/pages/reports-page";
@@ -31,6 +32,7 @@ import { LoyaltyPage } from "@/pages/loyalty-page";
 import { ReferralsPage } from "@/pages/referrals-page";
 import { MessagesPage } from "@/pages/messages-page";
 import { TreasuryPage } from "@/pages/treasury";
+import { DeveloperPage } from "@/pages/developer-page";
 
 function RequireAuth({ children }: { children: ReactNode }) {
   const { user, booting } = useAuth();
@@ -59,11 +61,24 @@ function ForbiddenView() {
   );
 }
 
-function RequirePermission({ permission, permissions, children }: { permission?: Permission; permissions?: Permission[]; children: ReactNode }) {
-  const { hasPermission } = useAuth();
+function RequirePermission({
+  permission,
+  permissions,
+  featureFlag,
+  children,
+}: {
+  permission?: Permission;
+  permissions?: Permission[];
+  featureFlag?: string;
+  children: ReactNode;
+}) {
+  const { hasPermission, isFeatureEnabled } = useAuth();
+  if (featureFlag && !isFeatureEnabled(featureFlag)) {
+    return <ForbiddenView />;
+  }
   if (permissions) {
     if (!permissions.some((p) => hasPermission(p))) return <ForbiddenView />;
-  } else if (!permission || !hasPermission(permission)) {
+  } else if (permission && !hasPermission(permission)) {
     return <ForbiddenView />;
   }
   return <>{children}</>;
@@ -78,9 +93,10 @@ export function AppRoutes() {
   // expired = TOTAL lockdown → the activation surface is the ONLY reachable
   // screen; login/setup are not rendered (activate/deactivate are plain,
   // unauthenticated functions so activation still works).
+  const isDev = user?.isDeveloper === true;
   const licenseBlocked =
     license.status != null && (license.status.needsActivation || license.status.readOnly);
-  if (licenseBlocked && license.status) {
+  if (licenseBlocked && license.status && !isDev) {
     return (
       <Routes>
         <Route path="*" element={<LicensePage />} />
@@ -99,12 +115,26 @@ export function AppRoutes() {
         }
       >
         <Route index element={<DashboardPage />} />
-        <Route path="members" element={<MembersPage />} />
-        <Route path="members/:memberId" element={<MemberProfilePage />} />
+        <Route
+          path="members"
+          element={
+            <RequirePermission featureFlag="featureMembersEnabled">
+              <MembersPage />
+            </RequirePermission>
+          }
+        />
+        <Route
+          path="members/:memberId"
+          element={
+            <RequirePermission featureFlag="featureMembersEnabled">
+              <MemberProfilePage />
+            </RequirePermission>
+          }
+        />
         <Route
           path="attendance"
           element={
-            <RequirePermission permission="reception.view">
+            <RequirePermission permission="reception.view" featureFlag="featureAttendanceEnabled">
               <ReceptionPage />
             </RequirePermission>
           }
@@ -112,15 +142,23 @@ export function AppRoutes() {
         <Route
           path="subscriptions"
           element={
-            <RequirePermission permission="subscriptions.view">
+            <RequirePermission permission="subscriptions.view" featureFlag="featureSubscriptionsEnabled">
               <SubscriptionsPage />
+            </RequirePermission>
+          }
+        />
+        <Route
+          path="doc-search"
+          element={
+            <RequirePermission permission="reports.view" featureFlag="featureReportsEnabled">
+              <DocSearchPage />
             </RequirePermission>
           }
         />
         <Route
           path="payments"
           element={
-            <RequirePermission permission="payments.view">
+            <RequirePermission permission="payments.view" featureFlag="featureTreasuryEnabled">
               <PaymentsPage />
             </RequirePermission>
           }
@@ -128,7 +166,7 @@ export function AppRoutes() {
         <Route
           path="expenses"
           element={
-            <RequirePermission permission="expenses.view">
+            <RequirePermission permission="expenses.view" featureFlag="featureExpensesEnabled">
               <ExpensesPage />
             </RequirePermission>
           }
@@ -136,7 +174,7 @@ export function AppRoutes() {
         <Route
           path="reports"
           element={
-            <RequirePermission permission="reports.view">
+            <RequirePermission permission="reports.view" featureFlag="featureReportsEnabled">
               <ReportsPage />
             </RequirePermission>
           }
@@ -144,7 +182,7 @@ export function AppRoutes() {
         <Route
           path="store"
           element={
-            <RequirePermission permission="store.view">
+            <RequirePermission permission="store.view" featureFlag="featurePosEnabled">
               <StorePage />
             </RequirePermission>
           }
@@ -152,7 +190,7 @@ export function AppRoutes() {
         <Route
           path="classes"
           element={
-            <RequirePermission permissions={["classes.view", "trainers.view"]}>
+            <RequirePermission permissions={["classes.view", "trainers.view"]} featureFlag="featureClassesEnabled">
               <ClassesPage />
             </RequirePermission>
           }
@@ -160,7 +198,7 @@ export function AppRoutes() {
         <Route
           path="employees"
           element={
-            <RequirePermission permissions={["employees.view", "hr.view"]}>
+            <RequirePermission permissions={["employees.view", "hr.view"]} featureFlag="featureEmployeesEnabled">
               <EmployeesPage />
             </RequirePermission>
           }
@@ -168,7 +206,7 @@ export function AppRoutes() {
         <Route
           path="employee-checkin"
           element={
-            <RequirePermission permission="hr.employee_checkin">
+            <RequirePermission permission="hr.employee_checkin" featureFlag="featureHrCheckinEnabled">
               <EmployeeCheckInPage />
             </RequirePermission>
           }
@@ -176,7 +214,7 @@ export function AppRoutes() {
         <Route
           path="crm"
           element={
-            <RequirePermission permissions={["leads.view", "trials.view"]}>
+            <RequirePermission permissions={["leads.view", "trials.view"]} featureFlag="featureCrmEnabled">
               <CrmPage />
             </RequirePermission>
           }
@@ -184,7 +222,7 @@ export function AppRoutes() {
         <Route
           path="cards"
           element={
-            <RequirePermission permission="cards.view">
+            <RequirePermission permission="cards.view" featureFlag="featureCardsEnabled">
               <CardsPage />
             </RequirePermission>
           }
@@ -200,7 +238,7 @@ export function AppRoutes() {
         <Route
           path="loyalty"
           element={
-            <RequirePermission permission="loyalty.manage">
+            <RequirePermission permission="loyalty.manage" featureFlag="featureLoyaltyEnabled">
               <LoyaltyPage />
             </RequirePermission>
           }
@@ -208,7 +246,7 @@ export function AppRoutes() {
         <Route
           path="referrals"
           element={
-            <RequirePermission permission="referrals.view">
+            <RequirePermission permission="referrals.view" featureFlag="featureReferralsEnabled">
               <ReferralsPage />
             </RequirePermission>
           }
@@ -216,7 +254,7 @@ export function AppRoutes() {
         <Route
           path="messages"
           element={
-            <RequirePermission permission="messages.view">
+            <RequirePermission permission="messages.view" featureFlag="featureWhatsappEnabled">
               <MessagesPage />
             </RequirePermission>
           }
@@ -240,9 +278,15 @@ export function AppRoutes() {
         <Route
           path="treasury"
           element={
-            <RequirePermission permission="payments.view">
+            <RequirePermission permission="payments.view" featureFlag="featureTreasuryEnabled">
               <TreasuryPage />
             </RequirePermission>
+          }
+        />
+        <Route
+          path="developer"
+          element={
+            user?.isDeveloper ? <DeveloperPage /> : <Navigate to="/" replace />
           }
         />
        </Route>

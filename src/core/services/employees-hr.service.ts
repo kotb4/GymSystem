@@ -4,6 +4,7 @@ import { requirePermission, roleHasPermission, type ServiceActor } from "@/core/
 import type { Db, Row } from "@/db/engine";
 import { nowStamp, todayKey, isValidDateKey, diffDaysKeys } from "@/core/dates";
 import { recordAudit } from "./audit.service";
+import { insertLedgerEntry } from "./payments.service";
 
 const DATE_RE = /^\d{4}-\d{2}-\d{2}$/;
 const MONTH_RE = /^\d{4}-\d{2}$/;
@@ -134,6 +135,7 @@ export interface MonthlySalarySummary {
   baseMinor: number;
   incentivesMinor: number;
   deductionsMinor: number;
+  advancesMinor: number;
   unpaidLeaveDays: number;
   unpaidLeaveImpactMinor: number;
   attendedDays: number;
@@ -273,12 +275,15 @@ function assertDateKey(value: string): string {
 // Attendance (clock in / clock out)
 // ---------------------------------------------------------------------------
 
-function shiftStart(db: Db): string {
+function shiftStart(db: Db, employee?: Row): string {
+  if (employee && employee.shift_start && String(employee.shift_start).trim() !== "") {
+    return String(employee.shift_start).trim();
+  }
   return settingStr(db, "hr.shift_start", "").trim();
 }
 
-function isLateFor(db: Db, clockInAt: string): boolean {
-  const shift = shiftStart(db);
+function isLateFor(db: Db, clockInAt: string, employee?: Row): boolean {
+  const shift = shiftStart(db, employee);
   if (!shift) return false;
   const t = clockInAt.slice(11, 16);
   return t > shift;
@@ -296,7 +301,7 @@ export async function clockIn(
   input: { employeeId?: string | null; at?: string | null; dateKey?: string | null; notes?: string | null },
 ): Promise<PublicAttendance> {
   requirePermission(actor, "hr.view");
-  const manage = roleHasPermission(actor.roleId, "hr.manage");
+  const manage = roleHasPermission(actor.roleId, "hr.manage") || actor.roleId === "owner";
   const employee = resolveTargetEmployee(db, actor, input.employeeId ?? null, manage);
   assertEmployeeScopedAccess(actor, employee);
 
@@ -320,7 +325,7 @@ export async function clockIn(
         str(employee.id),
         dateKey,
         at,
-        isLateFor(db, at) ? 1 : 0,
+        isLateFor(db, at, employee) ? 1 : 0,
         input.notes?.trim() || null,
         actor.userId,
         nowStamp(),
@@ -343,8 +348,102 @@ export async function clockOut(
   input: { employeeId?: string | null; at?: string | null; dateKey?: string | null },
 ): Promise<PublicAttendance> {
   requirePermission(actor, "hr.view");
-  const manage = roleHasPermission(actor.roleId, "hr.manage");
+  const manage = roleHasPermission(actor.roleId, "hr.manage") || actor.roleId === "owner";
   const employee = resolveTargetEmployee(db, actor, input.employeeId ?? null, manage);
+  assertEmployeeScopedAccess(actor, employee);
+
+  const dateKey = input.dateKey ? assertDateKey(input.dateKey) : todayKey();
+  const at = input.at?.trim() || nowStamp();
+
+  const existing = db.first<Row>(
+    "SELECT * FROM employee_attendance WHERE employee_id = ? AND date_key = ?",
+    [str(employee.id), dateKey],
+  );
+  if (!existing) throw errNotFound("errors.hrNotClockedIn");
+  if (existing.clock_out_at) throw errConflict("errors.hrAlreadyClockedOut");
+
+  await db.transaction(async () => {
+    db.run(
+      "UPDATE employee_attendance SET clock_out_at = ?, worked_minutes = ?, updated_at = ? WHERE id = ?",
+      [at, minutesBetween(at, str(existing.clock_in_at)), nowStamp(), str(existing.id)],
+    );
+    recordAudit(db, actor, "EMPLOYEE_ATTENDANCE_OUT", "employee_attendance", str(existing.id), {
+      employee: str(employee.full_name),
+      dateKey,
+      at,
+    });
+  });
+  return mapAttendance(
+    db.first<Row>("SELECT * FROM employee_attendance WHERE id = ?", [str(existing.id)])!,
+    str(employee.full_name),
+  );
+}
+
+/** Check-in any employee by employee ID (requires hr.employee_checkin or hr.manage). */
+export async function clockInEmployee(
+  db: Db,
+  actor: ServiceActor,
+  input: { employeeId: string; at?: string | null; dateKey?: string | null; notes?: string | null },
+): Promise<PublicAttendance> {
+  if (
+    !roleHasPermission(actor.roleId, "hr.employee_checkin") &&
+    !roleHasPermission(actor.roleId, "hr.manage") &&
+    actor.roleId !== "owner"
+  ) {
+    throw errForbidden();
+  }
+  const employee = getEmployee(db, input.employeeId);
+  assertEmployeeScopedAccess(actor, employee);
+
+  const dateKey = input.dateKey ? assertDateKey(input.dateKey) : todayKey();
+  const at = input.at?.trim() || nowStamp();
+
+  const existing = db.first<Row>(
+    "SELECT * FROM employee_attendance WHERE employee_id = ? AND date_key = ?",
+    [str(employee.id), dateKey],
+  );
+  if (existing) throw errConflict("errors.hrAlreadyClockedIn");
+  if (dateKey > todayKey()) throw errValidation("errors.hrDateFuture");
+
+  const id = crypto.randomUUID();
+  await db.transaction(async () => {
+    db.run(
+      "INSERT INTO employee_attendance (id, employee_id, date_key, clock_in_at, clock_out_at, worked_minutes, is_late, notes, created_by, created_at, updated_at)\nVALUES (?, ?, ?, ?, NULL, 0, ?, ?, ?, ?, ?)",
+      [
+        id,
+        str(employee.id),
+        dateKey,
+        at,
+        isLateFor(db, at, employee) ? 1 : 0,
+        input.notes?.trim() || null,
+        actor.userId,
+        nowStamp(),
+        nowStamp(),
+      ],
+    );
+    recordAudit(db, actor, "EMPLOYEE_ATTENDANCE_IN", "employee_attendance", id, {
+      employee: str(employee.full_name),
+      dateKey,
+      at,
+    });
+  });
+  return mapAttendance(db.first<Row>("SELECT * FROM employee_attendance WHERE id = ?", [id])!, str(employee.full_name));
+}
+
+/** Check-out any employee by employee ID (requires hr.employee_checkin or hr.manage). */
+export async function clockOutEmployee(
+  db: Db,
+  actor: ServiceActor,
+  input: { employeeId: string; at?: string | null; dateKey?: string | null },
+): Promise<PublicAttendance> {
+  if (
+    !roleHasPermission(actor.roleId, "hr.employee_checkin") &&
+    !roleHasPermission(actor.roleId, "hr.manage") &&
+    actor.roleId !== "owner"
+  ) {
+    throw errForbidden();
+  }
+  const employee = getEmployee(db, input.employeeId);
   assertEmployeeScopedAccess(actor, employee);
 
   const dateKey = input.dateKey ? assertDateKey(input.dateKey) : todayKey();
@@ -429,20 +528,37 @@ export async function upsertAttendance(
   return mapAttendance(db.first<Row>("SELECT * FROM employee_attendance WHERE id = ?", [id])!, str(employee.full_name));
 }
 
-/** List attendance for a month; scoped to self unless `hr.manage`. */
+/** List attendance for a month or specific day; scoped to self unless `hr.manage` / `hr.employee_checkin` / owner. */
 export function listAttendance(
   db: Db,
   actor: ServiceActor,
-  query: { month?: string; employeeId?: string | null } = {},
+  query: { month?: string; dateKey?: string; employeeId?: string | null } = {},
 ): PublicAttendance[] {
   requirePermission(actor, "hr.view");
-  const month = query.month?.trim() || todayKey().slice(0, 7);
-  if (!MONTH_RE.test(month)) throw errValidation("errors.invalidPeriod");
 
-  const conditions: string[] = ["substr(a.date_key, 1, 7) = ?"];
-  const params: Array<string | number> = [month];
+  const conditions: string[] = [];
+  const params: Array<string | number> = [];
 
-  if (roleHasPermission(actor.roleId, "hr.manage")) {
+  if (query.dateKey) {
+    const dk = assertDateKey(query.dateKey);
+    conditions.push("a.date_key = ?");
+    params.push(dk);
+  } else {
+    const month = query.month?.trim() || todayKey().slice(0, 7);
+    if (!MONTH_RE.test(month)) throw errValidation("errors.invalidPeriod");
+    conditions.push("substr(a.date_key, 1, 7) = ?");
+    params.push(month);
+  }
+
+  // When querying a specific date (e.g. today's check-in screen), staff with hr.employee_checkin can see all staff.
+  // When querying a month (salary/archive), only hr.manage or owner can see all staff; others are scoped to self.
+  const isMonthQuery = !query.dateKey;
+  const canSeeAll =
+    actor.roleId === "owner" ||
+    roleHasPermission(actor.roleId, "hr.manage") ||
+    (!isMonthQuery && roleHasPermission(actor.roleId, "hr.employee_checkin"));
+
+  if (canSeeAll) {
     if (query.employeeId) {
       const employee = getEmployee(db, query.employeeId);
       conditions.push("a.employee_id = ?");
@@ -1003,6 +1119,7 @@ export function monthlySalarySummary(
     baseMinor: amounts.baseMinor,
     incentivesMinor: amounts.incentivesMinor,
     deductionsMinor: amounts.deductionsMinor,
+    advancesMinor: amounts.advancesMinor,
     unpaidLeaveDays: amounts.unpaidLeaveDays,
     unpaidLeaveImpactMinor: amounts.unpaidLeaveImpactMinor,
     attendedDays,
@@ -1020,6 +1137,7 @@ function salaryAmounts(
   baseMinor: number;
   incentivesMinor: number;
   deductionsMinor: number;
+  advancesMinor: number;
   unpaidLeaveDays: number;
   unpaidLeaveImpactMinor: number;
   netMinor: number;
@@ -1031,6 +1149,13 @@ function salaryAmounts(
   );
   const deductionsMinor = num(
     db.scalar("SELECT COALESCE(SUM(amount_minor),0) FROM employee_deductions WHERE employee_id = ? AND substr(date_key,1,7) = ?", [employeeId, month]),
+  );
+  // Unsettled advances due for this month (or earlier open advances)
+  const advancesMinor = num(
+    db.scalar(
+      "SELECT COALESCE(SUM(amount_minor - repaid_minor), 0) FROM employee_advances WHERE employee_id = ? AND deduction_month = ? AND status = 'open'",
+      [employeeId, month],
+    ),
   );
 
   const unpaidRows = db.all<Row>(
@@ -1049,9 +1174,10 @@ function salaryAmounts(
     baseMinor,
     incentivesMinor,
     deductionsMinor,
+    advancesMinor,
     unpaidLeaveDays,
     unpaidLeaveImpactMinor,
-    netMinor: Math.max(0, baseMinor + incentivesMinor - deductionsMinor - unpaidLeaveImpactMinor),
+    netMinor: Math.max(0, baseMinor + incentivesMinor - (deductionsMinor + advancesMinor) - unpaidLeaveImpactMinor),
   };
 }
 
@@ -1091,7 +1217,7 @@ export async function ensureSalariesForMonth(
           month,
           amounts.baseMinor,
           amounts.incentivesMinor,
-          amounts.deductionsMinor + amounts.unpaidLeaveImpactMinor,
+          amounts.deductionsMinor + amounts.advancesMinor + amounts.unpaidLeaveImpactMinor,
           amounts.netMinor,
           actor.userId,
           nowStamp(),
@@ -1361,7 +1487,7 @@ export async function clockInByBarcode(
   await db.transaction(async () => {
     db.run(
       "INSERT INTO employee_attendance (id, employee_id, date_key, clock_in_at, clock_out_at, worked_minutes, is_late, notes, created_by, created_at, updated_at)\nVALUES (?, ?, ?, ?, NULL, 0, ?, ?, ?, ?, ?)",
-      [id, str(employee.id), dateKey, at, isLateFor(db, at) ? 1 : 0, input.notes?.trim() || null, actor.userId, nowStamp(), nowStamp()],
+      [id, str(employee.id), dateKey, at, isLateFor(db, at, employee) ? 1 : 0, input.notes?.trim() || null, actor.userId, nowStamp(), nowStamp()],
     );
     recordAudit(db, actor, "EMPLOYEE_ATTENDANCE_IN", "employee_attendance", id, {
       employee: str(employee.full_name),
@@ -1491,4 +1617,219 @@ export function employeeMonthlyHours(
   }));
 
   return { employeeId: input.employeeId, employeeName: str(employee.full_name), month, days };
+}
+
+// ---------------------------------------------------------------------------
+// Employee Cash Advances / Loans (سلف الموظفين)
+// ---------------------------------------------------------------------------
+
+export interface PublicEmployeeAdvance {
+  id: string;
+  employeeId: string;
+  employeeName: string;
+  amountMinor: number;
+  repaidMinor: number;
+  remainingMinor: number;
+  deductionMonth: string;
+  notes: string | null;
+  status: "open" | "settled" | "cancelled";
+  settledAt: string | null;
+  createdAt: string;
+}
+
+function mapAdvance(r: Row): PublicEmployeeAdvance {
+  const amount = num(r.amount_minor);
+  const repaid = num(r.repaid_minor);
+  return {
+    id: str(r.id),
+    employeeId: str(r.employee_id),
+    employeeName: str(r.employee_name ?? ""),
+    amountMinor: amount,
+    repaidMinor: repaid,
+    remainingMinor: Math.max(0, amount - repaid),
+    deductionMonth: str(r.deduction_month),
+    notes: r.notes == null ? null : str(r.notes),
+    status: str(r.status) as PublicEmployeeAdvance["status"],
+    settledAt: r.settled_at == null ? null : str(r.settled_at),
+    createdAt: str(r.created_at),
+  };
+}
+
+export function listAdvances(
+  db: Db,
+  actor: ServiceActor,
+  query: { employeeId?: string | null; month?: string | null; status?: "open" | "settled" | "cancelled" | "all" } = {},
+): PublicEmployeeAdvance[] {
+  requirePermission(actor, "hr.view");
+  const conditions: string[] = [];
+  const params: Array<string | number> = [];
+
+  if (query.employeeId) {
+    const employee = getEmployee(db, query.employeeId);
+    assertEmployeeScopedAccess(actor, employee);
+    conditions.push("a.employee_id = ?");
+    params.push(str(employee.id));
+  } else {
+    const dept = employeeDeptClause(actor);
+    if (dept.sql) {
+      conditions.push(`a.employee_id IN (SELECT id FROM employees e WHERE 1=1 ${dept.sql})`);
+      params.push(...dept.params);
+    }
+  }
+
+  if (query.month) {
+    const month = query.month.trim();
+    if (!MONTH_RE.test(month)) throw errValidation("errors.invalidPeriod");
+    conditions.push("a.deduction_month = ?");
+    params.push(month);
+  }
+
+  if (query.status && query.status !== "all") {
+    conditions.push("a.status = ?");
+    params.push(query.status);
+  }
+
+  const where = conditions.length > 0 ? `WHERE ${conditions.join(" AND ")}` : "";
+  return db
+    .all<Row>(
+      `SELECT a.*, e.full_name AS employee_name
+       FROM employee_advances a JOIN employees e ON e.id = a.employee_id
+       ${where}
+       ORDER BY a.deduction_month DESC, a.created_at DESC`,
+      params,
+    )
+    .map(mapAdvance);
+}
+
+export async function addAdvance(
+  db: Db,
+  actor: ServiceActor,
+  input: { employeeId: string; amountMinor: number; deductionMonth: string; notes?: string | null },
+): Promise<PublicEmployeeAdvance> {
+  requirePermission(actor, "hr.manage");
+  const employee = getEmployee(db, input.employeeId);
+  assertEmployeeScopedAccess(actor, employee);
+
+  const amountMinor = Math.round(input.amountMinor);
+  if (!Number.isFinite(amountMinor) || amountMinor <= 0) {
+    throw errValidation("errors.finance.invalidAmount");
+  }
+
+  const deductionMonth = input.deductionMonth.trim();
+  if (!MONTH_RE.test(deductionMonth)) throw errValidation("errors.invalidPeriod");
+
+  const id = crypto.randomUUID();
+  const ts = nowStamp();
+
+  await db.transaction(async () => {
+    db.run(
+      `INSERT INTO employee_advances (id, employee_id, amount_minor, repaid_minor, deduction_month, notes, status, settled_at, created_by, created_at, updated_at)
+       VALUES (?, ?, ?, 0, ?, ?, 'open', NULL, ?, ?, ?)`,
+      [
+        id,
+        str(employee.id),
+        amountMinor,
+        deductionMonth,
+        input.notes?.trim() || null,
+        actor.userId,
+        ts,
+        ts,
+      ],
+    );
+
+    // Record an expense row in the unified treasury so the cash out is tracked
+    const catId = db.scalar("SELECT id FROM expense_categories WHERE id = 'cat-advances'") as string | null;
+    let expenseCategoryId = catId;
+    if (!expenseCategoryId) {
+      expenseCategoryId = String(
+        db.scalar("SELECT id FROM expense_categories WHERE name_ar = 'سلف موظفين'") ?? "",
+      );
+    }
+    if (!expenseCategoryId) {
+      expenseCategoryId = String(
+        db.scalar("SELECT id FROM expense_categories WHERE name_ar = 'مرتبات'") ?? "",
+      );
+    }
+
+    if (expenseCategoryId) {
+      const expId = crypto.randomUUID();
+      db.run(
+        `INSERT INTO expenses (id, category_id, amount_minor, method_code, description, expense_date, status, created_by, updated_by, created_at, updated_at)
+         VALUES (?, ?, ?, 'cash', ?, ?, 'active', ?, NULL, ?, ?)`,
+        [
+          expId,
+          expenseCategoryId,
+          amountMinor,
+          `سلفة موظف: ${str(employee.full_name)} (تخصم من شهر ${deductionMonth})`,
+          ts.slice(0, 10),
+          actor.userId,
+          ts,
+          ts,
+        ],
+      );
+
+      // Ledger entry for cash box disbursement
+      insertLedgerEntry(db, {
+        entryType: "expense",
+        refTable: "expenses",
+        refId: expId,
+        memberId: null,
+        methodCode: "cash",
+        direction: -1,
+        amountMinor,
+        occurredAt: ts,
+        actor,
+      });
+    }
+
+    recordAudit(db, actor, "EMPLOYEE_ADVANCE_CREATED", "employee_advances", id, {
+      employee: str(employee.full_name),
+      amountMinor,
+      deductionMonth,
+    });
+  });
+
+  return mapAdvance(
+    db.first<Row>(
+      `SELECT a.*, e.full_name AS employee_name
+       FROM employee_advances a JOIN employees e ON e.id = a.employee_id
+       WHERE a.id = ?`,
+      [id],
+    )!,
+  );
+}
+
+export async function cancelAdvance(
+  db: Db,
+  actor: ServiceActor,
+  id: string,
+): Promise<PublicEmployeeAdvance> {
+  requirePermission(actor, "hr.manage");
+  const row = db.first<Row>("SELECT * FROM employee_advances WHERE id = ?", [id]);
+  if (!row) throw errNotFound("errors.advanceNotFound");
+  if (str(row.status) !== "open") throw errConflict("errors.advanceCannotCancel");
+
+  const employee = getEmployee(db, str(row.employee_id));
+  assertEmployeeScopedAccess(actor, employee);
+
+  const ts = nowStamp();
+  await db.transaction(async () => {
+    db.run(
+      "UPDATE employee_advances SET status = 'cancelled', updated_at = ? WHERE id = ?",
+      [ts, id],
+    );
+    recordAudit(db, actor, "EMPLOYEE_ADVANCE_CANCELLED", "employee_advances", id, {
+      employee: str(employee.full_name),
+      amountMinor: num(row.amount_minor),
+    });
+  });
+
+  return mapAdvance(
+    db.first<Row>(
+      `SELECT a.*, e.full_name AS employee_name
+       FROM employee_advances a JOIN employees e ON e.id = a.employee_id
+       WHERE a.id = ?`,
+      [id],
+    )!,
+  );
 }

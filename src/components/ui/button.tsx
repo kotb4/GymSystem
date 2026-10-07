@@ -12,12 +12,12 @@ export interface ButtonProps extends ButtonHTMLAttributes<HTMLButtonElement> {
 
 const VARIANTS = {
   primary:
-    "bg-neon text-neon-ink font-bold hover:brightness-110 active:brightness-95 shadow-glow-sm focus-visible:ring-neon/60",
+    "bg-primary text-white font-bold hover:bg-primary-hover active:scale-[0.98] shadow-glow-sm focus-visible:ring-primary/60",
   secondary:
-    "bg-raised border border-line-strong text-ink hover:bg-panel hover:border-white/20 focus-visible:ring-neon/50",
-  ghost: "text-subtle hover:text-ink hover:bg-white/5 focus-visible:ring-neon/50",
+    "bg-panel border border-line text-ink hover:bg-raised hover:border-line-strong active:scale-[0.98] focus-visible:ring-primary/50",
+  ghost: "text-subtle hover:text-ink hover:bg-white/[0.05] active:scale-[0.98] focus-visible:ring-primary/50",
   danger:
-    "bg-red/15 border border-red/30 text-red hover:bg-red/25 focus-visible:ring-red/50",
+    "bg-red/15 border border-red/30 text-red hover:bg-red/25 active:scale-[0.98] focus-visible:ring-red/50",
 } as const;
 
 const SIZES = {

@@ -18,6 +18,18 @@ import {
   deleteCashSession,
   listCashSessions,
 } from "@/core/services/cash-session.service";
+import {
+  createClass,
+  createClassSession,
+  createClassRecurrence,
+  deleteClass,
+  deleteClassSession,
+  deleteClassRecurrence,
+} from "@/core/services/classes.service";
+import {
+  createTrainer,
+  deleteTrainer,
+} from "@/core/services/trainers.service";
 import type { Db } from "@/db/engine";
 import type { ServiceActor } from "@/core/permissions";
 import { createTestDb } from "./helpers/test-db";
@@ -104,7 +116,7 @@ describe("hard-delete surfaces for previously non-deletable entities (ADR-008)",
     });
   });
 
-  it("purges an unsold product; refuses to purge a product that has sales history", async () => {
+  it("purges an unsold product; purges a sold product by unlinking sales history", async () => {
     const fresh = await createProduct(db, owner, {
       name: "غير مباع",
       costMinor: 1000,
@@ -128,41 +140,129 @@ describe("hard-delete surfaces for previously non-deletable entities (ADR-008)",
       methodCode: "cash",
     });
 
-    // The product is referenced by a sale line → destructive delete is refused
-    // (archive via updateProduct is the intended retirement path). No data or
-    // audit record is produced by the refused attempt.
-    await expect(purgeProduct(db, owner, sold.id)).rejects.toMatchObject({
-      code: "CONFLICT",
-    });
-    expect(db.count("SELECT COUNT(*) AS c FROM products WHERE id = ?", [sold.id])).toBe(1);
+    // The product is referenced by a sale line → purgeProduct unlinks historical sales
+    await purgeProduct(db, owner, sold.id);
+    expect(db.count("SELECT COUNT(*) AS c FROM products WHERE id = ?", [sold.id])).toBe(0);
     expect(
-      db.count("SELECT COUNT(*) AS c FROM store_sale_items WHERE sale_id = ?", [sale.id]),
+      db.count("SELECT COUNT(*) AS c FROM store_sale_items WHERE sale_id = ? AND product_id IS NULL", [sale.id]),
     ).toBe(1);
     expect(
       db.count("SELECT COUNT(*) AS c FROM stock_movements WHERE product_id = ?", [sold.id]),
-    ).toBe(2);
-    // sale document itself survives with its header totals
+    ).toBe(0);
+    // sale document itself survives with its header totals and item snapshots
     expect(db.count("SELECT COUNT(*) AS c FROM store_sales WHERE id = ?", [sale.id])).toBe(1);
     expect(
       db.count(
         "SELECT COUNT(*) AS c FROM audit_logs WHERE action = 'PRODUCT_PURGED' AND entity_id = ?",
         [sold.id],
       ),
-    ).toBe(0);
+    ).toBe(1);
   });
 
-  it("deletes an OPEN cash session (abort) but never a CLOSED one", async () => {
+  it("deletes an OPEN cash session and allows authorized users to delete a CLOSED session", async () => {
     const session = await openCashSession(db, owner, { openingBalanceMinor: 10_000 });
     await deleteCashSession(db, owner, session.id);
     expect(listCashSessions(db, owner, {}).total).toBe(0);
 
     const reopened = await openCashSession(db, owner, { openingBalanceMinor: 5_000 });
     await closeCashSession(db, owner, reopened.id, 5_000, null);
-    expect(() => deleteCashSession(db, owner, reopened.id)).toThrow(
-      expect.objectContaining({ code: "CONFLICT" }),
-    );
+
+    // reception lacks cash.purge permission
     expect(() => deleteCashSession(db, reception, reopened.id)).toThrow(
       expect.objectContaining({ code: "FORBIDDEN" }),
     );
+
+    // owner (with cash.purge) can delete the closed session
+    await deleteCashSession(db, owner, reopened.id);
+    expect(listCashSessions(db, owner, {}).total).toBe(0);
+  });
+
+  it("deletes a class with recurrences and sessions", async () => {
+    const cls = await createClass(db, owner, {
+      name: "حصة كاراتيه",
+      discipline: "karate",
+      capacity: 20,
+    });
+    const recResult = await createClassRecurrence(db, owner, {
+      classId: cls.id,
+      daysOfWeek: [1, 3],
+      startDate: "2026-10-01",
+      startTime: "18:00",
+      weeks: 1,
+    });
+    expect(recResult.created).toBeGreaterThan(0);
+
+    // reception lacks classes.purge permission
+    await expect(deleteClass(db, reception, cls.id)).rejects.toMatchObject({
+      code: "FORBIDDEN",
+    });
+
+    // owner purges the class
+    await deleteClass(db, owner, cls.id);
+    expect(db.count("SELECT COUNT(*) AS c FROM classes WHERE id = ?", [cls.id])).toBe(0);
+    expect(db.count("SELECT COUNT(*) AS c FROM class_recurrences WHERE class_id = ?", [cls.id])).toBe(0);
+    expect(db.count("SELECT COUNT(*) AS c FROM class_sessions WHERE class_id = ?", [cls.id])).toBe(0);
+    expect(
+      db.count(
+        "SELECT COUNT(*) AS c FROM audit_logs WHERE action = 'CLASS_PURGED' AND entity_id = ?",
+        [cls.id],
+      ),
+    ).toBe(1);
+  });
+
+  it("deletes a class session and class recurrence individually", async () => {
+    const cls = await createClass(db, owner, {
+      name: "ملاكمة",
+      discipline: "boxing",
+      capacity: 15,
+    });
+    const session = await createClassSession(db, owner, cls.id, {
+      sessionDate: "2026-10-15",
+      startTime: "17:00",
+    });
+    const recResult = await createClassRecurrence(db, owner, {
+      classId: cls.id,
+      daysOfWeek: [2],
+      startDate: "2026-10-01",
+      startTime: "17:00",
+      weeks: 1,
+    });
+
+    // Delete session
+    await expect(deleteClassSession(db, reception, session.id)).rejects.toMatchObject({
+      code: "FORBIDDEN",
+    });
+    await deleteClassSession(db, owner, session.id);
+    expect(db.count("SELECT COUNT(*) AS c FROM class_sessions WHERE id = ?", [session.id])).toBe(0);
+
+    // Delete recurrence
+    await expect(deleteClassRecurrence(db, reception, recResult.recurrence.id)).rejects.toMatchObject({
+      code: "FORBIDDEN",
+    });
+    await deleteClassRecurrence(db, owner, recResult.recurrence.id);
+    expect(db.count("SELECT COUNT(*) AS c FROM class_recurrences WHERE id = ?", [recResult.recurrence.id])).toBe(0);
+  });
+
+  it("deletes a trainer and unlinks associated entities", async () => {
+    const trainer = await createTrainer(db, owner, {
+      fullName: "كابتن أحمد",
+      specialization: "mma",
+      phone: "01011112222",
+    });
+
+    // reception lacks trainers.purge permission
+    await expect(deleteTrainer(db, reception, trainer.id)).rejects.toMatchObject({
+      code: "FORBIDDEN",
+    });
+
+    // owner deletes trainer
+    await deleteTrainer(db, owner, trainer.id);
+    expect(db.count("SELECT COUNT(*) AS c FROM trainers WHERE id = ?", [trainer.id])).toBe(0);
+    expect(
+      db.count(
+        "SELECT COUNT(*) AS c FROM audit_logs WHERE action = 'TRAINER_PURGED' AND entity_id = ?",
+        [trainer.id],
+      ),
+    ).toBe(1);
   });
 });

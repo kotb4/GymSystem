@@ -1,4 +1,4 @@
-﻿import { hashPassword } from "@/core/auth/password";
+import { hashPassword } from "@/core/auth/password";
 import {
   addDaysKey,
   calcSubscriptionEndDate,
@@ -236,17 +236,51 @@ export async function seedDemoData(db: Db): Promise<void> {
       const startDate = addDaysKey(today, sub.startOffsetDays);
       const endDate = calcSubscriptionEndDate(startDate, plan.durationDays);
       const price = Math.round(plan.price * (sub.priceFactor ?? 1));
+      const subId = uid();
+      const ownerId = mustGet(userIds, "owner");
       db.run(
         "INSERT INTO member_subscriptions (id, member_id, plan_id, start_date, end_date, price, status, created_by, created_at, updated_at)\nVALUES (?, ?, ?, ?, ?, ?, 'active', ?, ?, ?)",
         [
-          uid(),
+          subId,
           memberIds[sub.memberIndex],
           planIds[sub.planIndex],
           startDate,
           endDate,
           price,
-          mustGet(userIds, "owner"),
+          ownerId,
           stampNow,
+          stampNow,
+        ],
+      );
+
+      // Also create payment & ledger entry for realistic revenue charts
+      const paymentId = uid();
+      const amountMinor = price * 100;
+      db.run(
+        "INSERT INTO payments (id, member_id, subscription_id, base_amount_minor, discount_kind, discount_input, discount_amount_minor, net_amount_minor, paid_amount_minor, refunded_amount_minor, remaining_amount_minor, method_code, status, paid_at, created_by, created_at, updated_at)\n" +
+          "VALUES (?, ?, ?, ?, 'none', 0, 0, ?, ?, 0, 0, 'cash', 'paid', ?, ?, ?, ?)",
+        [
+          paymentId,
+          memberIds[sub.memberIndex],
+          subId,
+          amountMinor,
+          amountMinor,
+          amountMinor,
+          `${startDate} 10:00:00`,
+          ownerId,
+          stampNow,
+          stampNow,
+        ],
+      );
+      db.run(
+        "INSERT INTO financial_ledger (entry_type, ref_table, ref_id, member_id, method_code, direction, amount_minor, occurred_at, created_by, created_at, box)\n" +
+          "VALUES ('payment', 'payments', ?, ?, 'cash', 1, ?, ?, ?, ?, 'gym')",
+        [
+          paymentId,
+          memberIds[sub.memberIndex],
+          amountMinor,
+          `${startDate} 10:00:00`,
+          ownerId,
           stampNow,
         ],
       );
@@ -285,7 +319,7 @@ export async function seedDemoData(db: Db): Promise<void> {
       ["demo_seeded", "1"],
     ];
     for (const [key, value] of settingsRows) {
-      db.run("INSERT INTO settings (key, value) VALUES (?, ?)", [key, value]);
+      db.run("INSERT OR REPLACE INTO settings (key, value) VALUES (?, ?)", [key, value]);
     }
   });
 }

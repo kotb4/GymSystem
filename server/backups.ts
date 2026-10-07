@@ -17,9 +17,8 @@ import { DatabaseSync } from "node:sqlite";
 import { getDbContext, adoptDatabaseFile, logLine } from "./context";
 import { NodeSqliteDriver } from "./driver";
 import { errConflict, errValidation } from "../src/core/errors";
-import { requirePermission } from "../src/core/permissions";
-import type { ServiceActor } from "../src/core/permissions";
-import { countActiveOwners } from "../src/core/services/users.service";
+import { requirePermission, type ServiceActor } from "../src/core/permissions";
+import { countTotalOwners } from "../src/core/services/users.service";
 import { readSetting, SETTING_KEYS } from "../src/core/services/settings.service";
 import {
   buildBackupFileName,
@@ -948,7 +947,7 @@ export async function importDatabaseBytes(
   // Re-checked here — synchronously, right before any heavy work — so a setup
   // that completed during the upload cannot be overwritten by a stale
   // unauthenticated import request. Restore (authenticated) is unaffected.
-  if (options.kind === "legacy_import" && countActiveOwners(getDbContext().db) > 0) {
+  if (options.kind === "legacy_import" && countTotalOwners(getDbContext().db) > 0) {
     throw errConflict("errors.setupAlreadyDone");
   }
   if (bytes.length < 100 || bytes[0] === 0) throw errValidation("errors.backupInvalidFile");

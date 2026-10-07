@@ -13,6 +13,7 @@ export interface TrainerRow extends Row {
   phone: string | null;
   email: string | null;
   specialization: string | null;
+  rank_title: string | null;
   joined_date: string;
   is_active: number;
   notes: string | null;
@@ -26,6 +27,7 @@ export interface PublicTrainer {
   phone: string | null;
   email: string | null;
   specialization: string | null;
+  rankTitle: string | null;
   joinedDate: string;
   isActive: boolean;
   notes: string | null;
@@ -38,6 +40,7 @@ function toTrainer(row: TrainerRow): PublicTrainer {
     phone: row.phone,
     email: row.email,
     specialization: row.specialization,
+    rankTitle: row.rank_title ?? null,
     joinedDate: row.joined_date,
     isActive: row.is_active === 1,
     notes: row.notes,
@@ -73,11 +76,12 @@ function assertPhoneFree(db: Db, phone: string | null, excludeTrainerId?: string
   if (existing) throw errConflict("errors.trainerPhoneTaken");
 }
 
-interface TrainerInput {
+export interface TrainerInput {
   fullName: string;
   phone?: string | null;
   email?: string | null;
   specialization?: string | null;
+  rankTitle?: string | null;
   joinedDate?: string;
   notes?: string | null;
 }
@@ -87,6 +91,7 @@ function assertTrainerInput(input: TrainerInput): {
   phone: string | null;
   email: string | null;
   specialization: string | null;
+  rankTitle: string | null;
   joinedDate: string;
   notes: string | null;
 } {
@@ -101,6 +106,7 @@ function assertTrainerInput(input: TrainerInput): {
     phone: assertOptionalPhone(input.phone),
     email: assertOptionalEmail(input.email),
     specialization: input.specialization?.trim().slice(0, 120) || null,
+    rankTitle: input.rankTitle?.trim().slice(0, 120) || null,
     joinedDate,
     notes: input.notes?.trim().slice(0, 500) || null,
   };
@@ -118,13 +124,14 @@ export async function createTrainer(
   const id = crypto.randomUUID();
   await db.transaction(async () => {
     db.run(
-      "INSERT INTO trainers (id, full_name, phone, email, specialization, joined_date, is_active, notes, created_by, created_at, updated_at)\nVALUES (?, ?, ?, ?, ?, ?, 1, ?, ?, ?, ?)",
+      "INSERT INTO trainers (id, full_name, phone, email, specialization, rank_title, joined_date, is_active, notes, created_by, created_at, updated_at)\nVALUES (?, ?, ?, ?, ?, ?, ?, 1, ?, ?, ?, ?)",
       [
         id,
         data.fullName,
         data.phone,
         data.email,
         data.specialization,
+        data.rankTitle,
         data.joinedDate,
         data.notes,
         actor.userId,
@@ -151,12 +158,13 @@ export async function updateTrainer(
 
   await db.transaction(async () => {
     db.run(
-      "UPDATE trainers SET full_name = ?, phone = ?, email = ?, specialization = ?, joined_date = ?, notes = ?, updated_at = ? WHERE id = ?",
+      "UPDATE trainers SET full_name = ?, phone = ?, email = ?, specialization = ?, rank_title = ?, joined_date = ?, notes = ?, updated_at = ? WHERE id = ?",
       [
         data.fullName,
         data.phone,
         data.email,
         data.specialization,
+        data.rankTitle,
         data.joinedDate,
         data.notes,
         nowStamp(),
@@ -199,6 +207,37 @@ export async function setTrainerActive(
     });
   });
   return toTrainer(getTrainerById(db, trainerId)!);
+}
+
+export async function deleteTrainer(
+  db: Db,
+  actor: ServiceActor,
+  trainerId: string,
+): Promise<void> {
+  requirePermission(actor, "trainers.purge");
+  const trainer = getTrainerById(db, trainerId);
+  if (!trainer) throw errNotFound("errors.trainerNotFound");
+  const trainerName = trainer.full_name;
+
+  await db.transaction(async () => {
+    // 1. Unlink or clean assessments referencing this trainer
+    db.run("UPDATE body_assessments SET trainer_id = NULL WHERE trainer_id = ?", [trainerId]);
+    db.run("UPDATE fitness_test_results SET trainer_id = NULL WHERE trainer_id = ?", [trainerId]);
+
+    // 2. Unlink classes assigned to this trainer
+    db.run("UPDATE classes SET trainer_id = NULL WHERE trainer_id = ?", [trainerId]);
+
+    // 3. Unlink employees referencing this trainer
+    db.run("UPDATE employees SET trainer_id = NULL WHERE trainer_id = ?", [trainerId]);
+
+    // 4. Delete training plans for this trainer
+    db.run("DELETE FROM training_plans WHERE trainer_id = ?", [trainerId]);
+
+    // 5. Delete trainer
+    db.run("DELETE FROM trainers WHERE id = ?", [trainerId]);
+
+    recordAudit(db, actor, "TRAINER_PURGED", "trainer", trainerId, { name: trainerName });
+  });
 }
 
 export interface TrainerListQuery {

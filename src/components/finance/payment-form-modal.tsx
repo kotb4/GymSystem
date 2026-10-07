@@ -1,4 +1,4 @@
-﻿import { useEffect, useMemo, useState, type FormEvent } from "react";
+import { useEffect, useMemo, useState, type FormEvent } from "react";
 import { Banknote, UserRound } from "lucide-react";
 import { useAuth } from "@/contexts/auth-context";
 import { useT } from "@/i18n";
@@ -38,6 +38,9 @@ export function PaymentFormModal({ open, onClose, onSaved, presetMember }: Payme
   const [referenceNo, setReferenceNo] = useState("");
   const [notes, setNotes] = useState("");
   const [methods, setMethods] = useState<Array<{ code: string; labelAr: string }>>([]);
+  const [promoCodeInput, setPromoCodeInput] = useState("");
+  const [promoApplying, setPromoApplying] = useState(false);
+  const [promoSuccessMsg, setPromoSuccessMsg] = useState<string | null>(null);
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
@@ -54,6 +57,8 @@ export function PaymentFormModal({ open, onClose, onSaved, presetMember }: Payme
     setMethodCode("cash");
     setReferenceNo("");
     setNotes("");
+    setPromoCodeInput("");
+    setPromoSuccessMsg(null);
     setError(null);
     void (async () => {
       try {
@@ -250,6 +255,63 @@ export function PaymentFormModal({ open, onClose, onSaved, presetMember }: Payme
                 />
               ) : null}
             </div>
+
+            {canDiscount && (
+              <div className="rounded-xl border border-line bg-muted/10 p-3 space-y-2">
+                <span className="text-xs font-bold text-foreground block">
+                  هل لديك كود خصم ترويجي؟ (Promo Code)
+                </span>
+                <div className="flex items-center gap-2">
+                  <Input
+                    placeholder="أدخل رمز الكود مثل: SUMMER2026"
+                    value={promoCodeInput}
+                    onChange={(e) => setPromoCodeInput(e.target.value.toUpperCase())}
+                    dir="ltr"
+                    disabled={submitting || promoApplying}
+                  />
+                  <Button
+                    type="button"
+                    variant="secondary"
+                    loading={promoApplying}
+                    disabled={promoApplying || !promoCodeInput.trim() || !baseMajor}
+                    onClick={async () => {
+                      setPromoApplying(true);
+                      setError(null);
+                      setPromoSuccessMsg(null);
+                      try {
+                        const baseMin = toMinor(baseMajor || "0");
+                        const val = await api.promo.validate({
+                          code: promoCodeInput.trim(),
+                          orderAmountMinor: baseMin,
+                        });
+                        if (val.valid) {
+                          if (val.discountType === "percentage") {
+                            setDiscountKind("percent");
+                            setDiscountValue(String(val.discountValue));
+                          } else {
+                            setDiscountKind("fixed");
+                            setDiscountValue((val.discountValue / 100).toFixed(2));
+                          }
+                          setPromoSuccessMsg(`تم تطبيق كود الخصم بنجاح (-${formatMinor(val.calculatedDiscountMinor)})`);
+                          toast("success", "تم تطبيق الخصم بنجاح!");
+                        } else {
+                          toast("error", val.errorKey ? t(val.errorKey) : "كود الخصم غير صالح");
+                        }
+                      } catch (err) {
+                        toast("error", describeError(err, t));
+                      } finally {
+                        setPromoApplying(false);
+                      }
+                    }}
+                  >
+                    تطبيق
+                  </Button>
+                </div>
+                {promoSuccessMsg && (
+                  <p className="text-xs font-bold text-emerald">{promoSuccessMsg}</p>
+                )}
+              </div>
+            )}
 
             {canDiscount && discountKind !== "none" && (
               <Input

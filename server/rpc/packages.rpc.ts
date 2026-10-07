@@ -8,5 +8,6 @@ export const packages = defineService({
   updatePackage: a(packagesService.updatePackage as Fn),
   setPackageActive: a(packagesService.setPackageActive as Fn),
   duplicatePackage: a(packagesService.duplicatePackage as Fn),
+  deletePackage: a(packagesService.deletePackage as Fn),
   packageStats: a(packagesService.packageStats as Fn),
 });

@@ -3,6 +3,7 @@ import { errConflict, errNotFound, errValidation } from "@/core/errors";
 import { assertNonNegativeInteger } from "@/core/money";
 import { requirePermission, type ServiceActor } from "@/core/permissions";
 import type { Db, Row } from "@/db/engine";
+import { assignDocNo } from "./document-numbers.service";
 import { recordAudit } from "./audit.service";
 
 export type CashSessionStatus = "open" | "closed";
@@ -166,6 +167,7 @@ export async function closeCashSession(
       "UPDATE cash_sessions SET closed_by = ?, closed_at = ?, expected_closing_minor = ?, counted_closing_minor = ?, difference_minor = ?, close_note = ?, status = 'closed'\nWHERE id = ?",
       [actor.userId, stamp, expected, Math.round(countedBalanceMinor), difference, note?.trim() || null, sessionId],
     );
+    assignDocNo(db, "cash_closing", sessionId, stamp);
     recordAudit(db, actor, "CASH_SESSION_CLOSED", "cash_session", sessionId, {
       expectedMinor: expected,
       countedMinor: Math.round(countedBalanceMinor),
@@ -195,12 +197,12 @@ export function deleteCashSession(db: Db, actor: ServiceActor, sessionId: string
   requirePermission(actor, "cash.purge");
   const row = getSessionRow(db, sessionId);
   if (!row) throw errNotFound("errors.finance.sessionNotFound");
-  if (row.status === "closed") throw errConflict("errors.finance.sessionClosedLocked");
 
-  db.run("DELETE FROM cash_sessions WHERE id = ? AND status = 'open'", [sessionId]);
+  db.run("DELETE FROM cash_sessions WHERE id = ?", [sessionId]);
   recordAudit(db, actor, "CASH_SESSION_DELETED", "cash_session", sessionId, {
     box: String(row.box ?? "gym"),
     openedAt: row.opened_at,
+    status: row.status,
   });
 }
 

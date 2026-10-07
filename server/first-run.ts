@@ -22,12 +22,48 @@ export function isLoopbackAddress(address: string | undefined | null): boolean {
 }
 
 /**
+ * Ensures the request originates directly and physically from the local machine,
+ * and was NOT proxied through Cloudflare Tunnel, reverse proxies, or external tunnels.
+ */
+export function isDirectPhysicalLocalRequest(
+  addressOrReq:
+    | string
+    | undefined
+    | null
+    | { socket?: { remoteAddress?: string }; headers?: Record<string, string | string[] | undefined> },
+): boolean {
+  if (!addressOrReq) return false;
+  if (typeof addressOrReq === "string") {
+    return isLoopbackAddress(addressOrReq);
+  }
+  const address = addressOrReq.socket?.remoteAddress;
+  if (!isLoopbackAddress(address)) return false;
+  const headers = addressOrReq.headers ?? {};
+  // If proxy / tunnel forwarding headers exist, this arrived through a tunnel / reverse proxy
+  if (
+    headers["cf-connecting-ip"] ||
+    headers["x-forwarded-for"] ||
+    headers["x-real-ip"] ||
+    headers["cf-ray"] ||
+    headers["cf-visitor"]
+  ) {
+    return false;
+  }
+  return true;
+}
+
+/**
  * Whether an unauthenticated first-run action may proceed: only on the local
  * machine and only while the system is still uninitialized (no active owner).
  */
 export function canAdoptFirstRun(
   hasActiveOwner: boolean,
-  address: string | undefined | null,
+  addressOrReq:
+    | string
+    | undefined
+    | null
+    | { socket?: { remoteAddress?: string }; headers?: Record<string, string | string[] | undefined> },
 ): boolean {
-  return !hasActiveOwner && isLoopbackAddress(address);
+  return !hasActiveOwner && isDirectPhysicalLocalRequest(addressOrReq);
 }
+

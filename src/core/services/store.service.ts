@@ -4,7 +4,9 @@ import { requirePermission, type ServiceActor } from "@/core/permissions";
 import type { Db, Row } from "@/db/engine";
 import { nowStamp } from "@/core/dates";
 import { insertLedgerEntry } from "./payments.service";
+import { assignDocNo, nextDocNo } from "./document-numbers.service";
 import { recordAudit } from "./audit.service";
+import { getLocalBranchId } from "@/core/branch";
 import { readSetting, SETTING_KEYS } from "./settings.service";
 import {
   assertDepartmentAccess,
@@ -132,7 +134,7 @@ return mapProduct(row);
  * stock-movement log. PURGE IS REFUSED once the product has any historical
  * sale/return line (TASK-041): those lines are immutable financial documents
  * and destroying them would corrupt historical revenue identity. The archive
- * path — deactivating via `updateProduct({isActive:false})` — is the intended
+ * path Ã¢â‚¬” deactivating via `updateProduct({isActive:false})` Ã¢â‚¬” is the intended
  * retirement flow for products with sales history. The audit entry records how
  * many stock movements were removed.
  */
@@ -145,26 +147,23 @@ export async function purgeProduct(
   const row = db.first<Row>("SELECT id, name FROM products WHERE id = ?", [productId]);
   if (!row) throw errNotFound("errors.store.productNotFound");
 
-  // A referenced product must never be hard-deleted: its lines carry the
-  // product_name/price/cost snapshots that make historical receipts accurate.
-  const salesAffected = db.count(
-    "SELECT COUNT(DISTINCT sale_id) FROM store_sale_items WHERE product_id = ?",
-    [productId],
-  );
-  const returnedItems = db.count(
-    "SELECT COUNT(*) FROM store_return_items WHERE product_id = ? OR sale_item_id IN (SELECT id FROM store_sale_items WHERE product_id = ?)",
-    [productId, productId],
-  );
-  if (salesAffected > 0 || returnedItems > 0) {
-    throw errConflict("errors.store.productSold", { count: salesAffected });
-  }
-
   await db.transaction(() => {
+    const salesAffected = db.count(
+      "SELECT COUNT(DISTINCT sale_id) FROM store_sale_items WHERE product_id = ?",
+      [productId],
+    );
+    // Unlink product_id from historical sales and returns items (snapshots remain intact)
+    db.run("UPDATE store_sale_items SET product_id = NULL WHERE product_id = ?", [productId]);
+    db.run("UPDATE store_return_items SET product_id = NULL WHERE product_id = ?", [productId]);
+    // Unlink from loyalty redemption catalog if present
+    db.run("UPDATE loyalty_redemption_catalog SET product_id = NULL WHERE product_id = ?", [productId]);
+
     const moved = db.run("DELETE FROM stock_movements WHERE product_id = ?", [productId]);
     db.run("DELETE FROM products WHERE id = ?", [productId]);
     recordAudit(db, actor, "PRODUCT_PURGED", "product", productId, {
       name: str(row.name),
       movementsRemoved: Number(moved.changes),
+      salesUnlinked: salesAffected,
     });
   });
 }
@@ -433,16 +432,43 @@ export interface StoreSale {
   memberId: string | null;
   memberName: string | null;
   isCredit: boolean;
+  debtStatus?: "open" | "settled" | null;
+  debtRemainingMinor?: number;
   status: "completed" | "voided";
   soldAt: string;
   items: StoreSaleItem[];
+  branchId?: string | null;
+  returnedTotalMinor: number;
+  returnStatus: "none" | "partial" | "full";
 }
 
 const SALE_SELECT =
-  "SELECT s.*, m.full_name AS member_name, m.member_code AS member_code FROM store_sales s LEFT JOIN members m ON m.id = s.member_id";
+  `SELECT s.*, m.full_name AS member_name, m.member_code AS member_code,
+   d.status AS debt_status,
+   (d.original_minor - d.paid_minor) AS debt_remaining_minor,
+   COALESCE((SELECT SUM(r.total_minor) FROM store_returns r WHERE r.sale_id = s.id), 0) AS returned_total_minor,
+   COALESCE((SELECT SUM(si.returned_qty) FROM store_sale_items si WHERE si.sale_id = s.id), 0) AS returned_items_qty,
+   COALESCE((SELECT SUM(si.qty) FROM store_sale_items si WHERE si.sale_id = s.id), 0) AS total_items_qty
+   FROM store_sales s
+   LEFT JOIN members m ON m.id = s.member_id
+   LEFT JOIN store_debts d ON d.sale_id = s.id`;
 
 function mapSale(r: Row): StoreSale {
   const totalMinor = num(r.total_minor);
+  const isCredit = num(r.is_credit) === 1;
+  const debtStatus = isCredit && r.debt_status != null ? (str(r.debt_status) as "open" | "settled") : null;
+  const debtRemainingMinor = isCredit && r.debt_remaining_minor != null ? num(r.debt_remaining_minor) : 0;
+  const returnedTotalMinor = num(r.returned_total_minor, 0);
+  const returnedItemsQty = num(r.returned_items_qty, 0);
+  const totalItemsQty = num(r.total_items_qty, 0);
+
+  let returnStatus: "none" | "partial" | "full" = "none";
+  if (totalItemsQty > 0 && returnedItemsQty >= totalItemsQty) {
+    returnStatus = "full";
+  } else if (returnedItemsQty > 0 || returnedTotalMinor > 0) {
+    returnStatus = "partial";
+  }
+
   return {
     id: str(r.id),
     saleNo: str(r.sale_no),
@@ -454,10 +480,15 @@ function mapSale(r: Row): StoreSale {
     methodCode: str(r.method_code),
     memberId: r.member_id == null ? null : str(r.member_id),
     memberName: r.member_name == null ? null : str(r.member_name),
-    isCredit: num(r.is_credit) === 1,
+    isCredit,
+    debtStatus,
+    debtRemainingMinor,
     status: str(r.status) as "completed" | "voided",
     soldAt: str(r.sold_at),
     items: [],
+    branchId: str(r.branch_id || "main"),
+    returnedTotalMinor,
+    returnStatus,
   };
 }
 
@@ -483,6 +514,7 @@ export function getSale(db: Db, actor: ServiceActor, saleId: string): StoreSale 
 
 export interface SaleListQuery {
   search?: string;
+  memberId?: string;
   fromKey?: string;
   toKey?: string;
   page?: number;
@@ -499,6 +531,10 @@ export function listSales(db: Db, actor: ServiceActor, query: SaleListQuery = {}
   if (search) {
     conditions.push("(s.sale_no LIKE ? OR m.full_name LIKE ? OR m.member_code LIKE ?)");
     params.push(`%${search}%`, `%${search}%`, `%${search}%`);
+  }
+  if (query.memberId) {
+    conditions.push("s.member_id = ?");
+    params.push(query.memberId);
   }
   if (query.fromKey) {
     conditions.push("s.sold_at >= ?");
@@ -570,18 +606,17 @@ export async function createSale(db: Db, actor: ServiceActor, input: CreateSaleI
   const ts = stamp();
 
   await db.transaction(async () => {
-    db.run(
-      "INSERT INTO counters (name, value) VALUES ('store_sale_no', 1000)\nON CONFLICT(name) DO UPDATE SET value = value + 1",
-    );
-    const seq = Number(db.scalar("SELECT value FROM counters WHERE name = 'store_sale_no'") ?? 1000);
-    const saleNo = `POS-${String(seq).padStart(6, "0")}`;
+    // Allocated through the shared allocator so the branch prefix matches every
+    // other document number (sale_no is NOT NULL, so it must exist at INSERT).
+    const saleNo = nextDocNo(db, "store_sale", ts);
 
     db.run(
-      "INSERT INTO store_sales (id, sale_no, items_total_minor, discount_minor, total_minor, cost_total_minor, method_code, member_id, is_credit, status, seller_id, sold_at, notes, created_at)\nVALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 'completed', ?, ?, ?, ?)",
+      "INSERT INTO store_sales (id, sale_no, items_total_minor, discount_minor, total_minor, cost_total_minor, method_code, member_id, is_credit, status, seller_id, sold_at, notes, created_at, branch_id)\nVALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 'completed', ?, ?, ?, ?, ?)",
       [
         saleId, saleNo, itemsTotalMinor, discountMinor, totalMinor, costTotalMinor,
         input.methodCode, input.memberId ?? null, isCredit ? 1 : 0,
         actor.userId, ts, input.notes?.trim() || null, ts,
+        getLocalBranchId(db),
       ],
     );
 
@@ -625,7 +660,7 @@ export async function createSale(db: Db, actor: ServiceActor, input: CreateSaleI
 
     recordAudit(db, actor, "SALE_CREATED", "store_sale", saleId, { saleNo, totalMinor, credit: isCredit });
 
-    // loyalty points: only member-linked paid (cash) sales earn — not walk-ins,
+    // loyalty points: only member-linked paid (cash) sales earn Ã¢â‚¬” not walk-ins,
     // not credit sales (points on debt would be an abuse vector).
     if (input.memberId && !isCredit) {
       applyEarnRule(db, actor, input.memberId, "store_purchase", "store_sales", saleId, {
@@ -820,6 +855,7 @@ export function getStoreReturn(db: Db, actor: ServiceActor, returnId: string): S
 }
 
 export interface ReturnListQuery {
+  memberId?: string;
   fromKey?: string;
   toKey?: string;
   search?: string;
@@ -837,6 +873,10 @@ export function listStoreReturns(db: Db, actor: ServiceActor, query: ReturnListQ
   if (search) {
     conditions.push("(r.return_no LIKE ? OR s.sale_no LIKE ? OR m.full_name LIKE ? OR m.member_code LIKE ?)");
     params.push(`%${search}%`, `%${search}%`, `%${search}%`, `%${search}%`);
+  }
+  if (query.memberId) {
+    conditions.push("s.member_id = ?");
+    params.push(query.memberId);
   }
   if (query.fromKey) {
     conditions.push("r.created_at >= ?");
@@ -885,7 +925,12 @@ export async function returnStoreSale(db: Db, actor: ServiceActor, input: Create
   requirePermission(actor, "store.return");
   const sale = db.first<Row>("SELECT * FROM store_sales WHERE id = ? AND status = 'completed'", [input.saleId]);
   if (!sale) throw errNotFound("errors.store.saleNotFound");
-  if (num(sale.is_credit) === 1) throw errValidation("errors.store.returnCreditNotAllowed");
+  if (num(sale.is_credit) === 1) {
+    const debt = db.first<Row>("SELECT * FROM store_debts WHERE sale_id = ?", [input.saleId]);
+    if (!debt || str(debt.status) !== "settled") {
+      throw errValidation("errors.store.returnCreditNotAllowed");
+    }
+  }
   assertDepartmentAccess(actor, sale.member_id == null ? actor.department! : memberDepartmentById(db, String(sale.member_id)));
 
   const lines = input.lines.filter((l) => Number(l.qty) > 0);
@@ -926,11 +971,8 @@ export async function returnStoreSale(db: Db, actor: ServiceActor, input: Create
   const returnId = crypto.randomUUID();
 
   await db.transaction(async () => {
-    db.run(
-      "INSERT INTO counters (name, value) VALUES ('store_return_no', 1000)\nON CONFLICT(name) DO UPDATE SET value = value + 1",
-    );
-    const seq = Number(db.scalar("SELECT value FROM counters WHERE name = 'store_return_no'") ?? 1000);
-    const returnNo = `RTN-${String(seq).padStart(6, "0")}`;
+    // Shared allocator keeps the branch prefix consistent (see createSale).
+    const returnNo = nextDocNo(db, "store_return", ts);
 
     db.run(
       "INSERT INTO store_returns (id, sale_id, return_no, amount_minor, items_total_minor, discount_minor, total_minor, reason, created_by, created_at, box)\nVALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'store')",
@@ -1094,6 +1136,7 @@ export async function repayStoreDebt(
       "INSERT INTO store_debt_payments (id, debt_id, amount_minor, method_code, created_by, created_at)\nVALUES (?, ?, ?, ?, ?, ?)",
       [repaymentId, input.debtId, amount, input.methodCode, actor.userId, ts],
     );
+    assignDocNo(db, "store_debt_payment", repaymentId, ts);
     db.run("UPDATE store_debts SET paid_minor = ?, status = ?, updated_at = ? WHERE id = ?",
       [paidAfter, paidAfter >= num(debt.original_minor) ? "settled" : "open", ts, input.debtId]);
     insertLedgerEntry(db, {
@@ -1179,7 +1222,7 @@ export interface DailySalesRow {
   grossProfitMinor: number;
 }
 
-/** Daily sales aggregation (sales − returns) for a date range. */
+/** Daily sales aggregation (sales Ã¢Ë†’ returns) for a date range. */
 export function getDailySalesReport(
   db: Db,
   actor: ServiceActor,
