@@ -1,6 +1,6 @@
 import { useEffect, useState, type FormEvent } from "react";
 import { Navigate, useLocation, useNavigate } from "react-router-dom";
-import { LogIn, User } from "lucide-react";
+import { LogIn, Sparkles, User } from "lucide-react";
 import { useAuth } from "@/contexts/auth-context";
 import { useT } from "@/i18n";
 import { useToast } from "@/components/ui/toast";
@@ -132,6 +132,30 @@ export function LoginPage() {
               {!submitting && <LogIn className="size-4" />}
             </Button>
           </form>
+
+          {/* Quick Demo Access (for online evaluators) */}
+          <div className="mt-5 pt-5 border-t border-line/60">
+            <button
+              type="button"
+              onClick={async () => {
+                setUsername("owner");
+                setPassword("Owner@2026");
+                setSubmitting(true);
+                const res = await login("owner", "Owner@2026");
+                setSubmitting(false);
+                if (res.ok) {
+                  toast("success", "مرحباً بك في النسخة التجريبية!");
+                  navigate("/", { replace: true });
+                } else {
+                  setFormError("تعذر الدخول التجريبي — يرجى تسجيل الدخول يدوياً");
+                }
+              }}
+              className="w-full flex items-center justify-center gap-2 py-2.5 px-4 rounded-xl border border-neon/40 bg-neon/10 hover:bg-neon/20 text-neon font-bold text-xs transition-all shadow-glow-sm group"
+            >
+              <Sparkles className="size-4 text-neon animate-pulse group-hover:scale-110 transition-transform" />
+              <span>دخول تجريبي سريع بنقرة واحدة (ديمو)</span>
+            </button>
+          </div>
         </div>
 
         <p className="mt-8 text-center text-[11px] text-faint">
