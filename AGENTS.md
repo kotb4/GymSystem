@@ -125,7 +125,7 @@ src/
   contexts/auth-context.tsx Session state + hasPermission()
   routes/                   Route table + permission-gated NAV_ROUTES
   i18n/ar.ts                Arabic dictionary (flat-key lookup)
-tests/                      Vitest suites (89 files, node env), createTestDb() helper
+tests/                      Vitest suites (90 files, node env), createTestDb() helper
 scripts/                    build-server.mjs, e2e-smoke.ps1, e2e-audit.ps1,
                             check-rpc-consistency.cjs, windows/start-gymsystem.bat
 ```

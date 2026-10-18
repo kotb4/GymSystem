@@ -1,5 +1,40 @@
 # Architecture Decision Log
 
+## ADR-038: Security Hardening: Strict RPC Authentication, Masked Sync Secrets, Portal Token Expiration, and Query-String Session Hardening (TASK-264)
+- Date: 2026-10-18
+- Status: accepted
+- Context:
+  1. A comprehensive security audit identified potential privilege and authentication risks in secondary subsystems:
+     - `sync.getConfig`, `sync.getStatus`, `sync.listBranches` were registered using `p()` (plain unauthenticated wrapper), which exposed network topology and the plaintext `syncSecret` to any unauthenticated HTTP caller on port 8890.
+     - `validateSyncSecret` performed early-exit string comparisons without constant-time guarantees across length mismatches.
+     - `member-portal.service.ts` created member portal tokens without TTL/expiration timestamp validation, and used simple string equality for signature verification.
+     - `extractRequestToken` allowed `?token=` query parameter indiscriminately for all requests, including sensitive `/api/rpc` calls, exposing tokens to browser history, proxy logs, and referrers.
+     - `developer.service.ts` included a hardcoded fallback username check (`kotb`) for developer privilege assignment in addition to the DB flag.
+     - `trainer-attendance.rpc.ts` exposed `list` and `getSummary` without session authentication.
+- Decision:
+  1. **Strict RPC Authentication & Sync Secret Masking (`server/rpc/sync.rpc.ts`, `src/core/services/sync.service.ts`):**
+     - Converted `getConfig`, `getStatus`, and `listBranches` from `p()` to `a()` requiring an authenticated session.
+     - Enforced `requirePermission(actor, "settings.view")` inside `getBranchConfig`.
+     - Masked `syncSecret` with `"********"` for non-owner and non-developer callers with view permission. Plaintext secret is strictly returned only to `owner` or `isDeveloper: true`.
+  2. **Constant-Time Sync Secret Verification (`src/core/services/sync.service.ts`):**
+     - `validateSyncSecret` now hashes both stored and incoming secrets with SHA-256 before invoking `crypto.timingSafeEqual`, preventing timing and length leaks.
+  3. **Member Portal Token Hardening (`src/core/services/member-portal.service.ts`):**
+     - Implemented `PORTAL_TOKEN_TTL_MS` (30-day token lifetime).
+     - Validates token age and rejects expired or future-dated tokens.
+     - Uses `crypto.timingSafeEqual` with SHA-256 for constant-time HMAC comparison.
+     - Uses dedicated `portal_token_secret` setting instead of falling back to sync secret.
+  4. **Restricted Query-String Session Tokens (`server/index.ts`):**
+     - Query-string session extraction (`?token=`) is now strictly allowed ONLY for `GET` file and backup downloads (`/api/files*`, `/api/backups*`). It is completely rejected for `/api/rpc` and all mutating calls.
+  5. **Removal of Hardcoded Developer Identity:**
+     - Removed hardcoded username checks (`kotb`). Developer status is strictly driven by `users.is_developer === 1` in the database.
+  6. **Trainer Attendance RPC Hardening (`server/rpc/trainer-attendance.rpc.ts`):**
+     - Registered `list` and `getSummary` as `a()`, enforcing `"trainer_attendance.view"`.
+- Consequences:
+  - Unauthenticated access to sync topology and secrets is eliminated.
+  - Member portal tokens expire deterministically and withstand timing attacks.
+  - Query parameters cannot leak credentials during RPC operations.
+  - 11 comprehensive regression tests added in `tests/security-remediation.test.ts`. Full test suite passes 905/905 tests across 90 test files.
+
 ## ADR-037: Single Active Instance Auto-Takeover & Automatic Desktop EXE Build on Task Completion (TASK-070)
 - Date: 2026-09-24
 - Status: accepted

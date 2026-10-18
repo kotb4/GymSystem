@@ -134,7 +134,10 @@ function rowToConfig(row: BranchConfigRow): BranchConfig {
   };
 }
 
-export function getBranchConfig(db: Db): BranchConfig {
+export function getBranchConfig(db: Db, actor?: ServiceActor): BranchConfig {
+  if (actor) {
+    requirePermission(actor, "settings.view");
+  }
   let row = db.first<BranchConfigRow>("SELECT * FROM branch_info LIMIT 1");
   if (!row) {
     const now = nowStamp();
@@ -164,7 +167,11 @@ export function getBranchConfig(db: Db): BranchConfig {
     row = db.first<BranchConfigRow>("SELECT * FROM branch_info LIMIT 1")!;
   }
 
-  return rowToConfig(row);
+  const config = rowToConfig(row);
+  if (actor && actor.roleId !== "owner" && !isDeveloperActor(actor)) {
+    return { ...config, syncSecret: "********" };
+  }
+  return config;
 }
 
 export function normalizeRemoteUrl(rawUrl: string | null | undefined): string | null {
@@ -351,10 +358,9 @@ export function getSyncStatus(db: Db): SyncStatus {
 export function validateSyncSecret(db: Db, incomingSecret: string | undefined | null): boolean {
   if (!incomingSecret) return false;
   const config = getBranchConfig(db);
-  const expected = Buffer.from(config.syncSecret.trim(), "utf8");
-  const actual = Buffer.from(incomingSecret.trim(), "utf8");
-  if (expected.length !== actual.length) return false;
-  return crypto.timingSafeEqual(expected, actual);
+  const expectedHash = crypto.createHash("sha256").update(config.syncSecret.trim(), "utf8").digest();
+  const actualHash = crypto.createHash("sha256").update(incomingSecret.trim(), "utf8").digest();
+  return crypto.timingSafeEqual(expectedHash, actualHash);
 }
 
 /**

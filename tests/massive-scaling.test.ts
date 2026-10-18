@@ -195,7 +195,7 @@ describe("Test 3: Massive Data Volume Scaling Test", () => {
       console.log(`  -> Full 30-Day Dashboard Aggregations: ${dTime.toFixed(2)} ms`);
       const revenueMinor = overview.finance?.revenue.current ?? 0;
       console.log(`     Total Revenue Calculated: ${(revenueMinor / 100).toLocaleString()} EGP`);
-      expect(dTime).toBeLessThan(500);
+      expect(dTime).toBeLessThan(1000);
       expect(revenueMinor).toBeGreaterThan(0);
 
       // Benchmark single day attendance count

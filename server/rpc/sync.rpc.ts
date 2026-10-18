@@ -1,11 +1,11 @@
 import * as syncService from "../../src/core/services/sync.service";
-import { a, p, defineService, type Fn } from "./helpers";
+import { a, defineService, type Fn } from "./helpers";
 
 export const sync = defineService({
-  getConfig: p(syncService.getBranchConfig as Fn),
+  getConfig: a(syncService.getBranchConfig as Fn),
   updateConfig: a(syncService.updateBranchConfig as Fn),
-  getStatus: p(syncService.getSyncStatus as Fn),
+  getStatus: a(syncService.getSyncStatus as Fn),
   triggerSync: a(syncService.performSyncCycle as Fn),
   testConnection: a(syncService.testRemoteConnection as Fn),
-  listBranches: p(syncService.listRegisteredBranches as Fn),
+  listBranches: a(syncService.listRegisteredBranches as Fn),
 });

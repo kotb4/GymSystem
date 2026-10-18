@@ -37,7 +37,7 @@ export interface DeveloperOverview {
 
 export function isDeveloperActor(actor: ServiceActor | null | undefined): boolean {
   if (!actor) return false;
-  return actor.isDeveloper === true || actor.username.toLowerCase() === DEV_USERNAME;
+  return actor.isDeveloper === true;
 }
 
 export function ensureDeveloperAccount(db: Db): void {

@@ -1,5 +1,5 @@
 import os from "node:os";
-import { createHmac } from "node:crypto";
+import crypto, { createHmac } from "node:crypto";
 import type { Db } from "@/db/engine";
 import type { ServiceActor } from "@/core/permissions";
 import { requireAnyPermission } from "@/core/permissions";
@@ -56,10 +56,14 @@ export interface MemberPortalProfile {
 }
 
 const PORTAL_SECRET_FALLBACK = "gymgate_member_portal_token_secret_2026";
+export const PORTAL_TOKEN_TTL_MS = 30 * 24 * 60 * 60 * 1000; // 30 days validity
 
 function getPortalSecret(db: Db): string {
-  const custom = readSetting(db, "sync_secret");
-  return custom?.trim() || PORTAL_SECRET_FALLBACK;
+  const dedicated = readSetting(db, "portal_token_secret");
+  if (dedicated && dedicated.trim()) return dedicated.trim();
+  const syncSecret = readSetting(db, "sync_secret");
+  if (syncSecret && syncSecret.trim()) return syncSecret.trim();
+  return PORTAL_SECRET_FALLBACK;
 }
 
 export function createPortalToken(db: Db, memberId: string, memberCode: string): string {
@@ -74,10 +78,19 @@ export function verifyPortalToken(db: Db, token: string): { memberId: string; me
   const parts = token.trim().split(".");
   if (parts.length !== 4) throw errForbidden("errors.portalInvalidToken");
   const [memberId, memberCode, timestamp, sig] = parts;
+
+  const tokenTime = parseInt(timestamp, 36);
+  if (isNaN(tokenTime) || Date.now() - tokenTime > PORTAL_TOKEN_TTL_MS || tokenTime > Date.now() + 60_000) {
+    throw errForbidden("errors.portalInvalidToken");
+  }
+
   const secret = getPortalSecret(db);
   const raw = `${memberId}:${memberCode}:${timestamp}`;
   const expectedSig = createHmac("sha256", secret).update(raw).digest("base64url").slice(0, 24);
-  if (sig !== expectedSig) {
+
+  const sigBuf = Buffer.from(sig, "utf8");
+  const expectedBuf = Buffer.from(expectedSig, "utf8");
+  if (sigBuf.length !== expectedBuf.length || !crypto.timingSafeEqual(sigBuf, expectedBuf)) {
     throw errForbidden("errors.portalInvalidToken");
   }
   return { memberId, memberCode };

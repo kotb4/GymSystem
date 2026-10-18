@@ -340,8 +340,11 @@ function extractRequestToken(ctx: Ctx): string | null {
   }
   const cookieToken = parseCookies(ctx.req)[SESSION_COOKIE];
   if (cookieToken) return cookieToken;
-  const queryToken = ctx.url.searchParams.get("token");
-  if (queryToken) return queryToken.trim();
+  // Only accept ?token= query parameter for GET requests downloading assets/backups, never for RPC or mutations
+  if (ctx.req.method === "GET" && (ctx.url.pathname.startsWith("/api/files") || ctx.url.pathname.startsWith("/api/backups"))) {
+    const queryToken = ctx.url.searchParams.get("token");
+    if (queryToken) return queryToken.trim();
+  }
   return null;
 }
 
@@ -366,7 +369,7 @@ function currentActor(ctx: Ctx): ServiceActor | null {
     username: row.username,
     roleId: row.role_id as ServiceActor["roleId"],
     department: (row.department ?? "general") as ServiceActor["department"],
-    isDeveloper: Number(row.is_developer ?? 0) === 1 || row.username.toLowerCase() === "kotb",
+    isDeveloper: Number(row.is_developer ?? 0) === 1,
   };
 }
 
@@ -533,6 +536,13 @@ async function handleApi(ctx: Ctx): Promise<void> {
   // ---- Network & Branch Sync endpoints (x-sync-secret / open network probe) --
   if (route === "GET /api/system/network-info") {
     try {
+      const actor = currentActor(ctx);
+      if (!actor && !isLoopbackAddress(req.socket.remoteAddress)) {
+        return sendJson(res, 401, {
+          ok: false,
+          error: { name: "AppError", code: "UNAUTHORIZED", messageKey: "errors.forbidden", params: {} },
+        });
+      }
       const nets = os.networkInterfaces();
       const localAddresses: string[] = [];
       for (const name of Object.keys(nets)) {

@@ -61,7 +61,8 @@ describe("Developer Console & Management", () => {
 
   it("identifies developer actors correctly", () => {
     expect(isDeveloperActor(devActor)).toBe(true);
-    expect(isDeveloperActor({ userId: "u1", username: "KOTB", roleId: "owner" })).toBe(true);
+    expect(isDeveloperActor({ userId: "u1", username: "KOTB", roleId: "owner", isDeveloper: true })).toBe(true);
+    expect(isDeveloperActor({ userId: "u1", username: "KOTB", roleId: "owner", isDeveloper: false })).toBe(false);
     expect(isDeveloperActor(managerActor)).toBe(false);
     expect(isDeveloperActor(null)).toBe(false);
   });
