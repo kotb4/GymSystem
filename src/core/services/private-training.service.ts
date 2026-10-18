@@ -219,7 +219,7 @@ export function createPrivateTraining(
           input.methodCode || "cash",
           1,
           input.paidAmountMinor,
-          input.startDate,
+          stamp,
           actor.userId,
           stamp,
         ],

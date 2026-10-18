@@ -318,7 +318,7 @@ export function getDashboardOperational(
   requirePermission(actor, "payments.view");
   const today = todayKey();
   const balanceRow = db.first<OutstandingRow>(
-    "WITH paid AS (\n  SELECT subscription_id, SUM(paid_amount_minor) AS paid_minor, SUM(discount_amount_minor) AS discount_minor\n  FROM payments\n  WHERE subscription_id IS NOT NULL AND status IN ('partial', 'paid')\n  GROUP BY subscription_id\n)\nSELECT COUNT(*) AS cnt,\n  COALESCE(SUM(MAX(CAST(ROUND(s.price * 100) AS INTEGER) - COALESCE(p.paid_minor, 0) - COALESCE(p.discount_minor, 0), 0)), 0) AS total_minor\nFROM member_subscriptions s\nLEFT JOIN paid p ON p.subscription_id = s.id\nWHERE s.status = 'active'",
+    "WITH paid AS (\n  SELECT subscription_id, SUM(paid_amount_minor - COALESCE(refunded_amount_minor, 0)) AS paid_minor, SUM(discount_amount_minor) AS discount_minor\n  FROM payments\n  WHERE subscription_id IS NOT NULL AND status IN ('partial', 'paid')\n  GROUP BY subscription_id\n), rem AS (\n  SELECT s.member_id, MAX(CAST(ROUND(s.price * 100) AS INTEGER) - COALESCE(p.paid_minor, 0) - COALESCE(p.discount_minor, 0), 0) AS rem_minor\n  FROM member_subscriptions s\n  LEFT JOIN paid p ON p.subscription_id = s.id\n  WHERE s.status = 'active'\n)\nSELECT COUNT(DISTINCT CASE WHEN rem_minor > 0 THEN member_id END) AS cnt,\n  COALESCE(SUM(rem_minor), 0) AS total_minor\nFROM rem WHERE rem_minor > 0",
   );
   const hourRows = db.all<{ hour: number; total: number }>(
     "SELECT CAST(substr(checkin_at, 12, 2) AS INTEGER) AS hour, COUNT(*) AS total\nFROM attendance WHERE deleted_at IS NULL AND substr(checkin_at, 1, 10) = ?\nGROUP BY hour ORDER BY total DESC LIMIT 5",
@@ -455,7 +455,7 @@ function renewalsDayMap(db: Db, fromKey: string, toKey: string, branchId?: strin
     `SELECT substr(s.created_at, 1, 10) AS day, COUNT(*) AS cnt
      FROM member_subscriptions s
      WHERE s.created_at >= ? AND s.created_at < ?${branchClause}
-       AND s.id != (SELECT MIN(id) FROM member_subscriptions s2 WHERE s2.member_id = s.member_id)
+       AND s.id != (SELECT s2.id FROM member_subscriptions s2 WHERE s2.member_id = s.member_id ORDER BY s2.start_date ASC, s2.created_at ASC, s2.id ASC LIMIT 1)
      GROUP BY day`,
     params,
   );
@@ -610,8 +610,9 @@ export function getDashboardOverview(
     }>(
       `SELECT 
         COALESCE(SUM(CASE WHEN l.ref_table = 'payments' AND l.direction = 1 AND l.entry_type NOT IN ('refund', 'reversal_payment') THEN l.amount_minor ELSE 0 END), 0) -
-        COALESCE(SUM(CASE WHEN l.entry_type = 'refund' THEN l.amount_minor ELSE 0 END), 0) AS subs_minor,
-        COALESCE(SUM(CASE WHEN l.ref_table IN ('store_sales', 'store_debt_payments') AND l.direction = 1 AND l.entry_type NOT IN ('refund', 'reversal_payment') THEN l.amount_minor ELSE 0 END), 0) AS store_minor,
+        COALESCE(SUM(CASE WHEN l.entry_type = 'refund' AND l.ref_table = 'payment_refunds' THEN l.amount_minor ELSE 0 END), 0) AS subs_minor,
+        COALESCE(SUM(CASE WHEN l.ref_table IN ('store_sales', 'store_debts', 'store_debt_payments') AND l.direction = 1 AND l.entry_type NOT IN ('refund', 'reversal_payment') THEN l.amount_minor ELSE 0 END), 0) -
+        COALESCE(SUM(CASE WHEN l.entry_type = 'refund' AND l.ref_table = 'store_returns' THEN l.amount_minor ELSE 0 END), 0) AS store_minor,
         COALESCE(SUM(CASE WHEN l.ref_table = 'quick_sessions' AND l.direction = 1 THEN l.amount_minor ELSE 0 END), 0) AS quick_minor,
         COALESCE(SUM(CASE WHEN l.ref_table = 'private_trainings' AND l.direction = 1 THEN l.amount_minor ELSE 0 END), 0) AS pt_minor
       FROM financial_ledger l
@@ -679,16 +680,19 @@ export function getDashboardOverview(
     const subBranchClause = targetBranch ? " AND COALESCE(s.branch_id, 'main') = ?" : "";
     const outstanding = db.first<{ cnt: number; total_minor: number }>(
       `WITH paid AS (
-  SELECT subscription_id, SUM(paid_amount_minor) AS paid_minor, SUM(discount_amount_minor) AS discount_minor
+  SELECT subscription_id, SUM(paid_amount_minor - COALESCE(refunded_amount_minor, 0)) AS paid_minor, SUM(discount_amount_minor) AS discount_minor
   FROM payments
   WHERE subscription_id IS NOT NULL AND status IN ('partial', 'paid')
   GROUP BY subscription_id
+), rem AS (
+  SELECT s.member_id, MAX(CAST(ROUND(s.price * 100) AS INTEGER) - COALESCE(p.paid_minor, 0) - COALESCE(p.discount_minor, 0), 0) AS rem_minor
+  FROM member_subscriptions s
+  LEFT JOIN paid p ON p.subscription_id = s.id
+  WHERE s.status = 'active'${subBranchClause}
 )
-SELECT COUNT(*) AS cnt,
-  COALESCE(SUM(MAX(CAST(ROUND(s.price * 100) AS INTEGER) - COALESCE(p.paid_minor, 0) - COALESCE(p.discount_minor, 0), 0)), 0) AS total_minor
-FROM member_subscriptions s
-LEFT JOIN paid p ON p.subscription_id = s.id
-WHERE s.status = 'active'${subBranchClause}`,
+SELECT COUNT(DISTINCT CASE WHEN rem_minor > 0 THEN member_id END) AS cnt,
+  COALESCE(SUM(rem_minor), 0) AS total_minor
+FROM rem WHERE rem_minor > 0`,
       branchParams,
     );
     const today = todayKey();

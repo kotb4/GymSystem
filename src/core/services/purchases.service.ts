@@ -330,7 +330,7 @@ export function createPurchaseInvoice(
           input.methodCode || "cash",
           -1,
           input.paidAmountMinor,
-          invoiceDate,
+          `${invoiceDate} ${stamp.slice(11)}`,
           actor.userId,
           stamp,
         ],
@@ -483,7 +483,6 @@ export function payPurchaseInvoiceDebt(
   }
 
   const stamp = nowStamp();
-  const dateKey = todayKey();
 
   return db.transaction(() => {
     const newRemaining = inv.remaining_amount_minor - input.amountMinor;
@@ -510,7 +509,7 @@ export function payPurchaseInvoiceDebt(
         input.methodCode || "cash",
         -1,
         input.amountMinor,
-        dateKey,
+        stamp,
         actor.userId,
         stamp,
       ],

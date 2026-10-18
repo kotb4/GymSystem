@@ -202,7 +202,7 @@ export async function updateExpense(
       ],
     );
     if (newAmount !== Number(existing.amount_minor)) {
-      adjustLedgerEntry(db, "expenses", actor, newAmount - Number(existing.amount_minor));
+      adjustLedgerEntry(db, "expenses", actor, newAmount - Number(existing.amount_minor), merged.methodCode);
     }
     recordAudit(db, actor, "EXPENSE_UPDATED", "expense", expenseId, {
       beforeAmountMinor: Number(existing.amount_minor),
@@ -217,6 +217,7 @@ function adjustLedgerEntry(
   refTable: string,
   actor: ServiceActor,
   deltaMinor: number,
+  methodCode = "cash",
 ): void {
   if (deltaMinor === 0) return;
   insertLedgerEntry(db, {
@@ -224,7 +225,7 @@ function adjustLedgerEntry(
     refTable,
     refId: crypto.randomUUID(),
     memberId: null,
-    methodCode: "",
+    methodCode: methodCode || "cash",
     direction: deltaMinor > 0 ? -1 : 1,
     amountMinor: Math.abs(deltaMinor),
     occurredAt: nowStamp(),

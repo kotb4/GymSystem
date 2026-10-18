@@ -23,9 +23,10 @@ interface SubscriptionFormModalProps {
   onSaved: () => void;
   presetMember?: PublicMember | null;
   defaultCategory?: "gym" | "academy";
+  presetPlanId?: string;
 }
 
-export function SubscriptionFormModal({ open, onClose, onSaved, presetMember, defaultCategory = "gym" }: SubscriptionFormModalProps) {
+export function SubscriptionFormModal({ open, onClose, onSaved, presetMember, defaultCategory = "gym", presetPlanId }: SubscriptionFormModalProps) {
   const t = useT();
   const { actor, hasPermission } = useAuth();
   const { toast } = useToast();
@@ -70,7 +71,12 @@ export function SubscriptionFormModal({ open, onClose, onSaved, presetMember, de
         const gPlans = typed.filter((p) => (p.category ?? "gym") !== "academy");
         const aPlans = typed.filter((p) => p.category === "academy");
 
-        if (defaultCategory === "academy") {
+        const presetPlan = presetPlanId ? typed.find((p) => p.id === presetPlanId) : undefined;
+        if (presetPlan) {
+          setSelectedCategory(presetPlan.category === "academy" ? "academy" : "gym");
+          setPlanId(presetPlan.id);
+          setPrice(String(presetPlan.price));
+        } else if (defaultCategory === "academy") {
           const first = aPlans[0];
           setPlanId(first?.id ?? "");
           setPrice(first ? String(first.price) : "");
@@ -84,7 +90,7 @@ export function SubscriptionFormModal({ open, onClose, onSaved, presetMember, de
         setError(describeError(err, t));
       }
     })();
-  }, [open, presetMember, defaultCategory, actor, t]);
+  }, [open, presetMember, defaultCategory, presetPlanId, actor, t]);
 
   const handleCategorySwitch = (cat: "gym" | "academy") => {
     setSelectedCategory(cat);
@@ -179,7 +185,7 @@ export function SubscriptionFormModal({ open, onClose, onSaved, presetMember, de
       }
       toast("success", t("subs.createdToast"));
       if (paymentErrorKey) toast("error", paymentErrorKey);
-      if (sendWhatsApp && member.phone) {
+      if (sendWhatsApp && member.phone && !paymentErrorKey) {
         const planName = plans.find((p) => p.id === planId)?.name || "اشتراك جديد";
         const remainingMinor = Math.max(0, netMinor - paidNowMinor);
         const receiptMsg = buildPaymentReceiptMessage({
@@ -340,13 +346,15 @@ export function SubscriptionFormModal({ open, onClose, onSaved, presetMember, de
               <span className="text-[12px] text-subtle">
                 {t("subs.usingPlanPrice", { price: price || "0" })}
               </span>
-              <button
-                type="button"
-                className="text-[12px] font-bold text-neon hover:underline"
-                onClick={() => setCustomPrice(true)}
-              >
-                {t("subs.customPriceToggle")}
-              </button>
+              {(canDiscount || hasPermission("subscriptions.edit")) && (
+                <button
+                  type="button"
+                  className="text-[12px] font-bold text-neon hover:underline"
+                  onClick={() => setCustomPrice(true)}
+                >
+                  {t("subs.customPriceToggle")}
+                </button>
+              )}
             </div>
           ) : (
             <Input

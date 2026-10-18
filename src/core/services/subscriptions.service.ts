@@ -538,7 +538,7 @@ export function listSubscriptions(
     conditions.push("s.status = 'active' AND s.end_date >= ? AND s.end_date <= ?");
     params.push(today, horizon);
   } else if (query.effective === "unpaid") {
-    conditions.push("s.status = 'active' AND (CAST(ROUND(s.price * 100) AS INTEGER) - COALESCE((SELECT SUM(paid_amount_minor + discount_amount_minor) FROM payments WHERE subscription_id = s.id AND status IN ('partial', 'paid')), 0)) > 0");
+    conditions.push("s.status = 'active' AND (CAST(ROUND(s.price * 100) AS INTEGER) - COALESCE((SELECT SUM(paid_amount_minor - COALESCE(refunded_amount_minor, 0) + discount_amount_minor) FROM payments WHERE subscription_id = s.id AND status IN ('partial', 'paid')), 0)) > 0");
   }
   if (query.memberId) {
     conditions.push("s.member_id = ?");
@@ -572,7 +572,7 @@ export function listSubscriptions(
     }
   >(
     `SELECT s.*, p.name AS plan_name, p.kind AS plan_kind, p.category AS plan_category, m.member_code AS member_code, m.full_name AS full_name,
-      COALESCE((SELECT SUM(paid_amount_minor) FROM payments WHERE subscription_id = s.id AND status IN ('partial', 'paid')), 0) AS paid_minor,
+      COALESCE((SELECT SUM(paid_amount_minor - COALESCE(refunded_amount_minor, 0)) FROM payments WHERE subscription_id = s.id AND status IN ('partial', 'paid')), 0) AS paid_minor,
       COALESCE((SELECT SUM(discount_amount_minor) FROM payments WHERE subscription_id = s.id AND status IN ('partial', 'paid')), 0) AS discount_minor
     ${baseFrom}
     ${where} ORDER BY s.start_date DESC LIMIT ? OFFSET ?`,
@@ -682,7 +682,7 @@ export function getSubscriptionStats(
      FROM (
        SELECT 
          s.id,
-         MAX(0, CAST(ROUND(s.price * 100) AS INTEGER) - COALESCE((SELECT SUM(paid_amount_minor + discount_amount_minor) FROM payments WHERE subscription_id = s.id AND status IN ('partial', 'paid')), 0)) AS remaining_minor
+         MAX(0, CAST(ROUND(s.price * 100) AS INTEGER) - COALESCE((SELECT SUM(paid_amount_minor - COALESCE(refunded_amount_minor, 0) + discount_amount_minor) FROM payments WHERE subscription_id = s.id AND status IN ('partial', 'paid')), 0)) AS remaining_minor
        FROM member_subscriptions s
        JOIN members m ON m.id = s.member_id
        WHERE s.status = 'active' ${deptWhere}
@@ -848,7 +848,9 @@ export async function unfreezeSubscription(
   subscriptionId: string,
   options: { isAutoUnfreeze?: boolean } = {},
 ): Promise<Subscription> {
-  requirePermission(actor, "subscriptions.freeze");
+  if (!options.isAutoUnfreeze) {
+    requirePermission(actor, "subscriptions.freeze");
+  }
   const row = getSubscriptionRow(db, subscriptionId);
   if (!row) throw errNotFound("errors.subscriptionNotFound");
   if (row.status !== "suspended") throw errConflict("errors.subscriptionNotFrozen");

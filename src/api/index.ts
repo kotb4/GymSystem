@@ -414,7 +414,7 @@ const cashApi = {
       input.countedClosingMinor,
       input.closeNote ?? null,
     ]),
-  openTotals: () => rpc<unknown>("cash", "getOpenSessionTotals", []),
+  openTotals: (box?: "gym" | "store") => rpc<unknown>("cash", "getOpenSessionTotals", box ? [box] : []),
   removeSession: (sessionId: string) => rpc<void>("cash", "deleteCashSession", [sessionId]),
   list: (query: CashSessionListQuery = {}) =>
     rpc<{ items: CashSession[]; total: number }>("cash", "listCashSessions", [query]),
@@ -1470,24 +1470,42 @@ async function gatewayFetch(baseUrl: string, path: string, init?: RequestInit, t
 }
 
 async function gatewayHealth(baseUrl: string): Promise<GatewayHealth> {
-  // Generous timeout: /pair can keep the gateway busy launching its browser.
-  const res = await gatewayFetch(baseUrl, "/health", undefined, 15000);
-  if (!res.ok) throw new Error(`HTTP ${res.status}`);
-  return (await res.json()) as GatewayHealth;
+  const isRemoteHost =
+    typeof window !== "undefined" &&
+    window.location.hostname !== "localhost" &&
+    window.location.hostname !== "127.0.0.1";
+  if (!isRemoteHost) {
+    try {
+      const res = await gatewayFetch(baseUrl, "/health", undefined, 15000);
+      if (res.ok) return (await res.json()) as GatewayHealth;
+    } catch {
+      /* fallback to backend proxy */
+    }
+  }
+  return request<GatewayHealth>("/api/system/gateway/health");
 }
 
 async function gatewayPair(baseUrl: string): Promise<GatewayPairResult> {
-  // First /pair on a cold gateway launches the in-gateway browser and waits
-  // for WhatsApp Web — that can take well over the old 5 s abort window.
-  const res = await gatewayFetch(
-    baseUrl,
-    "/pair",
-    { method: "POST", headers: { "Content-Type": "application/json" }, body: "{}" },
-    30000,
-  );
-  const body: GatewayPairResult & { error?: string } = await res.json();
-  if (res.status !== 200) throw new Error(body.error ?? `HTTP ${res.status}`);
-  return body;
+  const isRemoteHost =
+    typeof window !== "undefined" &&
+    window.location.hostname !== "localhost" &&
+    window.location.hostname !== "127.0.0.1";
+  if (!isRemoteHost) {
+    try {
+      const res = await gatewayFetch(
+        baseUrl,
+        "/pair",
+        { method: "POST", headers: { "Content-Type": "application/json" }, body: "{}" },
+        30000,
+      );
+      const body: GatewayPairResult & { error?: string } = await res.json();
+      if (res.status !== 200) throw new Error(body.error ?? `HTTP ${res.status}`);
+      return body;
+    } catch {
+      /* fallback to backend proxy */
+    }
+  }
+  return postJson<GatewayPairResult>("/api/system/gateway/pair", {});
 }
 
 async function gatewayDisconnect(baseUrl: string): Promise<{ ok: boolean; disconnected?: boolean }> {

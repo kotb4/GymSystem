@@ -872,7 +872,7 @@ export function ReceptionKioskPanel({
                           {t("reception.fieldRemaining")}
                         </dt>
                         <dd dir="ltr" className="mt-0.5 font-bold font-mono">
-                          {diffDaysKeys(activeResult.subscriptionEndsAt, todayKey())}{" "}
+                          {Math.max(0, diffDaysKeys(todayKey(), activeResult.subscriptionEndsAt) + 1)}{" "}
                           {t("common.days")}
                         </dd>
                       </div>

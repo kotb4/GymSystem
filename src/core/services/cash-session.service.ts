@@ -195,7 +195,7 @@ export async function sendOwnerHandoverDeficitAlert(
     let phone: string | null = (readSetting(db, SETTING_KEYS.ownerAlertPhone) || "").trim();
     if (!phone) {
       const ownerUser = db.first<{ phone: string | null }>(
-        "SELECT phone FROM users WHERE role_id = 'owner' AND is_active = 1 AND phone IS NOT NULL AND TRIM(phone) != '' ORDER BY created_at ASC LIMIT 1",
+        "SELECT phone FROM users WHERE role_id = 'owner' AND is_active = 1 AND COALESCE(is_developer, 0) = 0 AND phone IS NOT NULL AND TRIM(phone) != '' ORDER BY created_at ASC LIMIT 1",
       );
       if (ownerUser?.phone) {
         phone = ownerUser.phone.trim();
@@ -411,8 +411,9 @@ export interface CashTotalsForOpen {
 export function getOpenSessionTotals(
   db: Db,
   actor: ServiceActor,
+  box: CashBox = "gym",
 ): (CashTotalsForOpen & { session: CashSession }) | null {
-  const session = getOpenCashSession(db, actor);
+  const session = getOpenCashSession(db, actor, box);
   if (!session) return null;
   const totals = computeSessionCash(db, session.openedAt, nowStamp(), session.box);
   const openingMinor = session.openingBalanceMinor;
@@ -778,8 +779,11 @@ export async function resolveInterShiftGap(
       ],
     );
 
-    // Record ledger entry before/at session opened_at to reflect cash leaving before the new shift
-    const occurredAt = sessionRow.opened_at || `${today} ${stamp.slice(11)}`;
+    // Record ledger entry 1 second BEFORE session opened_at so it is not double-deducted from the new shift
+    const openedMs = sessionRow.opened_at ? new Date(sessionRow.opened_at.replace(" ", "T")).getTime() : NaN;
+    const occurredAt = Number.isFinite(openedMs)
+      ? nowStamp(new Date(openedMs - 1000))
+      : `${today} 00:00:00`;
 
     insertLedgerEntry(db, {
       entryType: "expense",

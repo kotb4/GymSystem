@@ -757,6 +757,47 @@ async function handleApi(ctx: Ctx): Promise<void> {
     }
   }
 
+  if (route === "GET /api/system/gateway/health") {
+    try {
+      requireAnyPermission(actor, ["settings.view", "messages.view", "messages.send"]);
+      const db = getDbContext().db;
+      const url = readSetting(db, SETTING_KEYS.whatsappApiUrl) || "http://127.0.0.1:8891";
+      const gatewayRes = await fetch(`${url.replace(/\/+$/, "")}/health`);
+      const data = await gatewayRes.json().catch(() => ({ ok: false, paired: false }));
+      return sendJson(res, 200, { ok: true, result: data });
+    } catch (e: any) {
+      return sendJson(res, 200, {
+        ok: true,
+        result: { ok: false, paired: false, engineInstalled: engineStatus().installed, lastError: e?.message || "Gateway unreachable" },
+      });
+    }
+  }
+
+  if (route === "POST /api/system/gateway/pair") {
+    try {
+      requireAnyPermission(actor, ["settings.edit", "messages.send"]);
+      const db = getDbContext().db;
+      const url = readSetting(db, SETTING_KEYS.whatsappApiUrl) || "http://127.0.0.1:8891";
+      const gatewayRes = await fetch(`${url.replace(/\/+$/, "")}/pair`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: "{}",
+      });
+      const data = await gatewayRes.json().catch(() => ({ ok: false, paired: false }));
+      return sendJson(res, 200, { ok: true, result: data });
+    } catch (e: any) {
+      return sendJson(res, 502, {
+        ok: false,
+        error: {
+          name: "AppError",
+          code: "VALIDATION_ERROR",
+          messageKey: "errors.messagesGatewayUnreachable",
+          params: { error: e?.message || "Gateway unreachable" },
+        },
+      });
+    }
+  }
+
   // Disconnect/unlink the active WhatsApp account and clear saved credentials
   if (route === "POST /api/system/gateway/disconnect") {
     try {

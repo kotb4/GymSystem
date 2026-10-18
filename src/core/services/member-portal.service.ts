@@ -282,13 +282,37 @@ export function getMemberPortalProfile(
     [member.id],
   );
 
-  // Total store & financial debt
-  const storeDebt = db.first<{ total: number }>(
-    `SELECT COALESCE(SUM(original_minor - paid_minor), 0) as total
-     FROM store_debts 
-     WHERE member_id = ? AND status = 'open'`,
-    [member.id],
-  )?.total ?? 0;
+  // Total store, subscription & PT financial debt
+  const storeDebt = Number(
+    db.first<{ total: number }>(
+      `SELECT COALESCE(SUM(original_minor - paid_minor), 0) as total
+       FROM store_debts 
+       WHERE member_id = ? AND status = 'open'`,
+      [member.id],
+    )?.total ?? 0,
+  );
+  const subDebt = Number(
+    db.scalar(
+      `WITH paid AS (
+        SELECT subscription_id, SUM(paid_amount_minor - COALESCE(refunded_amount_minor, 0)) AS p, SUM(discount_amount_minor) AS d
+        FROM payments
+        WHERE status IN ('partial', 'paid')
+        GROUP BY subscription_id
+      )
+      SELECT COALESCE(SUM(MAX(CAST(ROUND(s.price * 100) AS INTEGER) - COALESCE(paid.p, 0) - COALESCE(paid.d, 0), 0)), 0)
+      FROM member_subscriptions s
+      LEFT JOIN paid ON paid.subscription_id = s.id
+      WHERE s.member_id = ? AND s.status = 'active'`,
+      [member.id],
+    ) ?? 0,
+  );
+  const ptDebt = Number(
+    db.scalar(
+      `SELECT COALESCE(SUM(remaining_amount_minor), 0) FROM private_trainings WHERE member_id = ? AND status != 'cancelled' AND remaining_amount_minor > 0`,
+      [member.id],
+    ) ?? 0,
+  );
+  const totalMemberDebtMinor = storeDebt + subDebt + ptDebt;
 
   // Live gym occupancy
   const liveOccupancyNow = getLiveOccupancy(db);
@@ -322,7 +346,7 @@ export function getMemberPortalProfile(
         bmi: inbodyRow.bmi,
       } : null,
     },
-    totalDebtMinor: storeDebt,
+    totalDebtMinor: totalMemberDebtMinor,
     liveOccupancyNow,
     gymInfo: {
       name: gymName,

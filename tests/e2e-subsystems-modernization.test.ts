@@ -1387,14 +1387,13 @@ describe("Tier 4: Real-World Workloads", () => {
       box: "gym",
     });
 
-    // 7. Verify expected closing calculations:
-    // Gym Box Expected: 50,000 (opening) + 40,000 (sub) - 15,000 (exp) = 75,000 minor (750 EGP)
+    // Gym Box Expected: 50,000 (opening) + 40,000 (sub) + 5,000 (quick session) - 15,000 (exp) = 80,000 minor (800 EGP)
     const gymTotals = computeSessionCash(db, gymSession.openedAt, nowStamp(), "gym");
-    expect(gymTotals.cashInMinor).toBe(40_000);
+    expect(gymTotals.cashInMinor).toBe(45_000);
     expect(gymTotals.cashOutMinor).toBe(15_000);
 
-    const closedGym = await closeCashSession(db, owner, gymSession.id, 75_000, "إغلاق وردية الجيم مطابقة");
-    expect(closedGym.expectedClosingMinor).toBe(75_000);
+    const closedGym = await closeCashSession(db, owner, gymSession.id, 80_000, "إغلاق وردية الجيم مطابقة");
+    expect(closedGym.expectedClosingMinor).toBe(80_000);
     expect(closedGym.differenceMinor).toBe(0);
 
     // Store Box Expected: 20,000 (opening) + 8,000 (sale) = 28,000 minor (280 EGP)

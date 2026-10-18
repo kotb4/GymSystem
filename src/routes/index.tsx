@@ -281,7 +281,7 @@ export function AppRoutes() {
         <Route
           path="loyalty"
           element={
-            <RequirePermission permission="loyalty.manage" featureFlag="featureLoyaltyEnabled">
+            <RequirePermission permissions={["loyalty.view", "loyalty.manage"]} featureFlag="featureLoyaltyEnabled">
               <LoyaltyPage />
             </RequirePermission>
           }

@@ -234,14 +234,14 @@ function resolveValues(base: NormalizedMemberValues, patch: MemberInput): Normal
 function assertValidValues(db: Db, values: NormalizedMemberValues, excludeId?: string): void {
   if (values.fullName === "") throw errValidation("errors.nameRequired");
   const nameExisting = excludeId
-    ? db.first("SELECT id FROM members WHERE full_name = ? AND id != ?", [values.fullName, excludeId])
-    : db.first("SELECT id FROM members WHERE full_name = ?", [values.fullName]);
+    ? db.first("SELECT id FROM members WHERE full_name = ? AND id != ? AND deleted_at IS NULL", [values.fullName, excludeId])
+    : db.first("SELECT id FROM members WHERE full_name = ? AND deleted_at IS NULL", [values.fullName]);
   if (nameExisting) throw errConflict("errors.nameTaken", { name: values.fullName });
   if (values.phone && !PHONE_RE.test(values.phone)) throw errValidation("errors.phoneInvalid");
   if (values.phone) {
     const existing = excludeId
-      ? db.first("SELECT id FROM members WHERE phone = ? AND id != ?", [values.phone, excludeId])
-      : db.first("SELECT id FROM members WHERE phone = ?", [values.phone]);
+      ? db.first("SELECT id FROM members WHERE phone = ? AND id != ? AND deleted_at IS NULL", [values.phone, excludeId])
+      : db.first("SELECT id FROM members WHERE phone = ? AND deleted_at IS NULL", [values.phone]);
     if (existing) throw errConflict("errors.phoneTaken", { phone: values.phone });
   }
   if (values.email && !EMAIL_RE.test(values.email)) throw errValidation("errors.emailInvalid");
@@ -641,7 +641,11 @@ export async function purgeMember(db: Db, actor: ServiceActor, memberId: string)
   await db.transaction(async () => {
     db.run("DELETE FROM store_debt_payments WHERE debt_id IN (SELECT id FROM store_debts WHERE member_id = ?)", [memberId]);
     db.run("DELETE FROM payment_refunds WHERE payment_id IN (SELECT id FROM payments WHERE member_id = ?)", [memberId]);
-    db.run("DELETE FROM financial_ledger WHERE (ref_table = 'payments' AND ref_id IN (SELECT id FROM payments WHERE member_id = ?)) OR (ref_table = 'store_sales' AND ref_id IN (SELECT id FROM store_sales WHERE member_id = ?))", [memberId, memberId]);
+    db.run("DELETE FROM financial_ledger WHERE member_id = ? OR (ref_table = 'payments' AND ref_id IN (SELECT id FROM payments WHERE member_id = ?)) OR (ref_table = 'store_sales' AND ref_id IN (SELECT id FROM store_sales WHERE member_id = ?))", [memberId, memberId, memberId]);
+    db.run("DELETE FROM private_training_sessions WHERE private_training_id IN (SELECT id FROM private_trainings WHERE member_id = ?)", [memberId]);
+    db.run("DELETE FROM private_trainings WHERE member_id = ?", [memberId]);
+    db.run("DELETE FROM quick_sessions WHERE member_id = ?", [memberId]);
+    db.run("DELETE FROM guest_invitations WHERE member_id = ?", [memberId]);
     db.run("DELETE FROM crm_messages WHERE member_id = ?", [memberId]);
     db.run("DELETE FROM subscription_freezes WHERE subscription_id IN (SELECT id FROM member_subscriptions WHERE member_id = ?)", [memberId]);
     db.run("DELETE FROM class_bookings WHERE member_id = ? OR consumed_subscription_id IN (SELECT id FROM member_subscriptions WHERE member_id = ?)", [memberId, memberId]);

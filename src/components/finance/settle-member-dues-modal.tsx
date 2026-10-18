@@ -229,7 +229,7 @@ export function SettleMemberDuesModal({
           await api.payments.record({
             memberId: member.id,
             subscriptionId: p.id,
-            baseAmountMinor: p.originalMinor,
+            baseAmountMinor: p.remainingMinor,
             paidAmountMinor: p.amountMinor,
             methodCode,
             referenceNo: referenceNo || null,

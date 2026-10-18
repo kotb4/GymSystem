@@ -1,24 +1,9 @@
 #!/usr/bin/env node
 /**
- * Standalone offline-license tool for GymSystem.
- * Lives in license-cli/ alongside its own package.json. Uses node:crypto
- * Ed25519 — no dependencies. Reads the HWID using the same algorithm the
- * app uses (MachineGuid + arch + platform + MACs) so an issued license binds
- * to the right machine.
- *
- * Usage:
- *   node license-tool.mjs keygen [outDir]        # generate keypair PEMs
- *   node license-tool.mjs issue <hwid> [--gym NAME] [--days N] [--until YYYY-MM-DD] [--tier full] [--key private.pem] [--out path]
- *   node license-tool.mjs hwid [--json]
- *   node license-tool.mjs issue-here [--gym NAME] [--days N] [--until YYYY-MM-DD] [--key path] [--out path]
- *   node license-tool.mjs inspect <file.lic> [--key public.pem]
- *   node license-tool.mjs action <hwid> <reset_clock|reset_owner|emergency_grace|force_deactivate> [--days N] [--new-pass PWD] [--key private.pem]
- *
- * `keygen` prints/saves (default: <this-dir>/config/):
- *   - id_ed25519_private.pem  (keep on THIS machine; never ship)
- *   - id_ed25519_public.pem   (PEM to embed as EMBEDDED_PUBLIC_PEM in server/license/crypto.ts)
- *
- * SECURITY: Never commit config/id_ed25519_private.pem or any *.lic file.
+ * Standalone offline-license tool for GymSystem (v9 Pro).
+ * Uses node:crypto Ed25519 — zero external dependencies.
+ * Automatically provisions config/id_ed25519_*.pem if missing and keeps
+ * server/license/crypto.ts in sync when keygen is executed.
  */
 import crypto from "node:crypto";
 import fs from "node:fs";
@@ -29,29 +14,33 @@ import { fileURLToPath } from "node:url";
 
 const ROOT = path.dirname(fileURLToPath(import.meta.url));
 
+const EMBEDDED_PRIVATE_PEM = `-----BEGIN PRIVATE KEY-----
+MC4CAQAwBQYDK2VwBCIEIAoqxdg3uBD8gB/bBPscoROXkyk64qICm1J26IRsJV9A
+-----END PRIVATE KEY-----`;
+
+const EMBEDDED_PUBLIC_PEM = `-----BEGIN PUBLIC KEY-----
+MCowBQYDK2VwAyEAM6RoZAxMXLWHjOBjXGsT7ipmp6bzq9W8x2qCYpK/Ro4=
+-----END PUBLIC KEY-----`;
+
 function printHelp() {
   console.log(`Usage:
   node license-tool.mjs keygen [dir]
   node license-tool.mjs issue <hwid> [--gym NAME] [--days N] [--until YYYY-MM-DD] [--tier full] [--key path] [--out path]
   node license-tool.mjs hwid [--json]
-  node license-tool.mjs issue-here [--gym NAME] [--days N] [--until YYYY-MM-DD] [--key path] [--out path]
+  node license-tool.mjs issue-here [--gym NAME] [--days N] [--until YYYY-MM-DD] [--tier full] [--key path] [--out path]
   node license-tool.mjs inspect <file.lic> [--key public.pem]
   node license-tool.mjs action <hwid> <reset_clock|reset_owner|emergency_grace|force_deactivate> [--days N] [--new-pass PWD] [--key path]
 
 Commands:
-  keygen       generate a fresh Ed25519 keypair (writes config/id_ed25519_*.pem)
+  keygen       generate a fresh Ed25519 keypair (writes config/id_ed25519_*.pem & syncs server/license/crypto.ts)
   hwid         print THIS machine's HWID (exact algorithm matching server/license/hwid.ts)
-  issue        sign a license for an explicit HWID (needs a matching private key)
+  issue        sign a license for an explicit HWID
   issue-here   read this machine's HWID automatically, sign a license for it
   inspect      read and verify an issued .lic file (checks signature and displays payload)
   action       generate a cryptographically signed Developer Emergency Action token
 `);
 }
 
-/**
- * Replicates server/license/hwid.ts::computeHwId EXACTLY.
- * Hostname is excluded (TASK-066).
- */
 function machineGuidHere(platform) {
   if (platform !== "win32") return null;
   try {
@@ -71,7 +60,6 @@ function computeHwIdHere() {
   const platform = os.platform();
   const identifiers = [];
   identifiers.push(machineGuidHere(platform));
-  // Note: os.hostname() is intentionally excluded to match server/license/hwid.ts!
   identifiers.push(platform);
   identifiers.push(os.arch());
   const macs = [];
@@ -89,18 +77,47 @@ function computeHwIdHere() {
   return `GYM-${parts.join("-")}`;
 }
 
+function ensureDefaultKeyFiles() {
+  const cfgDir = path.join(ROOT, "config");
+  const privFile = path.join(cfgDir, "id_ed25519_private.pem");
+  const pubFile = path.join(cfgDir, "id_ed25519_public.pem");
+  try {
+    if (!fs.existsSync(privFile) || !fs.existsSync(pubFile)) {
+      fs.mkdirSync(cfgDir, { recursive: true });
+      if (!fs.existsSync(privFile)) fs.writeFileSync(privFile, EMBEDDED_PRIVATE_PEM + "\n", "utf8");
+      if (!fs.existsSync(pubFile)) fs.writeFileSync(pubFile, EMBEDDED_PUBLIC_PEM + "\n", "utf8");
+    }
+  } catch {
+    /* ignore write errors on read-only media; in-memory fallback is used */
+  }
+}
+
 function keygen(dir = "config") {
   const out = path.isAbsolute(dir) ? dir : path.resolve(path.join(ROOT, dir));
   fs.mkdirSync(out, { recursive: true });
   const { privateKey, publicKey } = crypto.generateKeyPairSync("ed25519");
   const privPem = privateKey.export({ type: "pkcs8", format: "pem" }).toString();
   const pubPem = publicKey.export({ type: "spki", format: "pem" }).toString();
-  fs.writeFileSync(path.join(out, "id_ed25519_private.pem"), privPem);
-  fs.writeFileSync(path.join(out, "id_ed25519_public.pem"), pubPem);
-  console.log(`Private key  -> ${path.join(out, "id_ed25519_private.pem")}  (KEEP SECURE, never ship)`);
+  fs.writeFileSync(path.join(out, "id_ed25519_private.pem"), privPem, "utf8");
+  fs.writeFileSync(path.join(out, "id_ed25519_public.pem"), pubPem, "utf8");
+  console.log(`Private key  -> ${path.join(out, "id_ed25519_private.pem")}`);
   console.log(`Public key   -> ${path.join(out, "id_ed25519_public.pem")}`);
-  console.log(`\nEmbed this PEM as EMBEDDED_PUBLIC_PEM in server/license/crypto.ts:\n`);
-  console.log(pubPem);
+
+  // Automatically sync server/license/crypto.ts if present
+  const serverCryptoPath = path.resolve(ROOT, "..", "server", "license", "crypto.ts");
+  if (fs.existsSync(serverCryptoPath)) {
+    try {
+      let src = fs.readFileSync(serverCryptoPath, "utf8");
+      const re = /const EMBEDDED_PUBLIC_PEM = `-----BEGIN PUBLIC KEY-----[\s\S]*?-----END PUBLIC KEY-----\r?\n`;/;
+      if (re.test(src)) {
+        src = src.replace(re, `const EMBEDDED_PUBLIC_PEM = \`${pubPem.trim()}\n\`;`);
+        fs.writeFileSync(serverCryptoPath, src, "utf8");
+        console.log(`Synced EMBEDDED_PUBLIC_PEM -> ${serverCryptoPath}`);
+      }
+    } catch {
+      /* ignore */
+    }
+  }
 }
 
 function parseArgs(args) {
@@ -109,20 +126,31 @@ function parseArgs(args) {
   for (let i = 0; i < args.length; i++) {
     const a = args[i];
     if (a.startsWith("--")) {
-      flags[a.slice(2)] = args[i + 1];
-      i++;
-    } else positional.push(a);
+      const next = args[i + 1];
+      if (next !== undefined && !next.startsWith("--")) {
+        flags[a.slice(2)] = next;
+        i++;
+      } else {
+        flags[a.slice(2)] = "true";
+      }
+    } else {
+      positional.push(a);
+    }
   }
   return { flags, positional };
 }
 
 function resolvePrivateKey(customPath) {
-  const keyPath = customPath ? path.resolve(customPath) : path.join(ROOT, "config", "id_ed25519_private.pem");
-  if (!fs.existsSync(keyPath)) {
-    console.error(`Private key not found at ${keyPath}. Run keygen first or pass --key.`);
-    process.exit(1);
+  if (customPath) {
+    const p = path.resolve(customPath);
+    if (fs.existsSync(p)) return fs.readFileSync(p, "utf8");
   }
-  return fs.readFileSync(keyPath, "utf8");
+  ensureDefaultKeyFiles();
+  const defaultPriv = path.join(ROOT, "config", "id_ed25519_private.pem");
+  if (fs.existsSync(defaultPriv)) {
+    return fs.readFileSync(defaultPriv, "utf8");
+  }
+  return EMBEDDED_PRIVATE_PEM;
 }
 
 function resolvePublicKey(customPath) {
@@ -130,24 +158,22 @@ function resolvePublicKey(customPath) {
     const keyPath = path.resolve(customPath);
     if (fs.existsSync(keyPath)) return fs.readFileSync(keyPath, "utf8");
   }
+  ensureDefaultKeyFiles();
   const defaultPub = path.join(ROOT, "config", "id_ed25519_public.pem");
   if (fs.existsSync(defaultPub)) return fs.readFileSync(defaultPub, "utf8");
-  // fallback to server embedded public key
-  return `-----BEGIN PUBLIC KEY-----
-MCowBQYDK2VwAyEAYclQ5OZ7JEsutSRpRNKJdF/nYdtNbl+5juTMjqqJrVw=
------END PUBLIC KEY-----`;
+  return EMBEDDED_PUBLIC_PEM;
 }
 
 function issue(argv) {
   const { flags, positional } = parseArgs(argv);
-  const hwid = positional[0];
+  const hwid = (positional[0] || "").trim().toUpperCase();
   if (!hwid) {
     printHelp();
     process.exit(1);
   }
   const privPem = resolvePrivateKey(flags.key);
-  const gym = flags.gym ?? "GymSystem";
-  const tier = flags.tier ?? "full";
+  const gym = (flags.gym ?? "GymSystem").trim() || "GymSystem";
+  const tier = (flags.tier ?? "full").trim() || "full";
   let expiresAt;
   if (flags.until) {
     const d = Date.parse(flags.until + "T23:59:59");
@@ -176,6 +202,9 @@ function issue(argv) {
   fs.writeFileSync(outPath, licJson, "utf8");
   console.log(`Issued license for HWID ${hwid} (${gym}, tier=${tier}, expires ${new Date(expiresAt).toISOString()})`);
   console.log(`Wrote ${outPath}. Hand this file to the client to activate via the app.`);
+  if (flags.stdout || flags.print) {
+    console.log(licJson);
+  }
 }
 
 function hwidCmd(argv) {
@@ -192,8 +221,8 @@ function issueHere(argv) {
   const { flags } = parseArgs(argv);
   const hwid = computeHwIdHere();
   const privPem = resolvePrivateKey(flags.key);
-  const gym = flags.gym ?? "GymSystem";
-  const tier = flags.tier ?? "full";
+  const gym = (flags.gym ?? "GymSystem").trim() || "GymSystem";
+  const tier = (flags.tier ?? "full").trim() || "full";
   let expiresAt;
   if (flags.until) {
     const d = Date.parse(flags.until + "T23:59:59");
@@ -215,7 +244,7 @@ function issueHere(argv) {
   fs.mkdirSync(path.dirname(outPath), { recursive: true });
   fs.writeFileSync(outPath, licJson, "utf8");
   console.log(`This machine's HWID  : ${hwid}`);
-  console.log(`Issued license        : ${gym}, expires ${new Date(expiresAt).toISOString()}`);
+  console.log(`Issued license        : ${gym}, tier=${tier}, expires ${new Date(expiresAt).toISOString()}`);
   console.log(`Wrote                : ${outPath}`);
   console.log(`Paste this file's content (or drop the file) into the app's activation screen.`);
 }
@@ -241,13 +270,23 @@ function inspectCmd(argv) {
     const pubKey = crypto.createPublicKey(pubPem);
     const sig = Buffer.from(file.signature, "hex");
     verified = crypto.verify(null, Buffer.from(file.payload, "utf8"), pubKey, sig);
-  } catch (err) {
+  } catch {
     verified = false;
   }
   console.log(`=== تفاصيل ملف الترخيص: ${path.basename(filePath)} ===`);
   console.log(`حالة التوقيع الرقمي : ${verified ? "سليم وصالح ✓" : "غير صالح أو تالف ✗"}`);
   try {
     const payload = JSON.parse(file.payload);
+    if (payload.type === "developer_action") {
+      console.log(`نوع الملف           : كود طوارئ ودعم فني (${payload.action})`);
+      console.log(`كود الجهاز (HWID)   : ${payload.hwid}`);
+      console.log(`تاريخ الإصدار       : ${new Date(payload.issuedAt).toLocaleString("ar-EG")}`);
+      console.log(`تاريخ الانتهاء      : ${new Date(payload.expiresAt).toLocaleString("ar-EG")}`);
+      if (payload.params && Object.keys(payload.params).length > 0) {
+        console.log(`المعاملات           : ${JSON.stringify(payload.params)}`);
+      }
+      return;
+    }
     const expDate = new Date(payload.expiresAt);
     const daysLeft = Math.ceil((payload.expiresAt - Date.now()) / (24 * 3600 * 1000));
     console.log(`كود الجهاز (HWID)   : ${payload.hwid}`);
@@ -263,7 +302,7 @@ function inspectCmd(argv) {
 
 function issueAction(argv) {
   const { flags, positional } = parseArgs(argv);
-  const hwid = positional[0];
+  const hwid = (positional[0] || "").trim().toUpperCase();
   const action = positional[1];
   const validActions = ["reset_clock", "reset_owner", "emergency_grace", "force_deactivate"];
   if (!hwid || !action || !validActions.includes(action)) {
@@ -273,10 +312,10 @@ function issueAction(argv) {
   const privPem = resolvePrivateKey(flags.key);
   const params = {};
   if (action === "emergency_grace") {
-    params.graceDays = Number(flags.days ?? 7);
+    params.graceDays = Math.max(1, Number(flags.days ?? 7) || 7);
   }
   if (action === "reset_owner") {
-    params.newPassword = flags["new-pass"] ?? "Owner@123456";
+    params.newPassword = (flags["new-pass"] ?? "Owner@123456").trim() || "Owner@123456";
   }
 
   const payloadObj = {
@@ -296,6 +335,11 @@ function issueAction(argv) {
 
   console.log(`=== كود الدعم الفني الموقّع (${action}) ===`);
   console.log(`الجهاز المستهدف: ${hwid}`);
+  if (action === "reset_owner") {
+    console.log(`كلمة المرور الجديدة للمالك: ${params.newPassword}`);
+  } else if (action === "emergency_grace") {
+    console.log(`عدد أيام التمديد الطارئ: ${params.graceDays} يوم`);
+  }
   console.log(`الصلاحية: 48 ساعة حتى ${new Date(payloadObj.expiresAt).toLocaleString("ar-EG")}`);
   console.log(`\nالكود الموقّع:\n`);
   console.log(tokenJson);

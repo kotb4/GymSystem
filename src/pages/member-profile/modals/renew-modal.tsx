@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { useAuth } from "@/contexts/auth-context";
 import { useT } from "@/i18n";
 import { useToast } from "@/components/ui/toast";
@@ -6,10 +6,11 @@ import { describeError } from "@/utils/app-error";
 import { api } from "@/api";
 import type { Subscription } from "@/core/services/subscriptions.service";
 import type { PublicMember } from "@/core/services/members.service";
-import { toMinor } from "@/core/money";
+import { formatMinor, toMinor } from "@/core/money";
 import { todayKey } from "@/core/dates";
 import { Send } from "lucide-react";
 import { buildPaymentReceiptMessage, buildWhatsAppDirectUrl } from "@/core/whatsapp";
+import { cn } from "@/utils/cn";
 import { Modal } from "@/components/ui/modal";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -26,31 +27,64 @@ interface RenewModalProps {
 
 export function RenewModal({ sub, member, open, onClose, onDone }: RenewModalProps) {
   const t = useT();
-  const { actor } = useAuth();
+  const { actor, hasPermission } = useAuth();
   const { toast } = useToast();
+  const canEditPrice = hasPermission("payments.discount") || hasPermission("subscriptions.edit");
+  const canCreatePayment = hasPermission("payments.create");
+
   const [priceMajor, setPriceMajor] = useState(String(sub.price));
+  const [payMode, setPayMode] = useState<"full" | "partial" | "later">("full");
+  const [paidMajor, setPaidMajor] = useState(String(sub.price));
   const [methodCode, setMethodCode] = useState("cash");
+  const [methods, setMethods] = useState<Array<{ code: string; labelAr: string }>>([]);
   const [notes, setNotes] = useState("");
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
+  useEffect(() => {
+    if (!open) return;
+    setPriceMajor(String(sub.price));
+    setPayMode("full");
+    setPaidMajor(String(sub.price));
+    setError(null);
+    api.payments
+      .methods()
+      .then((list) => {
+        if (Array.isArray(list) && list.length > 0) setMethods(list);
+      })
+      .catch(() => {});
+  }, [open, sub.price]);
+
+  const baseMinor = toMinor(priceMajor.trim() === "" ? "0" : priceMajor);
+  const paidNowMinor =
+    payMode === "full"
+      ? baseMinor
+      : payMode === "partial"
+        ? toMinor(paidMajor.trim() === "" ? "0" : paidMajor)
+        : 0;
+  const remainingMinor = Math.max(0, baseMinor - paidNowMinor);
+
   const onSubmit = async (sendWhatsApp = false) => {
     if (!actor) return;
+    if (payMode === "partial" && paidNowMinor > baseMinor) {
+      setError(t("errors.finance.overpay"));
+      return;
+    }
     setSubmitting(true);
     setError(null);
     try {
       const numPrice = Number(priceMajor);
-      const hasPrice = priceMajor.trim() !== "" && Number.isFinite(numPrice) && numPrice > 0;
+      const hasPrice = priceMajor.trim() !== "" && Number.isFinite(numPrice) && numPrice >= 0;
       const result = await api.subscriptions.renew(sub.id, {
-        price: hasPrice ? numPrice : undefined,
+        price: canEditPrice && hasPrice ? numPrice : undefined,
         notes: notes || null,
       });
-      if (hasPrice) {
+      if (canCreatePayment && payMode !== "later" && paidNowMinor > 0 && baseMinor > 0) {
         await api.payments.record({
           memberId: sub.memberId,
           subscriptionId: result.next.id,
-          baseAmountMinor: toMinor(numPrice),
-          paidAmountMinor: toMinor(numPrice),
+          baseAmountMinor: baseMinor,
+          paidAmountMinor: paidNowMinor,
           methodCode,
           notes: notes || null,
         });
@@ -61,7 +95,8 @@ export function RenewModal({ sub, member, open, onClose, onDone }: RenewModalPro
           memberName: member.fullName,
           memberCode: member.memberCode,
           planName: sub.planName || undefined,
-          amountPaid: hasPrice ? numPrice : 0,
+          amountPaid: paidNowMinor > 0 ? (paidNowMinor / 100).toFixed(2) : "0",
+          amountRemaining: remainingMinor > 0 ? (remainingMinor / 100).toFixed(2) : undefined,
           date: todayKey(),
           notes: notes || undefined,
         });
@@ -95,6 +130,18 @@ export function RenewModal({ sub, member, open, onClose, onDone }: RenewModalPro
     }
   };
 
+  const methodOptions =
+    methods.length > 0
+      ? methods.map((m) => ({ value: m.code, label: m.labelAr }))
+      : [
+          { value: "cash", label: "نقدي" },
+          { value: "bank_card", label: "بطاقة بنكية" },
+          { value: "instapay", label: "إنستاباي (InstaPay)" },
+          { value: "vodafone_cash", label: "فودافون كاش / محفظة" },
+          { value: "transfer", label: "تحويل بنكي" },
+          { value: "other", label: "أخرى" },
+        ];
+
   return (
     <Modal open={open} onClose={onClose} title={t("subs.renewTitle")} widthClass="max-w-md">
       <form
@@ -112,27 +159,75 @@ export function RenewModal({ sub, member, open, onClose, onDone }: RenewModalPro
           </div>
         </div>
         <Input
-          label={`${t("subs.pricePaid")} (ج.م)`}
+          label={`${t("subs.price")} (ج.م)`}
           type="number"
           dir="ltr"
           min={0}
           step="0.01"
           value={priceMajor}
-          onChange={(e) => setPriceMajor(e.target.value)}
-          disabled={submitting}
+          onChange={(e) => {
+            setPriceMajor(e.target.value);
+            if (payMode === "full") setPaidMajor(e.target.value);
+          }}
+          disabled={submitting || !canEditPrice}
         />
-        <Select
-          label={t("store.method")}
-          value={methodCode}
-          onChange={(e) => setMethodCode(e.target.value)}
-          options={[
-            { value: "cash", label: "نقدي" },
-            { value: "bank_card", label: "بطاقة بنكية" },
-            { value: "transfer", label: "تحويل / محفظة" },
-            { value: "other", label: "أخرى" },
-          ]}
-          disabled={submitting}
-        />
+        {canCreatePayment && (
+          <div className="space-y-3 rounded-xl border border-line bg-white/[0.03] p-3">
+            <div className="grid grid-cols-3 gap-2">
+              {([
+                { mode: "full" as const, label: t("subs.payModeFull") },
+                { mode: "partial" as const, label: t("subs.payModePartial") },
+                { mode: "later" as const, label: t("subs.payModeLater") },
+              ]).map(({ mode, label }) => (
+                <button
+                  key={mode}
+                  type="button"
+                  disabled={submitting}
+                  onClick={() => {
+                    setPayMode(mode);
+                    if (mode === "full") setPaidMajor(priceMajor);
+                  }}
+                  className={cn(
+                    "rounded-xl border px-2 py-2 text-[12px] font-bold transition-colors",
+                    payMode === mode
+                      ? "border-neon bg-neon/10 text-neon shadow-glow-sm"
+                      : "border-line text-subtle hover:border-line-strong hover:text-ink",
+                  )}
+                >
+                  {label}
+                </button>
+              ))}
+            </div>
+            {payMode === "partial" && (
+              <Input
+                label={`${t("subs.pricePaid")} (ج.م)`}
+                type="number"
+                dir="ltr"
+                min={0}
+                max={Number(priceMajor) || undefined}
+                step="0.01"
+                value={paidMajor}
+                onChange={(e) => setPaidMajor(e.target.value)}
+                disabled={submitting}
+              />
+            )}
+            {payMode !== "later" && (
+              <Select
+                label={t("store.method")}
+                value={methodCode}
+                onChange={(e) => setMethodCode(e.target.value)}
+                options={methodOptions}
+                disabled={submitting}
+              />
+            )}
+            <div className="flex items-center justify-between text-xs pt-1 border-t border-line/50">
+              <span className="text-subtle">المتبقي بعد العملية:</span>
+              <span dir="ltr" className={cn("font-bold tabnum", remainingMinor > 0 ? "text-amber" : "text-emerald")}>
+                {formatMinor(remainingMinor)}
+              </span>
+            </div>
+          </div>
+        )}
         <Input label={t("members.notes")} value={notes} onChange={(e) => setNotes(e.target.value)} disabled={submitting} />
         {error && (
           <p role="alert" className="rounded-xl border border-red/30 bg-red/10 px-3.5 py-2.5 text-[13px] font-semibold text-red">

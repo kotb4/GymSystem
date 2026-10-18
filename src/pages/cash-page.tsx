@@ -95,6 +95,9 @@ export function CashSessionsPanel() {
   const reload = () => setReloadTick((v) => v + 1);
 
   const canView = hasPermission("payments.view");
+  const canViewReports = hasPermission("reports.view");
+  const canViewUsers = hasPermission("users.view");
+  const activeBox: "gym" | "store" = filterBox === "store" ? "store" : "gym";
   const isOpener = Boolean(actor && openTotals && actor.userId === openTotals.session.openedById);
   const isOwner = Boolean(actor && actor.roleId === "owner");
   const canClose = isOpener || isOwner;
@@ -156,6 +159,7 @@ export function CashSessionsPanel() {
   };
 
   useEffect(() => {
+    if (!actor || !canViewUsers) return;
     let alive = true;
     api.users
       .list()
@@ -166,7 +170,7 @@ export function CashSessionsPanel() {
     return () => {
       alive = false;
     };
-  }, []);
+  }, [actor, canViewUsers]);
 
   useEffect(() => {
     if (!actor || !canView) return;
@@ -194,7 +198,7 @@ export function CashSessionsPanel() {
     if (!actor || !canView) return;
     let alive = true;
     void api.cash
-      .openTotals()
+      .openTotals(activeBox)
       .then((totals) => {
         if (alive) {
           setOpenTotals(totals as (CashTotalsForOpen & { session: CashSession }) | null);
@@ -206,10 +210,10 @@ export function CashSessionsPanel() {
     return () => {
       alive = false;
     };
-  }, [actor, canView, reloadTick]);
+  }, [actor, canView, activeBox, reloadTick]);
 
   useEffect(() => {
-    if (!actor) return;
+    if (!actor || !canViewReports) return;
     let alive = true;
     void api.cash
       .list({
@@ -234,6 +238,7 @@ export function CashSessionsPanel() {
     };
   }, [
     actor,
+    canViewReports,
     page,
     filterStatus,
     filterUser,
@@ -574,11 +579,42 @@ export function CashSessionsPanel() {
 
   return (
     <div className="space-y-5">
-      <div className="flex items-center justify-between">
+      <div className="flex flex-wrap items-center justify-between gap-3">
         <div>
           <h2 className="text-xl font-black text-foreground">الخزينة النقدية والورديات</h2>
           <p className="text-xs text-subtle mt-0.5">متابعة حركة النقدية، تسليم الدرج، وجرد العجز والزيادة بين الموظفين</p>
         </div>
+        <div className="flex items-center gap-2">
+          <div className="inline-flex items-center rounded-xl border border-line bg-panel p-1 text-xs font-bold">
+            <button
+              type="button"
+              onClick={() => {
+                setFilterBox("gym");
+                setPage(1);
+              }}
+              className={`rounded-lg px-3 py-1.5 transition-colors cursor-pointer ${
+                activeBox === "gym"
+                  ? "bg-neon/15 text-neon border border-neon/40"
+                  : "text-subtle hover:text-foreground"
+              }`}
+            >
+              🏋️ صندوق الجيم
+            </button>
+            <button
+              type="button"
+              onClick={() => {
+                setFilterBox("store");
+                setPage(1);
+              }}
+              className={`rounded-lg px-3 py-1.5 transition-colors cursor-pointer ${
+                activeBox === "store"
+                  ? "bg-cyan/15 text-cyan border border-cyan/40"
+                  : "text-subtle hover:text-foreground"
+              }`}
+            >
+              🛒 صندوق المتجر
+            </button>
+          </div>
         {openTotals && isOwner ? (
           <Button
             type="button"
@@ -593,6 +629,7 @@ export function CashSessionsPanel() {
             {t("cashPage.ownerWithdrawBtn")}
           </Button>
         ) : null}
+        </div>
       </div>
 
       {openTotals ? (
@@ -856,6 +893,7 @@ export function CashSessionsPanel() {
         )
       )}
 
+      {canViewReports && (
       <Card>
         <CardHeader
           title={t("cashPage.historyTitle")}
@@ -1003,6 +1041,7 @@ export function CashSessionsPanel() {
           </>
         )}
       </Card>
+      )}
 
       <ConfirmDialog
         open={confirmAbort}

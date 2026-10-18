@@ -350,7 +350,7 @@ export function createQuickSession(
           input.methodCode,
           1,
           input.paidAmountMinor,
-          sessionDate,
+          `${sessionDate} ${stamp.slice(11)}`,
           actor.userId,
           stamp,
         ],

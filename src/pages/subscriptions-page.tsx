@@ -90,6 +90,7 @@ export function SubscriptionsPage() {
   const [subModalOpen, setSubModalOpen] = useState(false);
   const [planModalOpen, setPlanModalOpen] = useState(false);
   const [defaultPlanCategory, setDefaultPlanCategory] = useState<"gym" | "academy">("gym");
+  const [presetPlanId, setPresetPlanId] = useState<string | undefined>(undefined);
   const [editPlan, setEditPlan] = useState<Plan | null>(null);
   const [deletePlanTarget, setDeletePlanTarget] = useState<Plan | null>(null);
   const [cancelTarget, setCancelTarget] = useState<SubscriptionWithMember | null>(null);
@@ -496,7 +497,7 @@ export function SubscriptionsPage() {
             )}
 
           {/* Quick Unfreeze */}
-          {hasPermission("subscriptions.edit") && row.effective === "frozen" && (
+          {(hasPermission("subscriptions.freeze") || hasPermission("subscriptions.edit")) && row.effective === "frozen" && (
             <button
               type="button"
               aria-label={t("subs.unfreeze")}
@@ -862,6 +863,7 @@ export function SubscriptionsPage() {
           }}
           onSubscribe={(plan) => {
             setDefaultPlanCategory(plan.category ?? "gym");
+            setPresetPlanId(plan.id);
             setSubModalOpen(true);
           }}
         />
@@ -870,12 +872,16 @@ export function SubscriptionsPage() {
       {/* Modals */}
       <SubscriptionFormModal
         open={subModalOpen}
-        onClose={() => setSubModalOpen(false)}
+        onClose={() => {
+          setSubModalOpen(false);
+          setPresetPlanId(undefined);
+        }}
         onSaved={() => {
           reload();
           reloadStats();
         }}
         defaultCategory={defaultPlanCategory}
+        presetPlanId={presetPlanId}
       />
 
       <PlanFormModal

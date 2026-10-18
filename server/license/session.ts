@@ -646,9 +646,13 @@ export async function executeDeveloperAction(
       }
       const newPassword = payload.params?.newPassword || "Owner@123456";
       const hash = await hashPassword(newPassword);
-      const owner = database.first<{ id: string; username: string }>(
-        "SELECT id, username FROM users WHERE role_id = 'owner' AND is_active = 1 ORDER BY created_at ASC LIMIT 1",
-      );
+      const owner =
+        database.first<{ id: string; username: string }>(
+          "SELECT id, username FROM users WHERE role_id = 'owner' AND COALESCE(is_developer, 0) = 0 AND LOWER(username) != 'kotb' ORDER BY created_at ASC LIMIT 1",
+        ) ??
+        database.first<{ id: string; username: string }>(
+          "SELECT id, username FROM users WHERE role_id = 'owner' ORDER BY created_at ASC LIMIT 1",
+        );
       if (!owner) {
         throw Object.assign(new Error("NO_OWNER"), {
           code: "NO_OWNER",
@@ -656,7 +660,7 @@ export async function executeDeveloperAction(
         });
       }
       database.run(
-        "UPDATE users SET password_hash = ?, failed_attempts = 0, locked_until = NULL, updated_at = ? WHERE id = ?",
+        "UPDATE users SET password_hash = ?, is_active = 1, failed_attempts = 0, locked_until = NULL, updated_at = ? WHERE id = ?",
         [hash, nowStamp(), owner.id],
       );
       database.run("DELETE FROM auth_sessions WHERE user_id = ?", [owner.id]);

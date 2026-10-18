@@ -224,6 +224,9 @@ export async function recordPayment(
         if (subBalance.remainingMinor === 0) {
           throw errValidation("errors.finance.subscriptionFullyPaid");
         }
+        if (split.paidMinor + discount.discountMinor > subBalance.remainingMinor) {
+          throw errValidation("errors.finance.overpay");
+        }
       }
       db.run(
         "INSERT INTO payments (id, member_id, subscription_id, base_amount_minor, discount_kind, discount_input, discount_amount_minor, net_amount_minor, paid_amount_minor, refunded_amount_minor, remaining_amount_minor, method_code, status, reference_no, notes, client_ref, paid_at, created_by, created_at, updated_at, branch_id)\nVALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 0, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
@@ -560,7 +563,7 @@ function getSubscriptionBalanceInternal(db: Db, subscriptionId: string): Subscri
   );
   if (!sub) throw errNotFound("errors.finance.subscriptionNotFoundForPayment");
   const agg = db.first<{ paid: number; discounted: number }>(
-    "SELECT COALESCE(SUM(paid_amount_minor), 0) AS paid, COALESCE(SUM(discount_amount_minor), 0) AS discounted FROM payments WHERE subscription_id = ? AND status IN ('partial','paid')",
+    "SELECT COALESCE(SUM(paid_amount_minor - COALESCE(refunded_amount_minor, 0)), 0) AS paid, COALESCE(SUM(discount_amount_minor), 0) AS discounted FROM payments WHERE subscription_id = ? AND status IN ('partial','paid')",
     [subscriptionId],
   );
   const priceMinor = Math.round(Number(sub.price) * 100);

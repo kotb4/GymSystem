@@ -27,3 +27,4 @@ _*.mjs
 .playwright-cli/
 *.pdf
 .agents/
+incoming-updates/

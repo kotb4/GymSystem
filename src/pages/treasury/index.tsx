@@ -46,6 +46,7 @@ export function TreasuryPage() {
   const [activeTab, setActiveTab] = useState<TreasuryTab>("sessions");
 
   const canView = hasPermission("payments.view");
+  const canViewReports = hasPermission("reports.view");
 
   if (!canView) {
     return (
@@ -57,8 +58,12 @@ export function TreasuryPage() {
 
   const subTabs = [
     { value: "sessions", label: "الورديات اليومية وتقفيل الوردية (Z-Report)", icon: Clock3 },
-    { value: "ledger", label: "سجل القيود المحاسبي المباشر", icon: ReceiptText },
-    { value: "cashiers", label: "أداء وتحصيل الكاشير", icon: Users },
+    ...(canViewReports
+      ? [
+          { value: "ledger", label: "سجل القيود المحاسبي المباشر", icon: ReceiptText },
+          { value: "cashiers", label: "أداء وتحصيل الكاشير", icon: Users },
+        ]
+      : []),
   ];
 
   return (
@@ -107,7 +112,7 @@ export function TreasuryPage() {
       )}
 
       {/* Tab 2: Live Financial Ledger (سجل القيود وحركات الخزينة المباشرة) */}
-      {activeTab === "ledger" && (
+      {canViewReports && activeTab === "ledger" && (
         <section className="space-y-4">
           <p className="text-xs text-subtle">{t("treasury.ledgerDesc")}</p>
           <TreasuryLedgerPanel />
@@ -115,7 +120,7 @@ export function TreasuryPage() {
       )}
 
       {/* Tab 3: Cashier Performance Summary (ملخص أداء وتحصيل الكاشير) */}
-      {activeTab === "cashiers" && (
+      {canViewReports && activeTab === "cashiers" && (
         <section className="space-y-4">
           <p className="text-xs text-subtle">{t("treasury.cashiersDesc")}</p>
           <CashierPerformancePanel />

@@ -201,7 +201,7 @@ export async function recordCheckIn(
   let subscription = findActiveSubscription(db, member.id, today);
   if (!subscription) {
     const frozenSub = db.first<{ id: string; end_date: string; frozen_at: string | null }>(
-      "SELECT id, end_date, frozen_at FROM member_subscriptions WHERE member_id = ? AND status = 'suspended' AND start_date <= ? AND end_date >= ? LIMIT 1",
+      "SELECT id, end_date, frozen_at FROM member_subscriptions WHERE member_id = ? AND status = 'suspended' AND frozen_at IS NOT NULL AND start_date <= ? AND end_date >= ? LIMIT 1",
       [member.id, today, today],
     );
     if (frozenSub) {
@@ -389,7 +389,7 @@ export function memberOutstandingMinor(db: Db, memberId: string): number {
   const subs = Number(
     db.scalar(
       `WITH paid AS (
-        SELECT subscription_id, SUM(paid_amount_minor) AS p, SUM(discount_amount_minor) AS d
+        SELECT subscription_id, SUM(paid_amount_minor - COALESCE(refunded_amount_minor, 0)) AS p, SUM(discount_amount_minor) AS d
         FROM payments
         WHERE status IN ('partial', 'paid')
         GROUP BY subscription_id
@@ -407,8 +407,14 @@ export function memberOutstandingMinor(db: Db, memberId: string): number {
       [memberId],
     ) ?? 0,
   );
+  const pt = Number(
+    db.scalar(
+      "SELECT COALESCE(SUM(remaining_amount_minor), 0) FROM private_trainings WHERE member_id = ? AND status != 'cancelled' AND remaining_amount_minor > 0",
+      [memberId],
+    ) ?? 0,
+  );
   const credit = loyaltyUsableCreditMinor(db, memberId);
-  return Math.max(0, subs + store - credit);
+  return Math.max(0, subs + store + pt - credit);
 }
 
 /** Optional check-out; enabled via attendance_checkout_enabled setting. */

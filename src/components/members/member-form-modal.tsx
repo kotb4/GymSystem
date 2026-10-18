@@ -126,7 +126,7 @@ export function MemberFormModal({ open, onClose, onSaved, member }: MemberFormMo
           try {
             let portalUrl = "";
             try {
-              const portal = await api.memberPortal.getUrl(finalMember.id);
+              const portal = await api.memberPortal.getUrl(finalMember.id, window.location.origin);
               if (portal?.url) portalUrl = portal.url;
             } catch {}
 

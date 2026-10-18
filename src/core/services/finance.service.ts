@@ -52,7 +52,7 @@ export function getMemberOutstanding(
     disc: number | null;
   }>(
     `WITH paid AS (
-      SELECT subscription_id, SUM(paid_amount_minor) AS p, SUM(discount_amount_minor) AS d
+      SELECT subscription_id, SUM(paid_amount_minor - COALESCE(refunded_amount_minor, 0)) AS p, SUM(discount_amount_minor) AS d
       FROM payments
       WHERE status IN ('partial', 'paid')
       GROUP BY subscription_id

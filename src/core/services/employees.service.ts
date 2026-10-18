@@ -328,9 +328,16 @@ export async function recordSalary(db: Db, actor: ServiceActor, input: SalaryRec
   if (baseMinor < 0) throw errValidation("errors.finance.invalidAmount");
 
   const bonus = Math.round(input.bonusMinor ?? 0);
-  const deduction = Math.round(input.deductionMinor ?? 0);
+  const manualDeduction = Math.round(input.deductionMinor ?? 0);
   assertNonNegativeInteger(bonus, "errors.finance.invalidAmount");
-  assertNonNegativeInteger(deduction, "errors.finance.invalidAmount");
+  assertNonNegativeInteger(manualDeduction, "errors.finance.invalidAmount");
+  const openAdvancesMinor = Number(
+    db.scalar(
+      "SELECT COALESCE(SUM(amount_minor - repaid_minor), 0) FROM employee_advances WHERE employee_id = ? AND deduction_month = ? AND status = 'open'",
+      [input.employeeId, period],
+    ) ?? 0,
+  );
+  const deduction = manualDeduction + openAdvancesMinor;
   const net = baseMinor + bonus - deduction;
   if (net < 0) throw errValidation("errors.finance.invalidAmount");
 

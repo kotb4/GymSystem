@@ -301,8 +301,13 @@ export async function deleteTrainer(
     // 3. Unlink employees referencing this trainer
     db.run("UPDATE employees SET trainer_id = NULL WHERE trainer_id = ?", [trainerId]);
 
-    // 4. Delete training plans for this trainer
+    // 4. Delete training plans, PT sessions/packages, payouts, attendance & unlink quick sessions
     db.run("DELETE FROM training_plans WHERE trainer_id = ?", [trainerId]);
+    db.run("DELETE FROM private_training_sessions WHERE trainer_id = ? OR private_training_id IN (SELECT id FROM private_trainings WHERE trainer_id = ?)", [trainerId, trainerId]);
+    db.run("DELETE FROM private_trainings WHERE trainer_id = ?", [trainerId]);
+    db.run("DELETE FROM trainer_payouts WHERE trainer_id = ?", [trainerId]);
+    db.run("DELETE FROM trainer_attendance WHERE trainer_id = ?", [trainerId]);
+    db.run("UPDATE quick_sessions SET trainer_id = NULL WHERE trainer_id = ?", [trainerId]);
 
     // 5. Delete trainer
     db.run("DELETE FROM trainers WHERE id = ?", [trainerId]);

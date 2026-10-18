@@ -1,4 +1,4 @@
-import { errNotFound, errValidation } from "@/core/errors";
+import { errConflict, errNotFound, errValidation } from "@/core/errors";
 import { requirePermission, type ServiceActor } from "@/core/permissions";
 import type { Db, Row, SqlValue } from "@/db/engine";
 import { nowStamp, todayKey } from "@/core/dates";
@@ -100,6 +100,13 @@ export function recordTrainerCheckIn(
   const id = randomUUID();
   const stamp = nowStamp();
   const targetDate = input.date || todayKey();
+  const existingOpen = db.first(
+    "SELECT id FROM trainer_attendance WHERE trainer_id = ? AND date = ? AND check_out_time IS NULL",
+    [input.trainerId, targetDate],
+  );
+  if (existingOpen) {
+    throw errConflict("errors.hrAlreadyClockedIn");
+  }
   const now = new Date();
   const timeStr = input.time || `${String(now.getHours()).padStart(2, "0")}:${String(now.getMinutes()).padStart(2, "0")}`;
   const status = input.status || "present";

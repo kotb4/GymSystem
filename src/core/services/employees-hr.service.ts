@@ -2,7 +2,7 @@ import { errConflict, errForbidden, errNotFound, errValidation } from "@/core/er
 import { assertNonNegativeInteger } from "@/core/money";
 import { requirePermission, roleHasPermission, type ServiceActor } from "@/core/permissions";
 import type { Db, Row } from "@/db/engine";
-import { nowStamp, todayKey, isValidDateKey, diffDaysKeys } from "@/core/dates";
+import { nowStamp, todayKey, isValidDateKey, diffDaysKeys, addDaysKey } from "@/core/dates";
 import { recordAudit } from "./audit.service";
 import { insertLedgerEntry } from "./payments.service";
 
@@ -355,10 +355,16 @@ export async function clockOut(
   const dateKey = input.dateKey ? assertDateKey(input.dateKey) : todayKey();
   const at = input.at?.trim() || nowStamp();
 
-  const existing = db.first<Row>(
+  let existing = db.first<Row>(
     "SELECT * FROM employee_attendance WHERE employee_id = ? AND date_key = ?",
     [str(employee.id), dateKey],
   );
+  if (!existing && !input.dateKey) {
+    existing = db.first<Row>(
+      "SELECT * FROM employee_attendance WHERE employee_id = ? AND date_key = ? AND clock_out_at IS NULL",
+      [str(employee.id), addDaysKey(dateKey, -1)],
+    );
+  }
   if (!existing) throw errNotFound("errors.hrNotClockedIn");
   if (existing.clock_out_at) throw errConflict("errors.hrAlreadyClockedOut");
 
@@ -449,10 +455,16 @@ export async function clockOutEmployee(
   const dateKey = input.dateKey ? assertDateKey(input.dateKey) : todayKey();
   const at = input.at?.trim() || nowStamp();
 
-  const existing = db.first<Row>(
+  let existing = db.first<Row>(
     "SELECT * FROM employee_attendance WHERE employee_id = ? AND date_key = ?",
     [str(employee.id), dateKey],
   );
+  if (!existing && !input.dateKey) {
+    existing = db.first<Row>(
+      "SELECT * FROM employee_attendance WHERE employee_id = ? AND date_key = ? AND clock_out_at IS NULL",
+      [str(employee.id), addDaysKey(dateKey, -1)],
+    );
+  }
   if (!existing) throw errNotFound("errors.hrNotClockedIn");
   if (existing.clock_out_at) throw errConflict("errors.hrAlreadyClockedOut");
 
@@ -1509,10 +1521,16 @@ export async function clockOutByBarcode(
   const dateKey = input.dateKey ? assertDateKey(input.dateKey) : todayKey();
   const at = input.at?.trim() || nowStamp();
 
-  const existing = db.first<Row>(
+  let existing = db.first<Row>(
     "SELECT * FROM employee_attendance WHERE employee_id = ? AND date_key = ?",
     [str(employee.id), dateKey],
   );
+  if (!existing && !input.dateKey) {
+    existing = db.first<Row>(
+      "SELECT * FROM employee_attendance WHERE employee_id = ? AND date_key = ? AND clock_out_at IS NULL",
+      [str(employee.id), addDaysKey(dateKey, -1)],
+    );
+  }
   if (!existing) throw errNotFound("errors.hrNotClockedIn");
   if (existing.clock_out_at) throw errConflict("errors.hrAlreadyClockedOut");
 
@@ -1754,14 +1772,15 @@ export async function addAdvance(
     if (expenseCategoryId) {
       const expId = crypto.randomUUID();
       db.run(
-        `INSERT INTO expenses (id, category_id, amount_minor, method_code, description, expense_date, status, created_by, updated_by, created_at, updated_at)
-         VALUES (?, ?, ?, 'cash', ?, ?, 'active', ?, NULL, ?, ?)`,
+        `INSERT INTO expenses (id, category_id, amount_minor, method_code, description, expense_date, reference_no, status, created_by, updated_by, created_at, updated_at)
+         VALUES (?, ?, ?, 'cash', ?, ?, ?, 'active', ?, NULL, ?, ?)`,
         [
           expId,
           expenseCategoryId,
           amountMinor,
           `سلفة موظف: ${str(employee.full_name)} (تخصم من شهر ${deductionMonth})`,
           ts.slice(0, 10),
+          id,
           actor.userId,
           ts,
           ts,
@@ -1818,6 +1837,31 @@ export async function cancelAdvance(
       "UPDATE employee_advances SET status = 'cancelled', updated_at = ? WHERE id = ?",
       [ts, id],
     );
+    const linkedExpense = db.first<Row>(
+      "SELECT id, amount_minor, method_code FROM expenses WHERE status = 'active' AND (reference_no = ? OR (description = ? AND amount_minor = ?)) ORDER BY created_at DESC LIMIT 1",
+      [
+        id,
+        `سلفة موظف: ${str(employee.full_name)} (تخصم من شهر ${str(row.deduction_month)})`,
+        num(row.amount_minor),
+      ],
+    );
+    if (linkedExpense) {
+      db.run(
+        "UPDATE expenses SET status = 'voided', voided_by = ?, voided_at = ?, void_reason = ?, updated_at = ? WHERE id = ?",
+        [actor.userId, ts, "إلغاء سلفة موظف", ts, str(linkedExpense.id)],
+      );
+      insertLedgerEntry(db, {
+        entryType: "reversal_expense",
+        refTable: "expenses",
+        refId: str(linkedExpense.id),
+        memberId: null,
+        methodCode: str(linkedExpense.method_code) || "cash",
+        direction: 1,
+        amountMinor: num(linkedExpense.amount_minor),
+        occurredAt: ts,
+        actor,
+      });
+    }
     recordAudit(db, actor, "EMPLOYEE_ADVANCE_CANCELLED", "employee_advances", id, {
       employee: str(employee.full_name),
       amountMinor: num(row.amount_minor),

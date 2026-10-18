@@ -69,7 +69,7 @@ export const NAV_ROUTES: NavRoute[] = [
   // 8. التسويق وعلاقات العملاء
   { path: "/crm", key: "nav.crm", group: "marketing", permissions: ["leads.view", "trials.view"], featureFlag: "featureCrmEnabled" },
   { path: "/messages", key: "nav.messages", group: "marketing", permission: "messages.view", featureFlag: "featureWhatsappEnabled" },
-  { path: "/loyalty", key: "nav.loyalty", group: "marketing", permission: "loyalty.manage", featureFlag: "featureLoyaltyEnabled" },
+  { path: "/loyalty", key: "nav.loyalty", group: "marketing", permissions: ["loyalty.view", "loyalty.manage"], featureFlag: "featureLoyaltyEnabled" },
   { path: "/referrals", key: "nav.referrals", group: "marketing", permission: "referrals.view", featureFlag: "featureReferralsEnabled" },
 
   // 9. إدارة النظام والأمان

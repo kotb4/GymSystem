@@ -529,7 +529,7 @@ export function ReceptionTab() {
             {/* Card 3: Expiring Soon */}
             <button
               type="button"
-              onClick={() => navigate("/reports")}
+              onClick={() => navigate("/subscriptions")}
               className="group relative overflow-hidden rounded-2xl border border-white/[0.08] bg-panel/70 p-3.5 text-start backdrop-blur-md transition-all duration-200 hover:border-amber-500/50 hover:bg-white/[0.04] hover:scale-[1.01] active:scale-[0.99]"
             >
               <div className="flex items-center justify-between">
@@ -1060,7 +1060,7 @@ function StatusPanel({
   const member = lookup.member!;
   const elig = lookup.eligibility;
   const valid = elig?.eligible ?? false;
-  const left = elig?.subscriptionEndsAt != null ? diffDaysKeys(elig.subscriptionEndsAt, todayKey()) : null;
+  const left = elig?.subscriptionEndsAt != null ? Math.max(0, diffDaysKeys(todayKey(), elig.subscriptionEndsAt) + 1) : null;
 
   const [academySubs, setAcademySubs] = useState<
     Array<{ id: string; planName: string; remaining: number | null; total: number | null; used: number }>
