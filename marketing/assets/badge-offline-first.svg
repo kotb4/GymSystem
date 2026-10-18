@@ -1,0 +1,32 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 300 300" width="100%" height="100%">
+  <defs>
+    <linearGradient id="badgeGrad" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" stop-color="#06b6d4"/>
+      <stop offset="100%" stop-color="#10b981"/>
+    </linearGradient>
+    <filter id="badgeGlow" x="-20%" y="-20%" width="140%" height="140%">
+      <feGaussianBlur stdDeviation="8" result="blur" />
+      <feComposite in="SourceGraphic" in2="blur" operator="over" />
+    </filter>
+  </defs>
+
+  <!-- Outer Ring Badge -->
+  <circle cx="150" cy="150" r="140" fill="#090d16" stroke="url(#badgeGrad)" stroke-width="4" filter="url(#badgeGlow)"/>
+  <circle cx="150" cy="150" r="126" fill="#0f172a" stroke="#1e293b" stroke-width="2" stroke-dasharray="6,6"/>
+
+  <!-- Icon: Lightning + Shield -->
+  <path d="M 150 48 L 195 72 L 195 125 C 195 160 150 185 150 185 C 150 185 105 160 105 125 L 105 72 Z" 
+        fill="#083344" stroke="#00f2fe" stroke-width="3"/>
+  <polygon points="152,65 132,108 149,108 145,152 170,100 153,100" fill="#38bdf8"/>
+
+  <!-- Text Curving / Badges -->
+  <text x="150" y="215" font-family="'Cairo', sans-serif" font-size="20" font-weight="900" fill="#ffffff" text-anchor="middle">
+    100% OFFLINE FIRST
+  </text>
+  <text x="150" y="242" font-family="'Cairo', sans-serif" font-size="16" font-weight="700" fill="#34d399" text-anchor="middle">
+    شغال أوفلاين بلا إنترنت
+  </text>
+  <text x="150" y="265" font-family="'Cairo', sans-serif" font-size="12" font-weight="600" fill="#94a3b8" text-anchor="middle">
+    أمان كامل لبيانات صالتك
+  </text>
+</svg>

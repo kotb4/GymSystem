@@ -68,11 +68,15 @@ export async function setup(db: Db, input: SetupInput): Promise<PublicUser> {
     // first-time setup so two concurrent `setup()` calls cannot both pass the
     // pre-check and create competing owners. Only one owner ever wins.
     if (countTotalOwners(db) !== 0) throw errConflict("errors.setupAlreadyDone");
+    db.run("INSERT INTO counters (name, value) VALUES ('user_code', 1) ON CONFLICT(name) DO UPDATE SET value = value + 1");
+    const seq = Number(db.scalar("SELECT value FROM counters WHERE name = 'user_code'") ?? 1);
+    const userCode = `U${seq}`;
     db.run(
-      "INSERT INTO users (id, username, email, phone, password_hash, full_name, role_id, is_active, created_at, updated_at)\nVALUES (?, ?, NULL, ?, ?, ?, 'owner', 1, ?, ?)",
-      [id, username, phone, hash, fullName, stamp, stamp],
+      "INSERT INTO users (id, username, email, phone, password_hash, full_name, role_id, is_active, user_code, created_at, updated_at)\nVALUES (?, ?, NULL, ?, ?, ?, 'owner', 1, ?, ?, ?)",
+      [id, username, phone, hash, fullName, userCode, stamp, stamp],
     );
     writeSettingInternal(db, SETTING_KEYS.gymName, gymName);
+    if (phone) writeSettingInternal(db, SETTING_KEYS.gymPhone, phone);
     recordAudit(db, { userId: id, username }, "SETUP_COMPLETED", "system", null, {
       gymName,
       ownerUsername: username,

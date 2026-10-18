@@ -19,8 +19,9 @@ import { logLine } from "./context.js";
  * bundled npm under `runtime/npm` (copied by scripts/build-exe.mjs).
  */
 
-const WPP_PACKAGE = "@wppconnect-team/wppconnect";
-const WPP_VERSION = "2.3.3";
+const BAILEYS_PACKAGE = "@whiskeysockets/baileys";
+const BAILEYS_VERSION = "^6.7.24";
+const EXTRA_PACKAGES = ["pino@^8.21.0", "qrcode@^1.5.4", "@hapi/boom@^10.0.1"];
 
 export interface EngineStatus {
   engineDir: string;
@@ -36,20 +37,26 @@ export function engineDir(): string {
   return path.join(resolveAppDirs().root, "WhatsAppEngine");
 }
 
-function wppPkgPath(dir: string): string {
-  return path.join(dir, "node_modules", WPP_PACKAGE);
+function baileysPkgPath(dir: string): string {
+  return path.join(dir, "node_modules", BAILEYS_PACKAGE);
 }
 
 function readInstalledVersion(dir: string): string | null {
   try {
-    return JSON.parse(fs.readFileSync(path.join(wppPkgPath(dir), "package.json"), "utf8")).version ?? null;
+    const localPkg = path.join(process.cwd(), "whatsapp-gateway", "node_modules", BAILEYS_PACKAGE, "package.json");
+    if (fs.existsSync(localPkg)) {
+      return JSON.parse(fs.readFileSync(localPkg, "utf8")).version ?? null;
+    }
+    return JSON.parse(fs.readFileSync(path.join(baileysPkgPath(dir), "package.json"), "utf8")).version ?? null;
   } catch {
     return null;
   }
 }
 
 function isInstalled(dir: string): boolean {
-  return fs.existsSync(path.join(wppPkgPath(dir), "package.json"));
+  const localPkg = path.join(process.cwd(), "whatsapp-gateway", "node_modules", BAILEYS_PACKAGE, "package.json");
+  if (fs.existsSync(localPkg)) return true;
+  return fs.existsSync(path.join(baileysPkgPath(dir), "package.json"));
 }
 
 /**
@@ -58,17 +65,20 @@ function isInstalled(dir: string): boolean {
  * Used by both the in-process WhatsApp client and anything that needs WPP APIs
  * without spawning the gateway process.
  */
-export function loadWppconnect(): any {
+export function loadWppconnect(): unknown {
+  const localPkg = path.join(process.cwd(), "whatsapp-gateway", "node_modules", BAILEYS_PACKAGE);
+  if (fs.existsSync(localPkg)) {
+    const req = createRequire(path.join(process.cwd(), "whatsapp-gateway", "package.json"));
+    return req(BAILEYS_PACKAGE);
+  }
   const dir = engineDir();
   if (!isInstalled(dir)) {
     throw new Error(
       "whatsapp engine not installed — run «تثبيت محرك الواتساب» from Settings first",
     );
   }
-  // Root the require at the engine dir so wppconnect's own deps (puppeteer,
-  // sharp, ...) resolve from the engine's node_modules tree.
   const requireFromEngine = createRequire(path.join(dir, "package.json"));
-  return requireFromEngine(wppPkgPath(dir));
+  return requireFromEngine(baileysPkgPath(dir));
 }
 
 /** Dev → PATH npm. Packaged → bundled `runtime\node.exe runtime\npm\bin\npm-cli.js`. */
@@ -110,10 +120,40 @@ export async function startEngineInstall(opts: { packaged: boolean }): Promise<b
   logTail = [];
 
   try {
+    try {
+      const { terminateGatewayProcessOnPort } = await import("./gateway-spawn.js");
+      terminateGatewayProcessOnPort(8891, (msg) => logLine(`[whatsapp-engine] pre-install: ${msg}`));
+    } catch {}
+
     fs.mkdirSync(dir, { recursive: true });
     const pkgFile = path.join(dir, "package.json");
-    if (!fs.existsSync(pkgFile)) {
-      fs.writeFileSync(pkgFile, JSON.stringify({ name: "gym-whatsapp-engine", private: true, version: "1.0.0" }, null, 2));
+    let rewritePkg = !fs.existsSync(pkgFile);
+    if (fs.existsSync(pkgFile)) {
+      try {
+        JSON.parse(fs.readFileSync(pkgFile, "utf8"));
+      } catch {
+        rewritePkg = true;
+      }
+    }
+    if (rewritePkg) {
+      fs.writeFileSync(
+        pkgFile,
+        JSON.stringify(
+          {
+            name: "gym-whatsapp-engine",
+            private: true,
+            version: "1.0.0",
+            dependencies: {
+              [BAILEYS_PACKAGE]: BAILEYS_VERSION,
+              pino: "^8.21.0",
+              qrcode: "^1.5.4",
+              "@hapi/boom": "^10.0.1",
+            },
+          },
+          null,
+          2,
+        ),
+      );
     }
 
     const npmCache = path.join(dir, ".npm-cache");
@@ -126,11 +166,13 @@ export async function startEngineInstall(opts: { packaged: boolean }): Promise<b
     const installArgs = [
       ...args,
       "install",
+      "--save",
       "--no-audit",
       "--no-fund",
       "--loglevel=error",
       `--cache=${npmCache}`,
-      WPP_PACKAGE + "@" + WPP_VERSION,
+      BAILEYS_PACKAGE + "@" + BAILEYS_VERSION,
+      ...EXTRA_PACKAGES,
     ];
     pushLog(`running: ${file} ${installArgs.join(" ")}`);
     logLine(`[whatsapp-engine] install start`);
@@ -164,6 +206,17 @@ export async function startEngineInstall(opts: { packaged: boolean }): Promise<b
       lastError = `npm install exited with code ${code}`;
       pushLog(`ERROR: ${lastError}`);
       return false;
+    }
+
+    try {
+      const { ensureGateway, probeGateway } = await import("./gateway-spawn.js");
+      const url = "http://127.0.0.1:8891";
+      if (await probeGateway(url, 400)) {
+        logLine("[whatsapp-engine] restarting gateway to load newly installed engine");
+        await ensureGateway(url, { packaged: opts.packaged, log: logLine, forceRestart: true });
+      }
+    } catch (e: any) {
+      logLine(`[whatsapp-engine] post-install gateway restart notice: ${e?.message || e}`);
     }
     return true;
   } catch (error) {

@@ -5,11 +5,13 @@ import type { Db, Row } from "@/db/engine";
 import { assignDocNo } from "./document-numbers.service";
 import { recordAudit } from "./audit.service";
 import { getCardByBarcode } from "./cards.service";
-import { readSetting, SETTING_KEYS } from "./settings.service";
+import { getOccupancyDurationMinutes, readSetting, SETTING_KEYS } from "./settings.service";
 import { getMemberRowById } from "./members.service";
 import { activeTrialForMember } from "./trials.service";
 import { unfreezeSubscription } from "./subscriptions.service";
 import { applyEarnRule, loyaltyUsableCreditMinor } from "./loyalty.service";
+
+import { getLocalBranchId } from "@/core/branch";
 
 /**
  * Internal sentinel used to abort a check-in write transaction when the
@@ -27,7 +29,9 @@ export type CheckInDenialReason =
   | "MEMBER_INACTIVE"
   | "MEMBER_DELETED"
   | "NO_ACTIVE_SUBSCRIPTION"
-  | "NO_SESSIONS_LEFT";
+  | "NO_SESSIONS_LEFT"
+  | "DAY_NOT_ALLOWED"
+  | "BRANCH_NOT_ALLOWED";
 
 export type CheckInResult =
   | {
@@ -97,6 +101,7 @@ interface ActiveSubRow extends Row {
   plan_kind: string | null;
   sessions_total: number | null;
   sessions_used: number;
+  allowed_days: string | null;
 }
 
 /**
@@ -107,7 +112,7 @@ interface ActiveSubRow extends Row {
  */
 export function findActiveSubscription(db: Db, memberId: string, today: string): ActiveSubRow | null {
   const rows = db.all<ActiveSubRow>(
-    "SELECT s.id, s.end_date, p.name AS plan_name, p.kind AS plan_kind, s.sessions_total, s.sessions_used\nFROM member_subscriptions s\nJOIN membership_plans p ON p.id = s.plan_id\nWHERE s.member_id = ? AND s.status = 'active' AND s.start_date <= ? AND s.end_date >= ?\nORDER BY (CASE WHEN p.kind = 'sessions' THEN 0 ELSE 1 END), s.end_date DESC",
+    "SELECT s.id, s.end_date, p.name AS plan_name, p.kind AS plan_kind, s.sessions_total, s.sessions_used, p.allowed_days\nFROM member_subscriptions s\nJOIN membership_plans p ON p.id = s.plan_id\nWHERE s.member_id = ? AND s.status = 'active' AND s.start_date <= ? AND s.end_date >= ?\nORDER BY (CASE WHEN p.kind = 'sessions' THEN 0 ELSE 1 END), s.end_date DESC",
     [memberId, today, today],
   );
   for (const row of rows) {
@@ -123,7 +128,7 @@ export function findActiveSubscription(db: Db, memberId: string, today: string):
   // exhausted subscription so the UI can show NO_SESSIONS_LEFT
   return (
     db.first<ActiveSubRow>(
-      "SELECT s.id, s.end_date, p.name AS plan_name, p.kind AS plan_kind, s.sessions_total, s.sessions_used\nFROM member_subscriptions s\nJOIN membership_plans p ON p.id = s.plan_id\nWHERE s.member_id = ? AND s.status = 'active' AND s.start_date <= ? AND s.end_date >= ?\nORDER BY (CASE WHEN p.kind = 'sessions' THEN 0 ELSE 1 END), s.end_date DESC LIMIT 1",
+      "SELECT s.id, s.end_date, p.name AS plan_name, p.kind AS plan_kind, s.sessions_total, s.sessions_used, p.allowed_days\nFROM member_subscriptions s\nJOIN membership_plans p ON p.id = s.plan_id\nWHERE s.member_id = ? AND s.status = 'active' AND s.start_date <= ? AND s.end_date >= ?\nORDER BY (CASE WHEN p.kind = 'sessions' THEN 0 ELSE 1 END), s.end_date DESC LIMIT 1",
       [memberId, today, today],
     ) ?? null
   );
@@ -171,6 +176,23 @@ export async function recordCheckIn(
       barcode,
       memberName: member.full_name,
     };
+  }
+
+  // Branch restriction check: If member is restricted to home branch only, check current branch
+  if (Number(member.home_branch_only ?? 0) === 1 && member.branch_id) {
+    const currentBranchId = getLocalBranchId(db);
+    if (member.branch_id !== currentBranchId) {
+      return {
+        kind: "denied",
+        reason: "BRANCH_NOT_ALLOWED",
+        barcode,
+        memberId: member.id,
+        memberName: member.full_name,
+        memberCode: member.member_code,
+        photoFileId: member.photo_file_id,
+        notes: `Member branch is ${member.branch_id}, current branch is ${currentBranchId}`,
+      };
+    }
   }
 
   const today = todayKey();
@@ -250,6 +272,29 @@ export async function recordCheckIn(
       memberName: member.full_name,
     };
   }
+
+  if (subscription.allowed_days) {
+    try {
+      const allowed = JSON.parse(subscription.allowed_days) as (number | string)[];
+      const currentDay = new Date().getDay();
+      if (
+        Array.isArray(allowed) &&
+        allowed.length > 0 &&
+        !allowed.includes(currentDay) &&
+        !allowed.includes(String(currentDay))
+      ) {
+        return {
+          kind: "denied",
+          reason: "DAY_NOT_ALLOWED",
+          barcode,
+          memberName: member.full_name,
+        };
+      }
+    } catch {
+      // ignore
+    }
+  }
+
   const planKind = (subscription.plan_kind ?? "time") as "time" | "sessions" | "open";
   const sessionsTotal =
     subscription.sessions_total == null ? null : Number(subscription.sessions_total);
@@ -306,7 +351,7 @@ export async function recordCheckIn(
           input.deviceIdentifier ?? null,
         ],
       );
-      assignDocNo(db, "attendance", attendanceId, stampNow);
+      assignDocNo(db, "attendance", attendanceId, stampNow, actor);
       if (planKind === "sessions" && sessionsTotal != null) consumeSession(db, subscription.id);
       recordAudit(db, actor, "CHECKIN_RECORDED", "attendance", attendanceId, {
         memberCode: member.member_code,
@@ -371,15 +416,25 @@ export async function recordCheckOut(
   db: Db,
   actor: ServiceActor,
   memberId: string,
+  attendanceId?: string,
 ): Promise<{ kind: "success"; checkoutAt: string } | { kind: "denied"; reason: "NOT_IN_OR_DONE" }> {
   requirePermission(actor, "checkin.create");
-  const today = todayKey();
-  const dayStart = `${today} 00:00:00`;
-  const nextDayStart = `${addDaysKey(today, 1)} 00:00:00`;
-  const open = db.first<{ id: string; checkin_at: string }>(
-    "SELECT id, checkin_at FROM attendance\nWHERE deleted_at IS NULL AND member_id = ? AND checkin_at >= ? AND checkin_at < ? AND checkout_at IS NULL\nORDER BY checkin_at DESC LIMIT 1",
-    [memberId, dayStart, nextDayStart],
-  );
+  let open: { id: string; checkin_at: string } | null = null;
+  if (attendanceId) {
+    open = db.first<{ id: string; checkin_at: string }>(
+      "SELECT id, checkin_at FROM attendance WHERE deleted_at IS NULL AND id = ? AND checkout_at IS NULL",
+      [attendanceId],
+    );
+  }
+  if (!open) {
+    const today = todayKey();
+    const dayStart = `${today} 00:00:00`;
+    const nextDayStart = `${addDaysKey(today, 1)} 00:00:00`;
+    open = db.first<{ id: string; checkin_at: string }>(
+      "SELECT id, checkin_at FROM attendance\nWHERE deleted_at IS NULL AND member_id = ? AND checkin_at >= ? AND checkin_at < ? AND checkout_at IS NULL\nORDER BY checkin_at DESC LIMIT 1",
+      [memberId, dayStart, nextDayStart],
+    );
+  }
   if (!open) return { kind: "denied", reason: "NOT_IN_OR_DONE" };
   const checkoutAt = nowStamp();
   await db.transaction(async () => {
@@ -387,6 +442,100 @@ export async function recordCheckOut(
     recordAudit(db, actor, "CHECKOUT_RECORDED", "attendance", open.id, {});
   });
   return { kind: "success", checkoutAt };
+}
+
+export interface LiveOccupant {
+  attendanceId: string;
+  memberId: string;
+  fullName: string;
+  memberCode: string;
+  phone: string | null;
+  photoFileId: string | null;
+  planName: string | null;
+  checkinAt: string;
+  durationMinutes: number;
+  minutesElapsed: number;
+  minutesRemaining: number;
+  isOverdue: boolean;
+  branchId?: string | null;
+}
+
+export function listLiveOccupants(
+  db: Db,
+  actor: ServiceActor,
+  branchId?: string,
+): { occupants: LiveOccupant[]; totalNow: number; durationMinutes: number } {
+  requirePermission(actor, "checkin.view_history");
+  const targetBranch = branchId && branchId !== "all" ? branchId : undefined;
+  const branchClause = targetBranch ? " AND COALESCE(a.branch_id, 'main') = ?" : "";
+  const branchParams = targetBranch ? [targetBranch] : [];
+
+  const now = new Date();
+  const durationMinutes = getOccupancyDurationMinutes(db);
+  const pad = (n: number) => String(n).padStart(2, "0");
+  const today = `${now.getFullYear()}-${pad(now.getMonth() + 1)}-${pad(now.getDate())}`;
+
+  const rows = db.all<{
+    attendance_id: string;
+    member_id: string;
+    full_name: string;
+    member_code: string;
+    phone: string | null;
+    photo_file_id: string | null;
+    plan_name: string | null;
+    checkin_at: string;
+    branch_id: string | null;
+  }>(
+    `SELECT 
+       a.id AS attendance_id,
+       a.member_id,
+       m.full_name,
+       m.member_code,
+       m.phone,
+       m.photo_file_id,
+       COALESCE(p.name, a.notes, 'حصة يومية') AS plan_name,
+       a.checkin_at,
+       a.branch_id
+     FROM attendance a
+     JOIN members m ON m.id = a.member_id
+     LEFT JOIN member_subscriptions s ON s.id = a.subscription_id
+     LEFT JOIN membership_plans p ON p.id = s.plan_id
+     WHERE a.deleted_at IS NULL
+       AND substr(a.checkin_at, 1, 10) = ?
+       AND a.checkout_at IS NULL${branchClause}
+     ORDER BY a.checkin_at DESC`,
+    [today, ...branchParams],
+  );
+
+  const occupants: LiveOccupant[] = rows.map((r) => {
+    const checkinDate = new Date(r.checkin_at.replace(" ", "T"));
+    const elapsedMs = Math.max(0, now.getTime() - checkinDate.getTime());
+    const minutesElapsed = Math.floor(elapsedMs / (60 * 1000));
+    const minutesRemaining = Math.max(0, durationMinutes - minutesElapsed);
+    const isOverdue = minutesElapsed >= durationMinutes;
+
+    return {
+      attendanceId: r.attendance_id,
+      memberId: r.member_id,
+      fullName: r.full_name,
+      memberCode: r.member_code,
+      phone: r.phone,
+      photoFileId: r.photo_file_id,
+      planName: r.plan_name,
+      checkinAt: r.checkin_at,
+      durationMinutes,
+      minutesElapsed,
+      minutesRemaining,
+      isOverdue,
+      branchId: r.branch_id,
+    };
+  });
+
+  return {
+    occupants,
+    totalNow: occupants.length,
+    durationMinutes,
+  };
 }
 
 interface RecentCheckInRow extends AttendanceRow {

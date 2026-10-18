@@ -2,7 +2,10 @@ import { useCallback, useEffect, useState } from "react";
 import {
   CalendarClock,
   CheckCircle2,
+  Download,
   Hourglass,
+  MessageCircle,
+  Pencil,
   Plus,
   UserPlus,
   XCircle,
@@ -21,7 +24,11 @@ import { Select } from "@/components/ui/select";
 import { Modal } from "@/components/ui/modal";
 import { DataTable, type Column } from "@/components/ui/table";
 import { EmptyState } from "@/components/ui/empty-state";
+import { DateRange } from "@/components/ui/date-range";
+import { Pagination } from "@/components/ui/pagination";
 import { MemberPickerModal } from "@/components/members/member-picker-modal";
+import { downloadCsvWithBom } from "@/utils/csv-helper";
+import { buildWhatsAppDirectUrl } from "@/core/whatsapp";
 
 const DEPTS = ["general", "men", "women"] as const;
 
@@ -93,6 +100,7 @@ function StatChip({ label, value, tone }: { label: string; value: string | numbe
 
 function TrialsView({ refreshKey, onOpen }: { refreshKey: number; onOpen: (t: Trial) => void }) {
   const t = useT();
+  const { toast } = useToast();
   const [rows, setRows] = useState<Trial[]>([]);
   const [total, setTotal] = useState(0);
   const [stats, setStats] = useState<TrialStats | null>(null);
@@ -117,6 +125,33 @@ function TrialsView({ refreshKey, onOpen }: { refreshKey: number; onOpen: (t: Tr
   }, [status, dept, search, page, refreshKey]);
   useEffect(() => { load(); }, [load, refreshKey]);
 
+  const onExportTrials = () => {
+    if (rows.length === 0) {
+      toast("info", t("trialsTab.empty"));
+      return;
+    }
+    const headers = [
+      t("trialsTab.colName"),
+      t("trialsTab.colPhone"),
+      t("trialsTab.colType"),
+      t("trialsTab.colPlan"),
+      t("trialsTab.fieldStartDate"),
+      t("trialsTab.fieldEndDate"),
+      t("trialsTab.colStatus"),
+    ];
+    const dataRows = rows.map((r) => [
+      r.memberName ?? r.phone ?? "—",
+      r.phone ?? "—",
+      t(`trialsTab.type_${r.trialType}`),
+      r.planName ?? "—",
+      r.startDate,
+      r.endDate,
+      t(`trialsTab.status_${r.effectiveStatus}`),
+    ]);
+    downloadCsvWithBom(`التجارب_المجانية_${todayKey()}`, headers, dataRows);
+    toast("success", t("trialsTab.exportSuccess"));
+  };
+
   const columns: Column<Trial>[] = [
     { key: "name", header: t("trialsTab.colName"), render: (r) => (
       <button type="button" onClick={() => onOpen(r)} className="font-bold hover:text-neon">
@@ -132,11 +167,36 @@ function TrialsView({ refreshKey, onOpen }: { refreshKey: number; onOpen: (t: Tr
     ) },
     { key: "plan", header: t("trialsTab.colPlan"), render: (r) => (r.planName ? <Badge variant="violet">{r.planName}</Badge> : "—") },
     { key: "dates", header: t("trialsTab.colDates"), render: (r) => (
-      <span dir="ltr" className="tabnum text-subtle">{r.startDate} → {r.endDate}</span>
+      <DateRange start={r.startDate} end={r.endDate} />
     ) },
     { key: "status", header: t("trialsTab.colStatus"), render: (r) => (
       <Badge variant={statusVariant(r.effectiveStatus)} dot>{t(`trialsTab.status_${r.effectiveStatus}`)}</Badge>
     ) },
+    {
+      key: "actions",
+      header: t("common.actions"),
+      render: (r) => {
+        const waUrl = r.phone ? buildWhatsAppDirectUrl(r.phone, `مرحباً بك في نادينا! نتمنى أن تكون جلستك التجريبية نالت إعجابك. هل لديك أي استفسار عن باقات الاشتراك؟`) : null;
+        return (
+          <div className="flex items-center gap-1.5">
+            {waUrl ? (
+              <a
+                href={waUrl}
+                target="_blank"
+                rel="noreferrer"
+                className="inline-flex size-7 items-center justify-center rounded-lg border border-line bg-panel text-emerald-400 hover:bg-emerald-500/10 transition-colors"
+                title={t("trialsTab.waChat")}
+              >
+                <MessageCircle className="size-3.5" />
+              </a>
+            ) : null}
+            <Button size="sm" variant="ghost" onClick={() => onOpen(r)}>
+              <Pencil className="size-3.5" />
+            </Button>
+          </div>
+        );
+      },
+    },
   ];
 
   const totalPages = Math.max(1, Math.ceil(total / pageSize));
@@ -144,30 +204,30 @@ function TrialsView({ refreshKey, onOpen }: { refreshKey: number; onOpen: (t: Tr
   return (
     <div className="space-y-3">
       <TrialsStatsChips stats={stats} />
-      <div className="flex flex-wrap items-end gap-3">
-        <div className="w-56">
-          <Input label="" placeholder={t("trialsTab.searchPh")} value={search} onChange={(e) => { setSearch(e.target.value); setPage(1); }} />
+      <div className="flex flex-wrap items-end justify-between gap-3">
+        <div className="flex flex-wrap items-end gap-3">
+          <div className="w-56">
+            <Input label="" placeholder={t("trialsTab.searchPh")} value={search} onChange={(e) => { setSearch(e.target.value); setPage(1); }} />
+          </div>
+          <div className="w-40">
+            <Select label="" value={status} onChange={(e) => { setStatus(e.target.value as never); setPage(1); }}
+              options={[{ value: "all", label: t("trialsTab.statusAll") }, ...(["active", "expired", "converted", "cancelled"] as const).map((s) => ({ value: s, label: t(`trialsTab.status_${s}`) }))]} />
+          </div>
+          <div className="w-40">
+            <Select label="" value={dept} onChange={(e) => { setDept(e.target.value as never); setPage(1); }}
+              options={[{ value: "all", label: t("trialsTab.departmentAll") }, ...DEPTS.map((d) => ({ value: d, label: t(`trialsTab.department_${d}`) }))]} />
+          </div>
         </div>
-        <div className="w-40">
-          <Select label="" value={status} onChange={(e) => { setStatus(e.target.value as never); setPage(1); }}
-            options={[{ value: "all", label: t("trialsTab.statusAll") }, ...(["active", "expired", "converted", "cancelled"] as const).map((s) => ({ value: s, label: t(`trialsTab.status_${s}`) }))]} />
-        </div>
-        <div className="w-40">
-          <Select label="" value={dept} onChange={(e) => { setDept(e.target.value as never); setPage(1); }}
-            options={[{ value: "all", label: t("trialsTab.departmentAll") }, ...DEPTS.map((d) => ({ value: d, label: t(`trialsTab.department_${d}`) }))]} />
-        </div>
+        <Button variant="secondary" size="sm" onClick={onExportTrials}>
+          <Download className="size-3.5" />
+          {t("trialsTab.exportTrials")}
+        </Button>
       </div>
       {rows.length === 0
         ? <EmptyState icon={<CalendarClock />} title={t("trialsTab.empty")} />
         : <DataTable columns={columns} data={rows} rowKey={(r) => r.id} />}
       {totalPages > 1 && (
-        <div className="flex items-center justify-between text-xs text-subtle">
-          <span>{t("trialsTab.pageCount", { page, total: totalPages })}</span>
-          <div className="flex gap-2">
-            <Button size="sm" variant="secondary" disabled={page <= 1} onClick={() => setPage((p) => p - 1)}>←</Button>
-            <Button size="sm" variant="secondary" disabled={page >= totalPages} onClick={() => setPage((p) => p + 1)}>→</Button>
-          </div>
-        </div>
+        <Pagination page={page} pageSize={pageSize} total={total} onPageChange={setPage} />
       )}
     </div>
   );
@@ -382,7 +442,7 @@ function TrialDetailModal({ trial, onClose, onChanged }: { trial: Trial | null; 
           <div className="grid grid-cols-2 gap-3 text-sm">
             <div>
               <p className="text-[11px] font-semibold text-subtle">{t("trialsTab.startDate")}</p>
-              <p dir="ltr" className="tabnum">{trial.startDate} ↔ {trial.endDate}</p>
+              <p dir="ltr" className="tabnum">{trial.startDate}</p>
             </div>
             <div>
               <p className="text-[11px] font-semibold text-subtle">{t("trialsTab.endDate")}</p>

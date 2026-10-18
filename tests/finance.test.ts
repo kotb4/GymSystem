@@ -23,10 +23,18 @@ import {
 } from "@/core/services/expenses.service";
 import {
   closeCashSession,
+  getLastClosedCashSession,
+  getOpenCashSession,
   getOpenSessionTotals,
   listCashSessions,
   openCashSession,
+  resolveInterShiftGap,
+  withdrawByOwner,
+  formatHandoverDeficitAlertMessage,
+  sendOwnerHandoverDeficitAlert,
 } from "@/core/services/cash-session.service";
+import { collectNotifications } from "@/core/services/notifications.service";
+import { updateSetting, SETTING_KEYS } from "@/core/services/settings.service";
 import { getFinanceOverview, getMemberOutstanding, listLedgerEntries } from "@/core/services/finance.service";
 import { getPeriodReport } from "@/core/services/financial-report.service";
 import { createUser } from "@/core/services/users.service";
@@ -795,6 +803,233 @@ describe("cash sessions", () => {
     });
     expect(syncAppError(() => listCashSessions(db, reception, {})).code).toBe("FORBIDDEN");
     expect(listCashSessions(db, manager, {}).items.length).toBe(1);
+  });
+
+  it("enforces strict session ownership: only opener or owner can close; other reception staff is rejected", async () => {
+    const receptionA = await createUser(db, owner, {
+      username: "reception_ahmed",
+      password: "Recep@2026",
+      fullName: "أحمد",
+      roleId: "reception",
+    });
+    const receptionB = await createUser(db, owner, {
+      username: "reception_karim",
+      password: "Recep@2026",
+      fullName: "كريم",
+      roleId: "reception",
+    });
+    const actorAhmed = buildActor(receptionA);
+    const actorKarim = buildActor(receptionB);
+
+    const session = await openCashSession(db, actorAhmed, { openingBalanceMinor: 5_000 });
+    expect(session.openedById).toBe(actorAhmed.userId);
+
+    // Karim tries to close Ahmed's session -> must be rejected
+    await expect(closeCashSession(db, actorKarim, session.id, 5_000)).rejects.toMatchObject({
+      code: "VALIDATION",
+      messageKey: "errors.finance.sessionOpenerOnlyCanClose",
+    });
+
+    // Ahmed closes his own session -> succeeds
+    const closed = await closeCashSession(db, actorAhmed, session.id, 5_000);
+    expect(closed.status).toBe("closed");
+    expect(closed.closedById).toBe(actorAhmed.userId);
+  });
+
+  it("allows owner cash withdrawal which reduces expected cash drawer balance and records expense", async () => {
+    const receptionUser = await createUser(db, owner, {
+      username: "reception_staff",
+      password: "Recep@2026",
+      fullName: "موظف الاستقبال",
+      roleId: "reception",
+    });
+    const staffActor = buildActor(receptionUser);
+
+    const session = await openCashSession(db, staffActor, { openingBalanceMinor: 20_000 });
+    const member = await newMember("عضو نقدي");
+    await recordPayment(db, staffActor, {
+      memberId: member.id,
+      baseAmountMinor: 10_000,
+      paidAmountMinor: 10_000,
+      methodCode: "cash",
+    });
+
+    // Initial expected: 20,000 + 10,000 = 30,000
+    const totalsBefore = getOpenSessionTotals(db, staffActor);
+    expect(totalsBefore?.expectedMinor).toBe(30_000);
+
+    // Owner withdraws 15,000 cash from the drawer
+    const withdrawResult = await withdrawByOwner(db, owner, {
+      amountMinor: 15_000,
+      note: "سحب أرباح للمالك",
+    });
+    expect(withdrawResult.amountMinor).toBe(15_000);
+    expect(withdrawResult.expectedRemainingMinor).toBe(15_000);
+
+    // Now expected closing is 15,000
+    const totalsAfter = getOpenSessionTotals(db, staffActor);
+    expect(totalsAfter?.expectedMinor).toBe(15_000);
+    expect(totalsAfter?.cashOutMinor).toBe(15_000);
+
+    // Closing with 15,000 has 0 difference (no shortage blamed on staff)
+    const closed = await closeCashSession(db, staffActor, session.id, 15_000);
+    expect(closed.differenceMinor).toBe(0);
+
+    // Reports include this in cashSummary and detailedCashSessions
+    const report = getPeriodReport(db, owner, todayKey(), todayKey());
+    expect(report.cashSummary.totalOwnerWithdrawalsMinor).toBe(15_000);
+    expect(report.cashSummary.closedSessionsCount).toBeGreaterThanOrEqual(1);
+    expect(report.detailedCashSessions.length).toBeGreaterThanOrEqual(1);
+  });
+
+  it("detects inter-shift handover deficit and resolves it as an expense under shortage category", async () => {
+    // 1. Shift A opened with 50,000 minor and closed with 50,000 minor
+    const shiftA = await openCashSession(db, manager, { openingBalanceMinor: 50_000 });
+    await closeCashSession(db, manager, shiftA.id, 50_000, "إغلاق سليم");
+
+    // Check getLastClosedCashSession
+    const lastClosed = getLastClosedCashSession(db, manager, "gym");
+    expect(lastClosed).not.toBeNull();
+    expect(lastClosed?.countedClosingMinor).toBe(50_000);
+
+    // 2. Shift B opened with 45,000 minor (50 EGP missing between shifts)
+    const shiftB = await openCashSession(db, reception, {
+      openingBalanceMinor: 45_000,
+      gapReason: "عجز 50 جنيه عند استلام الدرج",
+    });
+    expect(shiftB.previousSessionId).toBe(shiftA.id);
+    expect(shiftB.previousClosingMinor).toBe(50_000);
+    expect(shiftB.interShiftGapMinor).toBe(-5_000);
+    expect(shiftB.gapReason).toBe("عجز 50 جنيه عند استلام الدرج");
+    expect(shiftB.gapExpenseId).toBeNull();
+
+    // Verify operational notification bell alerts the management
+    const notifsBefore = collectNotifications(db, manager);
+    const deficitNotif = notifsBefore.find((n) => n.type === "cash_handover_deficit");
+    expect(deficitNotif).toBeDefined();
+    expect(deficitNotif?.count).toBe(1);
+    expect(deficitNotif?.severity).toBe("danger");
+
+    // 3. Resolve the deficit to an expense
+    const res = await resolveInterShiftGap(db, manager, {
+      sessionId: shiftB.id,
+      note: "نثريات بوفيه لم يدرجها الموظف السابق",
+    });
+    expect(res.session.gapExpenseId).toBe(res.expenseId);
+    expect(res.session.gapReason).toBe("نثريات بوفيه لم يدرجها الموظف السابق");
+
+    // Verify notification is cleared after resolution
+    const notifsAfter = collectNotifications(db, manager);
+    expect(notifsAfter.some((n) => n.type === "cash_handover_deficit")).toBe(false);
+
+    // Expense exists and can be retrieved
+    const expList = listExpenses(db, manager, { categoryId: "cat-cash-shortage" });
+    expect(expList.items.some((e) => e.id === res.expenseId)).toBe(true);
+    const exp = expList.items.find((e) => e.id === res.expenseId)!;
+    expect(exp.amountMinor).toBe(5_000);
+    expect(exp.description).toContain("عجز تسليم بين الورديتين");
+
+    // Double resolve should fail while the expense is active
+    await expect(
+      resolveInterShiftGap(db, manager, { sessionId: shiftB.id, note: "محاولة ثانية" }),
+    ).rejects.toMatchObject({
+      code: "CONFLICT",
+    });
+
+    // 4. Voiding the expense reopens the deficit on the cash session and triggers the notification again
+    await voidExpense(db, manager, res.expenseId, "إلغاء عملية العجز بسبب خطأ في الإدخال");
+
+    // Session reflects deficit is unresolved again
+    const sessionAfterVoid = getOpenCashSession(db, manager, "gym");
+    expect(sessionAfterVoid?.gapExpenseId).toBeNull();
+
+    // Notification bell detects the unresolved deficit again
+    const notifsAfterVoid = collectNotifications(db, manager);
+    expect(notifsAfterVoid.some((n) => n.type === "cash_handover_deficit")).toBe(true);
+
+    // Resolving again with a new active expense succeeds (does not conflict with voided expense)
+    const res2 = await resolveInterShiftGap(db, manager, {
+      sessionId: shiftB.id,
+      note: "تسوية نهائية بعد المراجعة",
+    });
+    expect(res2.session.gapExpenseId).toBe(res2.expenseId);
+    expect(res2.expenseId).not.toBe(res.expenseId);
+  });
+
+  it("formats and dispatches supervisory WhatsApp alert to owner on handover deficit", async () => {
+    // 1. Format message test
+    const msg = formatHandoverDeficitAlertMessage({
+      box: "gym",
+      openingBalanceMinor: 45_000,
+      previousClosingMinor: 50_000,
+      deficitMinor: 5_000,
+      openerName: "كاشير الصباح",
+      closerName: "كاشير المساء",
+      gapReason: "عجز استلام",
+      timestamp: "2026-10-17 08:00:00",
+      gymName: "نادي الأبطال",
+    });
+
+    expect(msg).toContain("تنبيه رقابي عاجل: عجز تسليم نقدية بين الورديات");
+    expect(msg).toContain("نادي الأبطال");
+    expect(msg).toContain("خزينة الجيم");
+    expect(msg).toContain("50.00 ج.م");
+    expect(msg).toContain("500.00 ج.م");
+    expect(msg).toContain("450.00 ج.م");
+    expect(msg).toContain("كاشير المساء");
+    expect(msg).toContain("كاشير الصباح");
+    expect(msg).toContain("عجز استلام");
+    expect(msg).toContain("Powered by GymGate");
+
+    // 2. Dispatch with mock transport & ownerAlertPhone setting
+    process.env.GYM_CRM_MOCK = "1";
+    await updateSetting(db, owner, SETTING_KEYS.ownerAlertPhone, "01099887766");
+
+    const resSetting = await sendOwnerHandoverDeficitAlert(db, {
+      box: "gym",
+      openingBalanceMinor: 45_000,
+      previousClosingMinor: 50_000,
+      deficitMinor: 5_000,
+      openerName: "كاشير الصباح",
+      closerName: "كاشير المساء",
+      gapReason: "عجز استلام",
+      timestamp: "2026-10-17 08:00:00",
+    });
+    expect(resSetting.ok).toBe(true);
+
+    // 3. Fallback to user phone when setting is empty
+    await updateSetting(db, owner, SETTING_KEYS.ownerAlertPhone, "");
+    db.run("UPDATE users SET phone = '01122334455' WHERE id = ?", [owner.userId]);
+
+    const resUser = await sendOwnerHandoverDeficitAlert(db, {
+      box: "gym",
+      openingBalanceMinor: 45_000,
+      previousClosingMinor: 50_000,
+      deficitMinor: 5_000,
+      openerName: "كاشير الصباح",
+      closerName: "كاشير المساء",
+      gapReason: "عجز استلام",
+      timestamp: "2026-10-17 08:00:00",
+    });
+    expect(resUser.ok).toBe(true);
+
+    // 4. Fallback to gym_phone when owner user phone is unset
+    db.run("UPDATE users SET phone = NULL WHERE id = ?", [owner.userId]);
+    await updateSetting(db, owner, SETTING_KEYS.gymPhone, "01234567890");
+
+    const resGym = await sendOwnerHandoverDeficitAlert(db, {
+      box: "gym",
+      openingBalanceMinor: 45_000,
+      previousClosingMinor: 50_000,
+      deficitMinor: 5_000,
+      openerName: "كاشير الصباح",
+      closerName: "كاشير المساء",
+      gapReason: "عجز استلام",
+      timestamp: "2026-10-17 08:00:00",
+    });
+    expect(resGym.ok).toBe(true);
+
+    delete process.env.GYM_CRM_MOCK;
   });
 });
 

@@ -52,6 +52,7 @@ export interface MessagePlaceholderData {
   daysSinceLastVisit?: number | null;
   remainingSessions?: number | null;
   discount?: string | null;
+  portalUrl?: string | null;
 }
 
 /**
@@ -61,7 +62,11 @@ export function fillMessagePlaceholders(template: string, data: MessagePlacehold
   let result = template;
   if (data.memberName != null) result = result.split("{اسم العميل}").join(String(data.memberName));
   if (data.memberCode != null) result = result.split("{رقم العضوية}").join(String(data.memberCode));
-  if (data.gymName != null) result = result.split("{اسم الجيم}").join(String(data.gymName));
+  const gymName = (data.gymName != null && String(data.gymName).trim() !== "") ? String(data.gymName).trim() : "الجيم";
+  result = result.split("{اسم الجيم}").join(gymName);
+  result = result.split("{اسم_الجيم}").join(gymName);
+  result = result.split("{gym_name}").join(gymName);
+  result = result.split("{اسم الصالة}").join(gymName);
   if (data.planName != null) result = result.split("{اسم الخطة}").join(String(data.planName));
   if (data.startDate != null) result = result.split("{تاريخ البداية}").join(String(data.startDate));
   if (data.endDate != null) result = result.split("{تاريخ الانتهاء}").join(String(data.endDate));
@@ -74,5 +79,140 @@ export function fillMessagePlaceholders(template: string, data: MessagePlacehold
   if (data.daysSinceLastVisit != null) result = result.split("{عدد أيام الغياب}").join(String(data.daysSinceLastVisit));
   if (data.remainingSessions != null) result = result.split("{الحصص المتبقية}").join(String(data.remainingSessions));
   if (data.discount != null) result = result.split("{الخصم}").join(String(data.discount));
+  if (data.portalUrl != null) {
+    result = result.split("{رابط البوابة}").join(String(data.portalUrl));
+    result = result.split("{رابط الكارنيه}").join(String(data.portalUrl));
+    result = result.split("{الرابط}").join(String(data.portalUrl));
+  }
   return result;
 }
+
+export interface PaymentReceiptMessageData {
+  gymName?: string | null;
+  memberName: string;
+  memberCode?: string | null;
+  receiptNo?: string | null;
+  amountPaid: string | number;
+  amountRemaining?: string | number | null;
+  planName?: string | null;
+  date?: string | null;
+  notes?: string | null;
+}
+
+export function buildPaymentReceiptMessage(data: PaymentReceiptMessageData): string {
+  const gym = data.gymName?.trim() || "الصالة الرياضية";
+  return [
+    `🧾 *إيصال سداد — ${gym}*`,
+    `━━━━━━━━━━━━━━━━`,
+    `👤 *العضو:* ${data.memberName}`,
+    data.memberCode ? `🆔 *كود العضوية:* ${data.memberCode}` : null,
+    data.receiptNo ? `🔢 *رقم الإيصال:* ${data.receiptNo}` : null,
+    data.planName ? `📋 *الاشتراك / البيان:* ${data.planName}` : null,
+    `💵 *المبلغ المدفوع:* ${data.amountPaid} ج.م`,
+    data.amountRemaining && Number(data.amountRemaining) > 0
+      ? `⚠️ *المتبقي:* ${data.amountRemaining} ج.م`
+      : null,
+    data.date ? `📅 *التاريخ:* ${data.date}` : null,
+    data.notes ? `📝 *ملاحظات:* ${data.notes}` : null,
+    `━━━━━━━━━━━━━━━━`,
+    `شكراً لثقتكم بنا وتمنياتنا لكم بتدريب ممتع! 💪✨`,
+  ]
+    .filter(Boolean)
+    .join("\n");
+}
+
+export interface RenewalReminderMessageData {
+  gymName?: string | null;
+  memberName: string;
+  memberCode?: string | null;
+  planName: string;
+  endDate: string;
+  daysRemaining: number;
+}
+
+export function buildRenewalReminderMessage(data: RenewalReminderMessageData): string {
+  const gym = data.gymName?.trim() || "الصالة الرياضية";
+  const daysText = data.daysRemaining === 0 ? "ينتهي اليوم" : `متبقي ${data.daysRemaining} يوم`;
+  return [
+    `🔔 *تذكير تجديد الاشتراك — ${gym}*`,
+    `━━━━━━━━━━━━━━━━`,
+    `مرحباً بك ${data.memberName} 👋`,
+    data.memberCode ? `كود العضوية: ${data.memberCode}` : null,
+    `نود تذكيرك بأن اشتراكك في باقة (*${data.planName}*) سينتهي بتاريخ:`,
+    `📅 *${data.endDate}* (${daysText})`,
+    `━━━━━━━━━━━━━━━━`,
+    `لتجديد اشتراكك ومواصلة أهدافك الرياضية دون انقطاع، يسعدنا تواصلك مع إدارة الاستقبال.`,
+    `نتمنى لك دوام الصحة والتألق! 💪🔥`,
+  ]
+    .filter(Boolean)
+    .join("\n");
+}
+
+/**
+ * Dynamic greeting and closing variations to prevent identical text signatures (anti-ban).
+ */
+export function applyAntiBanVariations(
+  message: string,
+  opts?: { memberName?: string | null; salt?: string },
+): string {
+  const entropy = opts?.salt || Math.random().toString(36).slice(2, 8);
+  const zeroWidthSalt = Array.from(entropy)
+    .map((c) => (c.charCodeAt(0) % 2 === 0 ? "\u200B" : "\u200C"))
+    .join("");
+
+  return `${message}${zeroWidthSalt}`;
+}
+
+export function getRandomGreeting(): string {
+  const list = [
+    "أهلاً يا كابتن",
+    "مرحباً يا بطل",
+    "تحياتنا لك يا كابتن",
+    "يا هلا يا بطل",
+    "يسعد أوقاتك يا بطل",
+  ];
+  return list[Math.floor(Math.random() * list.length)];
+}
+
+export function getRandomClosing(): string {
+  const list = [
+    "نتمنى لك يوماً رائعاً وتدريباً ممتعاً! 💪",
+    "فريق العمل جاهز لمساعدتك دائماً! ✨",
+    "ننتظر رؤيتك قريباً في الجيم! 🔥",
+    "مع أطيب تمنياتنا بدوام الصحة والتألق! 🌟",
+    "واصل تقدمك، نحن معك خطوة بخطوة! 🚀",
+  ];
+  return list[Math.floor(Math.random() * list.length)];
+}
+
+export function buildStage2RenewalMessage(data: RenewalReminderMessageData): string {
+  const gym = data.gymName?.trim() || "الصالة الرياضية";
+  return [
+    `⚠️ *تنبيه: اليوم آخر يوم في اشتراكك — ${gym}*`,
+    `━━━━━━━━━━━━━━━━`,
+    `مرحباً يا ${data.memberName} 👋`,
+    data.memberCode ? `كود العضوية: ${data.memberCode}` : null,
+    `نود تذكيرك بأن اشتراكك في باقة (*${data.planName}*) ينتهي *اليوم*!`,
+    `━━━━━━━━━━━━━━━━`,
+    `لتجنب انقطاع سجل تمارينك، تفضل بزيارة مكتب الاستقبال أو تجديد اشتراكك اليوم.`,
+    `نحن دائماً في خدمتك! 💪🔥`,
+  ]
+    .filter(Boolean)
+    .join("\n");
+}
+
+export function buildStage3RenewalMessage(data: RenewalReminderMessageData): string {
+  const gym = data.gymName?.trim() || "الصالة الرياضية";
+  return [
+    `وحشتنا يا بطل ${data.memberName} 👋 — ${gym}`,
+    `━━━━━━━━━━━━━━━━`,
+    data.memberCode ? `كود العضوية: ${data.memberCode}` : null,
+    `اشتراكك في باقة (*${data.planName}*) انتهى منذ 3 أيام.`,
+    `يسعدنا تجديد باقتك والعودة لمواصلة رحلتك الرياضية مع عروض مميزة بانتظارك!`,
+    `━━━━━━━━━━━━━━━━`,
+    `تواصل مع موظف الاستقبال أو شرفنا بالزيارة للتجديد. نتطلع لرؤيتك! 💪✨`,
+  ]
+    .filter(Boolean)
+    .join("\n");
+}
+

@@ -12,6 +12,7 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Select } from "@/components/ui/select";
 import { Badge } from "@/components/ui/badge";
+import { DateRange } from "@/components/ui/date-range";
 
 export interface SettleMemberDuesModalProps {
   open: boolean;
@@ -25,7 +26,7 @@ interface DuesItemRow {
   type: "subscription" | "store_debt";
   id: string;
   title: string;
-  subTitle: string;
+  subTitle: React.ReactNode;
   originalMinor: number;
   paidMinor: number;
   remainingMinor: number;
@@ -81,7 +82,7 @@ export function SettleMemberDuesModal({
             type: "subscription",
             id: sub.subscriptionId,
             title: sub.planName,
-            subTitle: `${sub.startDate} ← ${sub.endDate}`,
+            subTitle: <DateRange start={sub.startDate} end={sub.endDate} />,
             originalMinor: sub.priceMinor,
             paidMinor: sub.paidMinor + sub.discountMinor,
             remainingMinor: sub.remainingMinor,

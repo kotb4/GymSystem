@@ -127,8 +127,8 @@ export async function renderQrPngBase64(value: string, opts: QrOptions = {}): Pr
   const qrPng = PNG.sync.read(rawQrBuf);
 
   const barcodeText = value.trim().toUpperCase();
-  const creditLabel = "System by : ";
-  const creditName = "Yassen Mohamed Kotb | 01288536381";
+  const creditLabel = "Powered by ";
+  const creditName = "GymGate — KOTB Digital Solutions";
 
   // Barcode scale 2 (12px per char, 14px high)
   const barcodeW = barcodeText.length * 12;

@@ -74,22 +74,113 @@ export interface EnsureOptions {
   spawnFn?: SpawnFn;
   pollMs?: number;
   startTimeoutMs?: number;
+  forceRestart?: boolean;
+}
+
+/**
+ * Safely terminate any process listening on the given port on Windows,
+ * specifically verifying that it is NOT the parent process itself.
+ */
+export function terminateGatewayProcessOnPort(port: number, log: (msg: string) => void = () => {}): void {
+  if (process.platform !== "win32" || !port || port <= 0) return;
+  try {
+    const { execSync } = require("node:child_process");
+    const script = `Get-NetTCPConnection -LocalPort ${port} -ErrorAction SilentlyContinue | Select-Object -ExpandProperty OwningProcess`;
+    const out = execSync(`powershell.exe -NoProfile -NonInteractive -Command "${script}"`, {
+      encoding: "utf8",
+      stdio: ["ignore", "pipe", "ignore"],
+      timeout: 4000,
+      windowsHide: true,
+    });
+    const pids = out.split(/\r?\n/).map((s: string) => s.trim()).filter((s: string) => /^\d+$/.test(s));
+    for (const pidStr of pids) {
+      const pid = Number(pidStr);
+      if (pid > 0 && pid !== process.pid) {
+        try {
+          execSync(`taskkill /F /T /PID ${pid}`, { stdio: "ignore", windowsHide: true });
+          log(`terminated gateway process PID ${pid} on port ${port}`);
+        } catch {}
+      }
+    }
+  } catch (err: any) {
+    log(`could not inspect/terminate process on port ${port}: ${err?.message || err}`);
+  }
+}
+
+/** Stop an existing gateway: attempts graceful /shutdown first, falls back to port kill. */
+export async function stopGateway(
+  url: string,
+  opts?: { log?: (msg: string) => void; timeoutMs?: number; probe?: ProbeFn },
+): Promise<boolean> {
+  if (!isLoopbackUrl(url)) return false;
+  const probe = opts?.probe ?? probeGateway;
+  const log = opts?.log ?? (() => {});
+  const timeoutMs = opts?.timeoutMs ?? 2000;
+
+  if (!(await probe(url, 400))) {
+    return true;
+  }
+
+  try {
+    const controller = new AbortController();
+    const timer = setTimeout(() => controller.abort(), 800);
+    await fetch(`${url.replace(/\/+$/, "")}/shutdown`, {
+      method: "POST",
+      signal: controller.signal,
+    }).catch(() => {});
+    clearTimeout(timer);
+  } catch {}
+
+  const deadline = Date.now() + timeoutMs;
+  while (Date.now() < deadline) {
+    if (!(await probe(url, 300))) {
+      return true;
+    }
+    await new Promise((r) => setTimeout(r, 150));
+  }
+
+  try {
+    const u = new URL(url);
+    const port = Number(u.port || 8891);
+    if (port > 0) {
+      terminateGatewayProcessOnPort(port, log);
+    }
+    if (process.platform === "win32") {
+      try {
+        const { execSync } = require("node:child_process");
+        const killEdge = `Get-CimInstance Win32_Process | Where-Object { ($_.Name -eq 'msedge.exe' -or $_.Name -eq 'chrome.exe') -and $_.CommandLine -and ($_.CommandLine.IndexOf('wpp-profile', [System.StringComparison]::OrdinalIgnoreCase) -ge 0) } | ForEach-Object { Stop-Process -Id $_.ProcessId -Force -ErrorAction SilentlyContinue }`;
+        execSync(`powershell.exe -NoProfile -NonInteractive -Command "${killEdge}"`, {
+          stdio: "ignore",
+          timeout: 4000,
+          windowsHide: true,
+        });
+      } catch {}
+    }
+  } catch {}
+
+  await new Promise((r) => setTimeout(r, 200));
+  return !(await probe(url, 300));
 }
 
 /** Default spawner: hidden, detached, never keeps the parent alive. */
 function defaultSpawn(launch: GatewayLaunch): ChildProcess {
+  const backendPort = process.env.GYMSYSTEM_PORT || process.env.PORT || "8890";
   const child = spawn(launch.nodeBin, [launch.gatewayMain], {
     detached: true,
     stdio: "ignore",
     windowsHide: true,
+    env: {
+      ...process.env,
+      BACKEND_URL: process.env.BACKEND_URL || `http://127.0.0.1:${backendPort}`,
+    },
   });
   child.unref();
   return child;
 }
 
 /**
- * Ensure the gateway is up. If already reachable → alreadyRunning. Otherwise
- * spawn it (detached) and poll /health until it answers. Safe to call from
+ * Ensure the gateway is up. If already reachable and not forcing restart → alreadyRunning.
+ * Otherwise spawn it (detached) and poll /health until it answers. Safe to call from
  * concurrent paths: the probe-before-spawn ordering makes duplicates unlikely,
  * and a straggler that fails to bind simply exits on EADDRINUSE.
  */
@@ -103,7 +194,12 @@ export async function ensureGateway(url: string, opts: EnsureOptions): Promise<E
   const startTimeoutMs = opts.startTimeoutMs ?? 12000;
   if (!isLoopbackUrl(url)) return { running: false, alreadyRunning: false, error: "invalid_url" };
 
-  if (await probe(url, 1500)) return { running: true, alreadyRunning: true };
+  if (opts.forceRestart) {
+    log("force restart requested: stopping existing gateway first");
+    await stopGateway(url, { log, probe });
+  } else if (await probe(url, 1500)) {
+    return { running: true, alreadyRunning: true };
+  }
 
   const launch = resolveGatewayLaunch(opts.packaged);
   if (!launch) {

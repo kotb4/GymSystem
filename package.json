@@ -1,5 +1,5 @@
 {
-  "name": "gympro",
+  "name": "gymgate",
   "private": true,
   "version": "0.1.0",
   "type": "module",
@@ -22,6 +22,7 @@
     "license:issue": "node license-cli/license-tool.mjs issue",
     "license:hwid": "node license-cli/license-tool.mjs hwid",
     "license:issue-here": "node license-cli/license-tool.mjs issue-here",
+    "record:demo": "node scripts/record-demo.mjs",
     "e2e": "powershell -NoProfile -ExecutionPolicy Bypass -File scripts/e2e-smoke.ps1"
   },
   "dependencies": {
@@ -44,6 +45,7 @@
     "@types/react-dom": "^19.2.5",
     "@vitejs/plugin-react": "^6.1.0",
     "esbuild": "^0.28.2",
+    "playwright": "^1.64.1",
     "postject": "^1.0.0-alpha.6",
     "tailwindcss": "^4.3.3",
     "typescript": "^7.0.2",

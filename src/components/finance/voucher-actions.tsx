@@ -15,7 +15,7 @@ import { Button } from "@/components/ui/button";
  * template. Whitelisting the kind here keeps the button set to the four types
  * the backend actually supports.
  */
-const ALLOWED: readonly VoucherKind[] = ["refund", "store_debt_payment", "cash_closing", "attendance"];
+const ALLOWED: readonly VoucherKind[] = ["refund", "store_debt_payment", "cash_closing", "attendance", "expense"];
 
 export function VoucherActions({
   kind,

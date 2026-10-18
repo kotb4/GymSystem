@@ -11,6 +11,7 @@ import {
   generateStoreSaleReceipt,
   generateSubscriptionContract,
   listPdfDeliveries,
+  previewReceiptTemplate,
   sendPaymentReceipt,
   sendStoreSaleReceipt,
   sendSubscriptionContract,
@@ -278,7 +279,7 @@ describe("generatePaymentReceipt", () => {
   it("uses a per-type default title when no override is configured", async () => {
     const { payment } = await paymentWithPhone("01000000000");
     const data = await generatePaymentReceipt(db, owner, payment.id);
-    expect(data.fileName).toMatch(/^receipt-(?:[A-Z0-9]{1,6}-)?RCP-/);
+    expect(data.fileName).toMatch(/^receipt-(?:[A-Z0-9]{1,6}-)+RCP-/);
     // Arabic is drawn as vector glyphs, so assert on the service-level default
     // rather than the PDF text layer.
     expect(DOC_TYPE_TITLES.payment_receipt).toBe("فاتورة دفع");
@@ -288,14 +289,14 @@ describe("generatePaymentReceipt", () => {
     const { payment } = await paymentWithPhone("01000000000");
     writeSetting(db, SETTING_KEYS.receiptTitle, "إيصال اشتراك شهري");
     const data = await generatePaymentReceipt(db, owner, payment.id);
-    expect(data.fileName).toMatch(/^receipt-(?:[A-Z0-9]{1,6}-)?RCP-/);
+    expect(data.fileName).toMatch(/^receipt-(?:[A-Z0-9]{1,6}-)+RCP-/);
   });
 
   it("treats a blank Settings value as unset and keeps the default", async () => {
     const { payment } = await paymentWithPhone("01000000000");
     writeSetting(db, SETTING_KEYS.receiptTitle, "   ");
     const data = await generatePaymentReceipt(db, owner, payment.id);
-    expect(data.fileName).toMatch(/^receipt-(?:[A-Z0-9]{1,6}-)?RCP-/);
+    expect(data.fileName).toMatch(/^receipt-(?:[A-Z0-9]{1,6}-)+RCP-/);
   });
 
   it("renders the title it was given in the PDF template", async () => {
@@ -315,7 +316,7 @@ describe("generatePaymentReceipt", () => {
   it("returns base64 PDF bytes and a stable receipt number", async () => {
     const { payment } = await paymentWithPhone("01000000000");
     const a = await generatePaymentReceipt(db, owner, payment.id);
-    expect(a.fileName).toMatch(/^receipt-(?:[A-Z0-9]{1,6}-)?RCP-\d{4}-\d{6}\.pdf$/);
+    expect(a.fileName).toMatch(/^receipt-(?:[A-Z0-9]{1,6}-)+RCP-\d{4}-\d{6}\.pdf$/);
     expect(a.size).toBeGreaterThan(2000);
     expect(a.hash).toMatch(/^[0-9a-f]{64}$/);
     expect(Buffer.from(a.base64, "base64").subarray(0, 5).toString()).toBe("%PDF-");
@@ -356,7 +357,7 @@ describe("sendPaymentReceipt", () => {
     const rows = listPdfDeliveries(db, owner, {});
     expect(rows).toHaveLength(1);
     expect(rows[0].fileSize).toBeGreaterThan(2000);
-    expect(rows[0].fileName).toMatch(/^receipt-(?:[A-Z0-9]{1,6}-)?RCP-\d{4}-\d{6}\.pdf$/);
+    expect(rows[0].fileName).toMatch(/^receipt-(?:[A-Z0-9]{1,6}-)+RCP-\d{4}-\d{6}\.pdf$/);
   });
 
   it("records no_phone when the member has no number", async () => {
@@ -476,5 +477,42 @@ describe("subscription contract PDF", () => {
     } finally {
       delete process.env.GYM_CRM_MOCK;
     }
+  });
+});
+
+describe("previewReceiptTemplate", () => {
+  it("generates a live subscription preview PDF matching custom form inputs", async () => {
+    const res = await previewReceiptTemplate(db, owner, {
+      gymName: "كابتن جيم برو",
+      gymPhone: "01099998888",
+      receiptTitle: "إيصال سداد مخصص",
+      showLogo: true,
+      logoWidth: 150,
+      showTax: true,
+      taxPercent: 14,
+      showQr: true,
+      footerText: "تعليمات خاصة بالفرع",
+      terms: "1. بند تجريبي أول\n2. بند تجريبي ثانٍ",
+      docKind: "subscription",
+    });
+
+    expect(res.fileName).toBe("preview-receipt.pdf");
+    expect(res.size).toBeGreaterThan(2000);
+    expect(Buffer.from(res.base64, "base64").subarray(0, 5).toString()).toBe("%PDF-");
+  });
+
+  it("generates a live store sale preview PDF matching custom inputs", async () => {
+    const res = await previewReceiptTemplate(db, owner, {
+      gymName: "صالة فيتنس متجر",
+      gymPhone: "01011112222",
+      showLogo: false,
+      logoWidth: 180,
+      showTax: false,
+      docKind: "store",
+    });
+
+    expect(res.fileName).toBe("preview-store-receipt.pdf");
+    expect(res.size).toBeGreaterThan(2000);
+    expect(Buffer.from(res.base64, "base64").subarray(0, 5).toString()).toBe("%PDF-");
   });
 });

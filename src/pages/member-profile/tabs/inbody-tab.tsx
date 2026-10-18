@@ -6,13 +6,17 @@ import { describeError } from "@/utils/app-error";
 import { api, type PublicAssessment, type ProgressComparison, type FitnessResultRow } from "@/api";
 import { todayKey } from "@/core/dates";
 import { Card, CardHeader } from "@/components/ui/card";
+import { StatCard } from "@/components/ui/stat-card";
 import { Button } from "@/components/ui/button";
 import { DataTable, type Column } from "@/components/ui/table";
 import { EmptyState } from "@/components/ui/empty-state";
-import { Plus, Scale } from "lucide-react";
+import { ConfirmDialog } from "@/components/ui/confirm-dialog";
+import { Download, MessageCircle, Plus, Scale, Trash2, TrendingDown, Sparkles, Activity } from "lucide-react";
 import { Input } from "@/components/ui/input";
 import type { TabProps } from "../types";
 import { permissionDeniedNode } from "../helpers";
+import { downloadCsvWithBom } from "@/utils/csv-helper";
+import { buildWhatsAppDirectUrl } from "@/core/whatsapp";
 
 export function InbodyTab({ ctx }: TabProps) {
   const t = useT();
@@ -22,6 +26,7 @@ export function InbodyTab({ ctx }: TabProps) {
   const [progress, setProgress] = useState<ProgressComparison | null>(null);
   const [fitness, setFitness] = useState<FitnessResultRow[]>([]);
   const [showForm, setShowForm] = useState(false);
+  const [deleteTarget, setDeleteTarget] = useState<string | null>(null);
   const today = todayKey();
 
   const [assessmentDate, setAssessmentDate] = useState(today);
@@ -57,6 +62,7 @@ export function InbodyTab({ ctx }: TabProps) {
       alive = false;
     };
   }, [ctx.member.id]);
+
   useEffect(() => {
     reload();
   }, [reload, ctx.reloadTick]);
@@ -96,7 +102,7 @@ export function InbodyTab({ ctx }: TabProps) {
         thighCm: thighCm ? Number(thighCm) : null,
         notes: notes || null,
       });
-      toast("success", t("toast.saved"));
+      toast("success", t("inbody.savedToast"));
       resetForm();
       setShowForm(false);
       reload();
@@ -108,22 +114,95 @@ export function InbodyTab({ ctx }: TabProps) {
     }
   };
 
+  const onDeleteConfirm = async () => {
+    if (!deleteTarget) return;
+    try {
+      await api.inbody.deleteAssessment(deleteTarget);
+      toast("success", t("inbody.deletedToast"));
+      setDeleteTarget(null);
+      reload();
+      ctx.reload();
+    } catch (err) {
+      toast("error", describeError(err, t));
+    }
+  };
+
   const sorted = [...assessments].sort((a, b) => b.assessmentDate.localeCompare(a.assessmentDate));
   const deltaWeight = progress?.deltas.find((d) => d.field === "weightKg");
   const deltaBmi = progress?.deltas.find((d) => d.field === "bmi");
   const deltaBodyFat = progress?.deltas.find((d) => d.field === "bodyFatPercent");
-  const hasDeltas = progress && progress.latest && progress.previous;
+  const deltaMuscle = progress?.deltas.find((d) => d.field === "muscleMassKg");
+  const hasDeltas = Boolean(progress && progress.latest && progress.previous);
+
+  const onShareWhatsApp = (row: PublicAssessment) => {
+    const lines = [
+      `📊 *تقرير قياس InBody البدني*`,
+      `👤 *العضو:* ${ctx.member.fullName}`,
+      `📅 *تاريخ الفحص:* ${row.assessmentDate}`,
+      row.weightKg != null ? `⚖️ *الوزن:* ${row.weightKg} كجم` : null,
+      row.bodyFatPercent != null ? `🔥 *نسبة الدهون:* ${row.bodyFatPercent}%` : null,
+      row.muscleMassKg != null ? `💪 *الكتلة العضلية:* ${row.muscleMassKg} كجم` : null,
+      row.bmi != null ? `📈 *مؤشر كتلة الجسم (BMI):* ${row.bmi}` : null,
+      row.waistCm != null ? `📏 *محيط الوسط:* ${row.waistCm} سم` : null,
+      row.chestCm != null ? `📏 *محيط الصدر:* ${row.chestCm} سم` : null,
+      row.armCm != null ? `📏 *محيط الذراع:* ${row.armCm} سم` : null,
+      row.thighCm != null ? `📏 *محيط الفخذ:* ${row.thighCm} سم` : null,
+      row.notes ? `📝 *ملاحظات الكابتن:* ${row.notes}` : null,
+      `\nعاش يا بطل! واصل الالتزام والتطور نحو هدفك 🚀💪`,
+    ].filter(Boolean);
+
+    const text = lines.join("\n");
+    const url = buildWhatsAppDirectUrl(ctx.member.phone, text);
+    if (url) {
+      window.open(url, "_blank");
+    } else {
+      toast("warning", "رقم هاتف العضو غير مسجل أو غير صالح للواتساب");
+    }
+  };
+
+  const onExportAssessments = () => {
+    if (sorted.length === 0) {
+      toast("info", t("inbody.empty"));
+      return;
+    }
+    const headers = [
+      t("common.date"),
+      t("members.formWeight"),
+      "BMI",
+      t("inbody.bodyFat"),
+      t("inbody.muscleMass"),
+      t("inbody.waist"),
+      t("inbody.chest"),
+      t("inbody.arm"),
+      t("inbody.thigh"),
+      t("members.notes"),
+    ];
+    const dataRows = sorted.map((r) => [
+      r.assessmentDate,
+      r.weightKg != null ? String(r.weightKg) : "—",
+      r.bmi != null ? String(r.bmi) : "—",
+      r.bodyFatPercent != null ? String(r.bodyFatPercent) : "—",
+      r.muscleMassKg != null ? String(r.muscleMassKg) : "—",
+      r.waistCm != null ? String(r.waistCm) : "—",
+      r.chestCm != null ? String(r.chestCm) : "—",
+      r.armCm != null ? String(r.armCm) : "—",
+      r.thighCm != null ? String(r.thighCm) : "—",
+      r.notes ?? "",
+    ]);
+    downloadCsvWithBom(`قياسات_InBody_${ctx.member.fullName}_${today}`, headers, dataRows);
+    toast("success", t("inbody.exportSuccess"));
+  };
 
   const assessCols: Column<PublicAssessment>[] = [
     {
       key: "date",
       header: t("common.date"),
-      render: (row) => <span dir="ltr" className="tabnum text-subtle">{row.assessmentDate}</span>,
+      render: (row) => <span dir="ltr" className="tabnum text-subtle font-bold">{row.assessmentDate}</span>,
     },
     {
       key: "weight",
       header: t("members.formWeight"),
-      render: (row) => <span className="tabnum">{row.weightKg ?? "—"}</span>,
+      render: (row) => <span className="tabnum font-extrabold">{row.weightKg != null ? `${row.weightKg} كجم` : "—"}</span>,
     },
     {
       key: "bmi",
@@ -133,29 +212,112 @@ export function InbodyTab({ ctx }: TabProps) {
     {
       key: "bodyFat",
       header: t("inbody.bodyFat"),
-      render: (row) => <span className="tabnum">{row.bodyFatPercent != null ? `${row.bodyFatPercent}%` : "—"}</span>,
+      render: (row) => (
+        <span className="tabnum font-bold text-amber">
+          {row.bodyFatPercent != null ? `${row.bodyFatPercent}%` : "—"}
+        </span>
+      ),
     },
     {
       key: "muscleMass",
       header: t("inbody.muscleMass"),
-      render: (row) => <span className="tabnum">{row.muscleMassKg ?? "—"}</span>,
+      render: (row) => (
+        <span className="tabnum font-bold text-neon">
+          {row.muscleMassKg != null ? `${row.muscleMassKg} كجم` : "—"}
+        </span>
+      ),
+    },
+    {
+      key: "waist",
+      header: t("inbody.waist"),
+      render: (row) => <span className="tabnum text-subtle">{row.waistCm != null ? `${row.waistCm} سم` : "—"}</span>,
     },
     {
       key: "notes",
       header: t("members.notes"),
-      render: (row) => <span className="truncate text-faint">{row.notes ?? "—"}</span>,
+      render: (row) => <span className="truncate text-faint max-w-xs">{row.notes ?? "—"}</span>,
+    },
+    {
+      key: "actions",
+      header: t("common.actions"),
+      render: (row) => (
+        <div className="flex items-center gap-1.5">
+          <Button
+            size="sm"
+            variant="ghost"
+            onClick={() => onShareWhatsApp(row)}
+            title={t("inbody.shareWhatsApp")}
+            className="text-emerald-400 hover:text-emerald-300 hover:bg-emerald-500/10"
+          >
+            <MessageCircle className="size-3.5" />
+          </Button>
+          {hasPermission("assessments.manage") && ctx.member.status !== "archived" && (
+            <Button
+              size="sm"
+              variant="ghost"
+              onClick={() => setDeleteTarget(row.id)}
+              className="text-red hover:bg-red/10"
+            >
+              <Trash2 className="size-3.5" />
+            </Button>
+          )}
+        </div>
+      ),
     },
   ];
 
   return (
     <div className="space-y-4">
-      {hasDeltas && (
-        <div className="grid gap-3 sm:grid-cols-3">
-          <Card><div className="p-4 text-center"><p className="text-xs font-semibold text-faint">{t("members.formWeight")}</p><p className="mt-1 text-lg font-extrabold tabnum">{deltaWeight?.delta != null ? `${deltaWeight.delta > 0 ? "+" : ""}${deltaWeight.delta.toFixed(1)}` : "—"}</p></div></Card>
-          <Card><div className="p-4 text-center"><p className="text-xs font-semibold text-faint">BMI</p><p className="mt-1 text-lg font-extrabold tabnum">{deltaBmi?.delta != null ? `${deltaBmi.delta > 0 ? "+" : ""}${deltaBmi.delta.toFixed(1)}` : "—"}</p></div></Card>
-          <Card><div className="p-4 text-center"><p className="text-xs font-semibold text-faint">{t("inbody.bodyFat")}</p><p className="mt-1 text-lg font-extrabold tabnum">{deltaBodyFat?.delta != null ? `${deltaBodyFat.delta > 0 ? "+" : ""}${deltaBodyFat.delta.toFixed(1)}%` : "—"}</p></div></Card>
+      {/* 4 Professional Physical Evolution KPI Stat Cards */}
+      {hasDeltas ? (
+        <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
+          <StatCard
+            title={t("members.formWeight")}
+            subtitle={
+              deltaWeight?.delta != null
+                ? `${deltaWeight.delta > 0 ? "+" : ""}${deltaWeight.delta.toFixed(1)} كجم عن القياس السابق`
+                : "—"
+            }
+            value={progress?.latest?.weightKg != null ? `${progress.latest.weightKg} كجم` : "—"}
+            icon={<Scale className="size-5" />}
+            accent="cyan"
+          />
+          <StatCard
+            title={t("inbody.bodyFat")}
+            subtitle={
+              deltaBodyFat?.delta != null
+                ? `${deltaBodyFat.delta > 0 ? "+" : ""}${deltaBodyFat.delta.toFixed(1)}% فارق الدهون`
+                : "—"
+            }
+            value={progress?.latest?.bodyFatPercent != null ? `${progress.latest.bodyFatPercent}%` : "—"}
+            icon={<TrendingDown className="size-5" />}
+            accent="amber"
+          />
+          <StatCard
+            title={t("inbody.muscleMass")}
+            subtitle={
+              deltaMuscle?.delta != null
+                ? `${deltaMuscle.delta > 0 ? "+" : ""}${deltaMuscle.delta.toFixed(1)} كجم كتلة عضلية`
+                : "—"
+            }
+            value={progress?.latest?.muscleMassKg != null ? `${progress.latest.muscleMassKg} كجم` : "—"}
+            icon={<Sparkles className="size-5" />}
+            accent="neon"
+          />
+          <StatCard
+            title="مؤشر كتلة الجسم (BMI)"
+            subtitle={
+              deltaBmi?.delta != null
+                ? `${deltaBmi.delta > 0 ? "+" : ""}${deltaBmi.delta.toFixed(1)} فارق المؤشر`
+                : "—"
+            }
+            value={progress?.latest?.bmi != null ? `${progress.latest.bmi}` : "—"}
+            icon={<Activity className="size-5" />}
+            accent="violet"
+          />
         </div>
-      )}
+      ) : null}
+
       {hasPermission("assessments.manage") && ctx.member.status !== "archived" && (
         <Card>
           <CardHeader
@@ -202,14 +364,26 @@ export function InbodyTab({ ctx }: TabProps) {
           )}
         </Card>
       )}
+
       <Card>
-        <CardHeader title={t("inbody.history")} />
-        {sorted.length === 0 ? (
-          <EmptyState icon={<Scale />} title={t("inbody.empty")} />
-        ) : (
-          <DataTable columns={assessCols} data={sorted} rowKey={(r) => r.id} />
-        )}
+        <div className="flex flex-wrap items-center justify-between gap-3 p-5 pb-0">
+          <h3 className="text-base font-extrabold">{t("inbody.history")}</h3>
+          {sorted.length > 0 && (
+            <Button variant="secondary" size="sm" onClick={onExportAssessments}>
+              <Download className="size-3.5" />
+              {t("inbody.exportHistory")}
+            </Button>
+          )}
+        </div>
+        <div className="p-5 pt-3">
+          {sorted.length === 0 ? (
+            <EmptyState icon={<Scale />} title={t("inbody.empty")} />
+          ) : (
+            <DataTable columns={assessCols} data={sorted} rowKey={(r) => r.id} />
+          )}
+        </div>
       </Card>
+
       {fitness.length > 0 && (
         <Card>
           <CardHeader title={t("inbody.fitnessTests")} />
@@ -224,6 +398,14 @@ export function InbodyTab({ ctx }: TabProps) {
           </ul>
         </Card>
       )}
+
+      <ConfirmDialog
+        open={deleteTarget !== null}
+        onClose={() => setDeleteTarget(null)}
+        title={t("inbody.deleteMeasurement")}
+        message={t("inbody.deleteConfirm")}
+        onConfirm={onDeleteConfirm}
+      />
     </div>
   );
 }

@@ -1,4 +1,4 @@
-﻿import { useEffect, useState, type FormEvent } from "react";
+import { useEffect, useState, type FormEvent } from "react";
 import { useAuth } from "@/contexts/auth-context";
 import { useT } from "@/i18n";
 import { useToast } from "@/components/ui/toast";
@@ -27,6 +27,7 @@ export function UserFormModal({ open, onClose, onSaved, user }: UserFormModalPro
   const [department, setDepartment] = useState<"general" | "men" | "women">("general");
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
+  const [userCode, setUserCode] = useState("");
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
@@ -37,6 +38,7 @@ export function UserFormModal({ open, onClose, onSaved, user }: UserFormModalPro
     setRoleId(user?.roleId ?? "reception");
     setDepartment(user?.department ?? "general");
     setEmail(user?.email ?? "");
+    setUserCode(user?.userCode ?? "");
     setPassword("");
     setError(null);
   }, [open, user]);
@@ -53,6 +55,7 @@ export function UserFormModal({ open, onClose, onSaved, user }: UserFormModalPro
           roleId,
           email: email.trim() || null,
           department,
+          userCode: userCode.trim() || undefined,
         });
       } else {
         await api.users.create({
@@ -62,6 +65,7 @@ export function UserFormModal({ open, onClose, onSaved, user }: UserFormModalPro
           roleId,
           email: email.trim() || null,
           department,
+          userCode: userCode.trim() || undefined,
         });
       }
       toast("success", user ? t("users.updatedToast") : t("users.createdToast"));
@@ -125,6 +129,14 @@ export function UserFormModal({ open, onClose, onSaved, user }: UserFormModalPro
             { value: "men", label: t("members.deptMen") },
             { value: "women", label: t("members.deptWomen") },
           ]}
+        />
+        <Input
+          label="كود الموظف (للأرقام المرجعية للعمليات)"
+          placeholder={user ? "مثال: U1" : "تلقائي (مثل U1 أو اكتب رمز مخصص)"}
+          dir="ltr"
+          value={userCode}
+          onChange={(e) => setUserCode(e.target.value.toUpperCase())}
+          disabled={submitting}
         />
         <Input
           label={`${t("common.email")} (${t("common.optional")})`}

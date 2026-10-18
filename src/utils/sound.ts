@@ -70,3 +70,11 @@ export function playScanBeep(): void {
   if (!ctx) return;
   tone(ctx, 1760, 0, 70, "sine", 0.22);
 }
+
+/** Distinct elegant dual-tone chime for incoming alerts and handover requests. */
+export function playAlertChime(): void {
+  const ctx = getAudioContext();
+  if (!ctx) return;
+  tone(ctx, 880, 0, 100, "sine", 0.22);
+  tone(ctx, 1174.66, 0.12, 180, "sine", 0.25);
+}

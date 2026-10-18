@@ -9,4 +9,7 @@ export const employees = defineService({
   listSalaries: a(employeesService.listSalaries as Fn),
   recordSalary: a(employeesService.recordSalary as Fn),
   paySalary: a(employeesService.paySalary as Fn),
+  calculateTrainerMonthlyDues: a(employeesService.calculateTrainerMonthlyDues as Fn),
+  getPayslipData: a(employeesService.getPayslipData as Fn),
+  sendSalaryPayslipWhatsApp: a(employeesService.sendSalaryPayslipWhatsApp as Fn),
 });

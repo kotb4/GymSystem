@@ -70,20 +70,32 @@ export interface CreateExpenseInput {
   categoryId: string;
   amountMinor: number;
   methodCode: string;
-  description: string;
+  description?: string;
+  name?: string;
   expenseDate?: string;
   referenceNo?: string | null;
 }
 
-function validateExpenseInput(db: Db, input: CreateExpenseInput): { dateKey: string } {
+function validateExpenseInput(db: Db, input: CreateExpenseInput): { dateKey: string; resolvedCategoryId: string; resolvedDescription: string } {
   const amountMinor = Math.round(input.amountMinor);
   if (!Number.isFinite(amountMinor) || amountMinor <= 0) {
     throw errValidation("errors.finance.expenseAmountRequired");
   }
-  const category = db.first<{ id: string; is_active: number }>(
+
+  let resolvedCategoryId = input.categoryId;
+  let category = db.first<{ id: string; is_active: number }>(
     "SELECT id, is_active FROM expense_categories WHERE id = ?",
-    [input.categoryId],
+    [resolvedCategoryId],
   );
+  if (!category) {
+    category = db.first<{ id: string; is_active: number }>(
+      "SELECT id, is_active FROM expense_categories WHERE id = ? OR id LIKE ? OR name_ar LIKE ? LIMIT 1",
+      [`cat-${resolvedCategoryId}`, `%${resolvedCategoryId.split("_")[0]}%`, `%${resolvedCategoryId}%`],
+    );
+    if (category) {
+      resolvedCategoryId = category.id;
+    }
+  }
   if (!category) throw errNotFound("errors.finance.categoryNotFound");
   if (Number(category.is_active) !== 1) throw errValidation("errors.finance.categoryInactive");
 
@@ -94,13 +106,14 @@ function validateExpenseInput(db: Db, input: CreateExpenseInput): { dateKey: str
   if (!method) throw errNotFound("errors.finance.methodNotFound");
   if (Number(method.is_active) !== 1) throw errValidation("errors.finance.methodInactive");
 
-  const trimmedDescription = input.description.trim();
+  const rawDesc = input.description ?? input.name ?? "";
+  const trimmedDescription = String(rawDesc).trim();
   if (trimmedDescription.length < 3) throw errValidation("errors.finance.descriptionRequired");
 
   const dateKey = input.expenseDate?.trim() || todayKey();
   if (!isValidDateKey(dateKey)) throw errValidation("errors.invalidDate");
   if (dateKey > todayKey()) throw errValidation("errors.finance.futureDate");
-  return { dateKey };
+  return { dateKey, resolvedCategoryId, resolvedDescription: trimmedDescription };
 }
 
 export async function createExpense(
@@ -109,7 +122,7 @@ export async function createExpense(
   input: CreateExpenseInput,
 ): Promise<Expense> {
   requirePermission(actor, "expenses.create");
-  const { dateKey } = validateExpenseInput(db, input);
+  const { dateKey, resolvedCategoryId, resolvedDescription } = validateExpenseInput(db, input);
 
   const id = crypto.randomUUID();
   const stamp = nowStamp();
@@ -118,10 +131,10 @@ export async function createExpense(
       "INSERT INTO expenses (id, category_id, amount_minor, method_code, description, expense_date, reference_no, status, created_by, created_at, updated_at, branch_id)\nVALUES (?, ?, ?, ?, ?, ?, ?, 'active', ?, ?, ?, ?)",
       [
         id,
-        input.categoryId,
+        resolvedCategoryId,
         Math.round(input.amountMinor),
         input.methodCode,
-        input.description.trim(),
+        resolvedDescription,
         dateKey,
         input.referenceNo?.trim() || null,
         actor.userId,
@@ -142,7 +155,7 @@ export async function createExpense(
       actor,
     });
     recordAudit(db, actor, "EXPENSE_CREATED", "expense", id, {
-      category: input.categoryId,
+      category: resolvedCategoryId,
       amountMinor: Math.round(input.amountMinor),
       method: input.methodCode,
     });
@@ -169,7 +182,7 @@ export async function updateExpense(
     expenseDate: patch.expenseDate ?? existing.expense_date,
     referenceNo: patch.referenceNo === undefined ? existing.reference_no : patch.referenceNo,
   };
-  const { dateKey } = validateExpenseInput(db, merged);
+  const { dateKey, resolvedCategoryId, resolvedDescription } = validateExpenseInput(db, merged);
   const newAmount = Math.round(merged.amountMinor);
   const stamp = nowStamp();
 
@@ -177,10 +190,10 @@ export async function updateExpense(
     db.run(
       "UPDATE expenses SET category_id = ?, amount_minor = ?, method_code = ?, description = ?, expense_date = ?, reference_no = ?, updated_by = ?, updated_at = ? WHERE id = ?",
       [
-        merged.categoryId,
+        resolvedCategoryId,
         newAmount,
         merged.methodCode,
-        merged.description.trim(),
+        resolvedDescription,
         dateKey,
         merged.referenceNo?.trim() || null,
         actor.userId,
@@ -249,6 +262,19 @@ export async function voidExpense(
       occurredAt: stamp,
       actor,
     });
+    // If this expense was linked to an inter-shift cash session deficit, unlink it so the deficit reopens as unresolved
+    const linkedSession = db.first<{ id: string }>(
+      "SELECT id FROM cash_sessions WHERE gap_expense_id = ?",
+      [expenseId],
+    );
+    if (linkedSession) {
+      db.run("UPDATE cash_sessions SET gap_expense_id = NULL WHERE id = ?", [linkedSession.id]);
+      recordAudit(db, actor, "CASH_DISCREPANCY", "cash_session", linkedSession.id, {
+        action: "gap_unlinked_on_expense_void",
+        voidedExpenseId: expenseId,
+        reason: trimmedReason,
+      });
+    }
     recordAudit(db, actor, "EXPENSE_VOIDED", "expense", expenseId, {
       reason: trimmedReason,
       amountMinor: Number(existing.amount_minor),
@@ -319,9 +345,9 @@ export function listExpenses(
   const conditions: string[] = [];
   const params: Array<string | number> = [];
   if (query.search?.trim()) {
-    conditions.push("(e.description LIKE ? OR e.reference_no LIKE ?)");
+    conditions.push("(e.description LIKE ? OR e.reference_no LIKE ? OR e.id = ?)");
     const like = `%${query.search.trim()}%`;
-    params.push(like, like);
+    params.push(like, like, query.search.trim());
   }
   if (query.fromKey) {
     conditions.push("e.expense_date >= ?");
@@ -428,4 +454,59 @@ export function setCategoryActive(
   recordAudit(db, actor, "EXPENSE_CATEGORY_TOGGLED", "expense_category", categoryId, {
     to: isActive ? "active" : "inactive",
   });
+}
+
+export interface ExpenseStats {
+  todayTotalMinor: number;
+  todayCount: number;
+  monthTotalMinor: number;
+  monthCount: number;
+  monthCashMinor: number;
+  topCategoryName: string | null;
+  topCategoryMinor: number;
+}
+
+export function expenseStats(
+  db: Db,
+  actor: ServiceActor,
+  month = todayKey().slice(0, 7),
+): ExpenseStats {
+  requirePermission(actor, "expenses.view");
+  const today = todayKey();
+
+  const todayRow = db.first<{ total: number; cnt: number }>(
+    "SELECT COALESCE(SUM(amount_minor), 0) AS total, COUNT(*) AS cnt FROM expenses WHERE expense_date = ? AND status = 'active'",
+    [today],
+  );
+
+  const monthRow = db.first<{ total: number; cnt: number }>(
+    "SELECT COALESCE(SUM(amount_minor), 0) AS total, COUNT(*) AS cnt FROM expenses WHERE expense_date LIKE ? AND status = 'active'",
+    [`${month}%`],
+  );
+
+  const monthCashRow = db.first<{ total: number }>(
+    "SELECT COALESCE(SUM(amount_minor), 0) AS total FROM expenses WHERE expense_date LIKE ? AND method_code = 'cash' AND status = 'active'",
+    [`${month}%`],
+  );
+
+  const topCat = db.first<{ name_ar: string; total: number }>(
+    "SELECT c.name_ar, SUM(e.amount_minor) AS total\n" +
+      "  FROM expenses e\n" +
+      "  JOIN expense_categories c ON c.id = e.category_id\n" +
+      " WHERE e.expense_date LIKE ? AND e.status = 'active'\n" +
+      " GROUP BY c.id, c.name_ar\n" +
+      " ORDER BY total DESC\n" +
+      " LIMIT 1",
+    [`${month}%`],
+  );
+
+  return {
+    todayTotalMinor: Number(todayRow?.total ?? 0),
+    todayCount: Number(todayRow?.cnt ?? 0),
+    monthTotalMinor: Number(monthRow?.total ?? 0),
+    monthCount: Number(monthRow?.cnt ?? 0),
+    monthCashMinor: Number(monthCashRow?.total ?? 0),
+    topCategoryName: topCat?.name_ar ?? null,
+    topCategoryMinor: Number(topCat?.total ?? 0),
+  };
 }

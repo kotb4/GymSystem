@@ -10,4 +10,7 @@ export const messages = defineService({
   getMemberMessageData: a(messagesService.getMemberMessageData as Fn),
   sendWelcomeMessage: a(messagesService.sendWelcomeMessage as Fn),
   sendPaymentMessage: a(messagesService.sendPaymentMessage as Fn),
+  listRenewalStageRecipients: a(messagesService.listRenewalStageRecipients as Fn),
+  sendRenewalStage: a(messagesService.sendRenewalStage as Fn),
+  retryMessage: a(messagesService.retryMessage as Fn),
 });

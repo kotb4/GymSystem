@@ -101,7 +101,8 @@ export function ReceiptActions({
     setConfirmSend(false);
     setBusy("send");
     try {
-      const { delivery } = await api.pdf.sendPaymentReceipt(paymentId);
+      const res = await api.pdf.sendPaymentReceipt(paymentId);
+      const delivery = res.delivery;
       if (delivery.status === "sent") {
         toast("success", t("pdf.sentToast"));
       } else if (delivery.status === "not_configured") {
@@ -129,8 +130,8 @@ export function ReceiptActions({
           <Printer className="size-3.5" />
           {t("pdf.receiptPrint")}
         </Button>
-        <Button variant="ghost" size={size} onClick={() => setConfirmSend(true)} disabled={busy !== null}>
-          {busy === "send" ? <FileText className="size-3.5" /> : <Send className="size-3.5" />}
+        <Button variant="ghost" size={size} onClick={() => setConfirmSend(true)} disabled={busy !== null} title={t("pdf.receiptSend")}>
+          {busy === "send" ? <FileText className="size-3.5" /> : <Send className="size-3.5 text-neon" />}
           {busy === "send" ? t("pdf.receiptSending") : t("pdf.receiptSend")}
         </Button>
       </div>

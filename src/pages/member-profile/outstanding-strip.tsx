@@ -5,6 +5,7 @@ import { formatMinor } from "@/core/money";
 import { Card } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
+import { DateRange } from "@/components/ui/date-range";
 import { Banknote, ChevronDown, ChevronUp, ShoppingBag, Calendar } from "lucide-react";
 
 function Stat({ title, minor, highlight }: { title: string; minor: number; highlight?: boolean }) {
@@ -66,11 +67,7 @@ export function OutstandingStrip({
   }
 
   if (!data || data.totalMinor === 0) {
-    return (
-      <Card className="border-emerald/25 bg-emerald/[0.04]">
-        <div className="px-5 py-3 text-sm font-bold text-emerald">✓ {t("members.noOutstanding")}</div>
-      </Card>
-    );
+    return null;
   }
 
   const hasItems = (data.subscriptions?.length ?? 0) > 0 || (data.storeDebts?.length ?? 0) > 0;
@@ -122,9 +119,9 @@ export function OutstandingStrip({
                       {t("pay.settleItemSubscription")}
                     </Badge>
                   </div>
-                  <p className="text-[11px] text-subtle mt-0.5">
-                    {sub.startDate} ← {sub.endDate}
-                  </p>
+                  <div className="mt-0.5">
+                    <DateRange start={sub.startDate} end={sub.endDate} />
+                  </div>
                 </div>
                 <div className="text-end shrink-0 ms-2">
                   <span dir="ltr" className="font-extrabold text-red font-mono block">

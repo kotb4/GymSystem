@@ -3,7 +3,6 @@ import {
   CreditCard,
   Dumbbell,
   ScanLine,
-  Scale,
   Snowflake,
   StickyNote,
   UserPlus,
@@ -21,7 +20,6 @@ export type QuickAction =
   | "inviteGuest"
   | "addNote"
   | "addPt"
-  | "addMeasurement"
   | "assignCard";
 
 interface QuickActionsProps {
@@ -100,14 +98,6 @@ export function QuickActions({ onAction, activeSubscriptionId, memberArchived }:
       disabled: archived,
     },
     {
-      key: "addMeasurement",
-      perm: "assessments.manage",
-      featureFlag: "featureInbodyEnabled",
-      label: t("members.qaAddMeasurement"),
-      icon: <Scale className="size-4" />,
-      disabled: archived,
-    },
-    {
       key: "assignCard",
       perm: "cards.assign",
       featureFlag: "featureCardsEnabled",
@@ -123,18 +113,19 @@ export function QuickActions({ onAction, activeSubscriptionId, memberArchived }:
   if (visible.length === 0) return null;
 
   return (
-    <Card>
-      <div className="flex flex-wrap gap-2 px-5 py-3.5">
+    <Card className="overflow-hidden">
+      <div className="flex flex-wrap items-center gap-2 p-3 bg-panel/30">
+        <span className="text-[11px] font-bold text-faint ms-2 me-1 select-none">⚡ إجراءات سريعة:</span>
         {visible.map((a) => (
           <button
             key={a.key}
             type="button"
             disabled={a.disabled}
             onClick={() => onAction(a.key)}
-            className="inline-flex items-center gap-2 rounded-xl border border-line bg-surface px-3.5 py-2 text-[12px] font-bold text-subtle transition-colors hover:border-neon/40 hover:text-ink disabled:cursor-not-allowed disabled:opacity-40"
+            className="inline-flex items-center gap-1.5 rounded-xl border border-line bg-surface/80 px-3 py-1.5 text-xs font-bold text-subtle transition-all hover:border-[#0055FF]/40 hover:text-white hover:bg-raised active:scale-95 disabled:cursor-not-allowed disabled:opacity-40"
           >
             {a.icon}
-            {a.label}
+            <span>{a.label}</span>
           </button>
         ))}
       </div>

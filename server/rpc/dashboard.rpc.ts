@@ -8,4 +8,5 @@ export const dashboard = defineService({
   getDashboardOperational: a(dashboardService.getDashboardOperational as Fn),
   getDashboardSeries: a(dashboardService.getDashboardSeries as Fn),
   getDashboardOverview: a(dashboardService.getDashboardOverview as Fn),
+  getTodayBirthdays: a(dashboardService.getTodayBirthdays as Fn),
 });

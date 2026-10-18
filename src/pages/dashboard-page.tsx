@@ -2,30 +2,37 @@ import { useEffect, useMemo, useState } from "react";
 import { Link } from "react-router-dom";
 import {
   AlertTriangle,
+  ArrowLeft,
   Banknote,
+  Cake,
   CalendarDays,
   ChevronLeft,
   CreditCard,
+  Dumbbell,
   Hourglass,
+  Megaphone,
+  MessageCircle,
   PackageCheck,
+  Plus,
   ReceiptText,
+  RefreshCw,
   ScanLine,
   Sparkles,
+  Trash2,
   TrendingUp,
   UserPlus,
-  Users,
-  Building2,
+  Zap,
   type LucideIcon,
 } from "lucide-react";
 import { useAuth } from "@/contexts/auth-context";
 import { useT } from "@/i18n";
-import { api } from "@/api";
-import type { DashboardOperationalStats, DashboardOverview } from "@/core/services/dashboard.service";
+import { api, type AnnouncementRow, type BirthdayMember, type CashSession } from "@/api";
+import type { DashboardFinanceSection, DashboardOperationalStats, DashboardOverview } from "@/core/services/dashboard.service";
 import type { StoreStats } from "@/api";
 import type { SubscriptionWithMember } from "@/core/services/subscriptions.service";
 import { addDaysKey, safeDiffDaysKeys, safeParseDateKey, todayKey } from "@/core/dates";
 import { formatMinor } from "@/core/money";
-import { formatDateShort, formatFullHeading, formatNumber } from "@/services/format";
+import { formatDateShort, formatFullHeading, formatNumber, formatTime } from "@/services/format";
 import { cn } from "@/utils/cn";
 import { Card, CardHeader } from "@/components/ui/card";
 import { StatCard } from "@/components/ui/stat-card";
@@ -37,7 +44,9 @@ import { EmptyState } from "@/components/ui/empty-state";
 import { SeriesChart, type SeriesDataset } from "@/components/charts/series-chart";
 import { ACCENT_TINTS, type Accent } from "@/components/ui/accent";
 import { BranchFilter } from "@/components/ui/branch-filter";
+import { Button } from "@/components/ui/button";
 
+type DashboardView = "pulse" | "finance" | "operations";
 type RangeKey = "today" | "7d" | "30d" | "month" | "year" | "custom";
 
 const RANGES: Array<{ value: RangeKey; label: string }> = [
@@ -54,18 +63,13 @@ function bucketLabel(key: string, bucket: string): string {
   return key.slice(5);
 }
 
-function deltaProps(trend: { deltaPct: number | null }) {
-  if (trend.deltaPct === null || trend.deltaPct === 0) return { delta: undefined as string | undefined, deltaDir: undefined as "up" | "down" | undefined };
-  const up = trend.deltaPct > 0;
-  return {
-    delta: `${up ? "+" : ""}${trend.deltaPct.toFixed(1)}%`,
-    deltaDir: (up ? "up" : "down") as "up" | "down",
-  };
-}
-
 export function DashboardPage() {
   const t = useT();
   const { actor, hasPermission } = useAuth();
+
+  // Active top view tab
+  const [activeView, setActiveView] = useState<DashboardView>("pulse");
+
   const [rangeKey, setRangeKey] = useState<RangeKey>("7d");
   const [selectedBranch, setSelectedBranch] = useState<string>("all");
   const today = todayKey();
@@ -77,94 +81,81 @@ export function DashboardPage() {
     activeMembers: 0,
     activeSubscriptions: 0,
     checkinsToday: 0,
+    occupancyNow: 0,
+    birthdaysTodayCount: 0,
   });
   const [expiring, setExpiring] = useState<SubscriptionWithMember[]>([]);
   const [overview, setOverview] = useState<DashboardOverview | null>(null);
   const [operational, setOperational] = useState<DashboardOperationalStats | null>(null);
   const [storeStats, setStoreStats] = useState<StoreStats | null>(null);
   const [upcomingSessions, setUpcomingSessions] = useState<Array<{id: string; className: string; sessionDate: string; startTime: string; bookedCount: number; capacity: number}>>([]);
+  const [openCashSession, setOpenCashSession] = useState<CashSession | null>(null);
+  const [birthdays, setBirthdays] = useState<BirthdayMember[]>([]);
+  const [refreshing, setRefreshing] = useState(false);
+  const [lastRefreshTime, setLastRefreshTime] = useState<string>("");
+
+  // Announcements state
+  const [announcements, setAnnouncements] = useState<AnnouncementRow[]>([]);
+
+  const loadAnnouncements = () => {
+    return api.announcements.listActive().then(setAnnouncements).catch(() => {});
+  };
 
   const customRange = useMemo<{ fromKey: string; toKey: string } | undefined>(
     () => (customFrom && customTo ? { fromKey: customFrom, toKey: customTo } : undefined),
     [customFrom, customTo],
   );
 
-  useEffect(() => {
-    if (!actor) return;
-    let alive = true;
-    void api.dashboard
-      .stats(selectedBranch)
-      .then((s) => {
-        if (alive) setStats(s);
-      })
-      .catch((err) => console.error(err));
-    if (hasPermission("subscriptions.view")) {
-      api.dashboard
-        .expiring(7)
-        .then((rows) => {
-          if (alive) setExpiring(rows);
-        })
-        .catch((err) => console.error(err));
-    }
-    return () => {
-      alive = false;
-    };
-  }, [actor, hasPermission, selectedBranch]);
-
-  useEffect(() => {
-    if (!actor) return;
-    let alive = true;
-    api.dashboard
-      .overview(rangeKey, rangeKey === "custom" ? customRange : undefined, selectedBranch)
-      .then((ov) => {
-        if (alive) setOverview(ov);
-      })
-      .catch((err) => console.error(err));
-    return () => {
-      alive = false;
-    };
-  }, [actor, rangeKey, customRange, selectedBranch]);
-
-  useEffect(() => {
-    if (!actor || !hasPermission("payments.view")) return;
-    let alive = true;
-    api.dashboard
-      .operational()
-      .then((opStats) => {
-        if (alive) setOperational(opStats);
-      })
-      .catch((err) => console.error(err));
-    return () => {
-      alive = false;
-    };
-  }, [actor, hasPermission]);
-
   const canViewStore = hasPermission("store.view");
-
-  useEffect(() => {
-    if (!actor || !canViewStore) return;
-    let alive = true;
-    api.store.stats({ fromKey: today, toKey: today }).then((s) => { if (alive) setStoreStats(s); }).catch(() => {});
-    return () => { alive = false; };
-  }, [actor, canViewStore, today]);
-
   const canViewClasses = hasPermission("classes.view");
 
+  const refreshAll = async () => {
+    if (!actor) return;
+    setRefreshing(true);
+    try {
+      const promises: Promise<unknown>[] = [
+        api.dashboard.stats(selectedBranch).then(setStats).catch((err) => console.error(err)),
+        api.dashboard
+          .overview(rangeKey, rangeKey === "custom" ? customRange : undefined, selectedBranch)
+          .then(setOverview)
+          .catch((err) => console.error(err)),
+        loadAnnouncements(),
+      ];
+      if (hasPermission("subscriptions.view")) {
+        promises.push(api.dashboard.expiring(7).then(setExpiring).catch((err) => console.error(err)));
+      }
+      if (hasPermission("payments.view")) {
+        promises.push(api.dashboard.operational().then(setOperational).catch((err) => console.error(err)));
+        promises.push(api.cash.openSession().then(setOpenCashSession).catch((err) => console.error(err)));
+      }
+      if (hasPermission("members.view")) {
+        promises.push(api.dashboard.birthdays(selectedBranch).then(setBirthdays).catch((err) => console.error(err)));
+      }
+      if (canViewStore) {
+        promises.push(api.store.stats({ fromKey: today, toKey: today }).then(setStoreStats).catch(() => {}));
+      }
+      if (canViewClasses) {
+        promises.push(api.classes.listSessions({ fromDate: today, limit: 5 }).then(setUpcomingSessions).catch(() => {}));
+      }
+      await Promise.allSettled(promises);
+      const now = new Date();
+      setLastRefreshTime(
+        `${String(now.getHours() % 12 || 12).padStart(2, "0")}:${String(now.getMinutes()).padStart(2, "0")} ${now.getHours() < 12 ? "ص" : "م"}`
+      );
+    } finally {
+      setRefreshing(false);
+    }
+  };
+
   useEffect(() => {
-    if (!actor || !canViewClasses) return;
-    let alive = true;
-    api.classes.listSessions({ fromDate: today, limit: 5 }).then((s) => { if (alive) setUpcomingSessions(s); }).catch(() => {});
-    return () => { alive = false; };
-  }, [actor, canViewClasses, today]);
+    void refreshAll();
+  }, [actor, hasPermission, selectedBranch, rangeKey, customRange]);
 
   const greeting = new Date().getHours() < 12 ? t("dashboard.morning") : t("dashboard.evening");
 
   const finance = overview?.finance ?? null;
   const growth = overview?.growth ?? null;
-  const members = overview?.members ?? null;
   const store = overview?.store ?? null;
-
-  const prevLabel = t("dashboard.vsPrevPeriod");
 
   const revenueDataset = useMemo<SeriesDataset[]>(() => {
     if (!finance || !overview) return [];
@@ -207,334 +198,642 @@ export function DashboardPage() {
     ];
   }, [growth, overview, t]);
 
+  const VIEW_TABS: Array<{ value: DashboardView; label: string }> = [
+    { value: "pulse", label: "⚡ نبض الجيم اليوم (الرئيسي)" },
+    { value: "finance", label: "💰 المالية والأرباح" },
+    { value: "operations", label: "📈 حركة الصالة والنمو" },
+  ];
+
   return (
-    <div className="space-y-6">
-      {/* 1. Header with Greeting, Date & Period Filter Tabs */}
-      <section className="flex flex-wrap items-center justify-between gap-4">
+    <div className="space-y-5">
+      {/* 1. Header with Greeting, Fast Refresh & Smart View Switcher */}
+      <section className="flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
         <div>
-          <h2 className="text-2xl font-extrabold tracking-tight text-ink">{greeting}</h2>
-          <p className="mt-1 text-sm text-subtle">{t("dashboard.subtitle")}</p>
+          <div className="flex items-center gap-2">
+            <h2 className="text-xl sm:text-2xl font-black tracking-tight text-white">{greeting}</h2>
+            <span className="size-2 rounded-full bg-emerald-400 animate-pulse" />
+          </div>
+          <p className="mt-0.5 text-xs text-slate-400">
+            {formatFullHeading(new Date())}
+            {lastRefreshTime && (
+              <span className="ms-2 text-slate-500 font-mono">
+                (آخر تحديث: {lastRefreshTime})
+              </span>
+            )}
+          </p>
         </div>
-        <div className="flex flex-wrap items-center gap-3">
+
+        <div className="flex flex-wrap items-center gap-2">
+          <Button
+            size="sm"
+            variant="secondary"
+            onClick={refreshAll}
+            disabled={refreshing}
+            className="gap-1.5 text-xs h-9 px-3 border-white/10"
+            title={t("dashboard.refreshLive")}
+          >
+            <RefreshCw className={cn("size-3.5", refreshing && "animate-spin text-[#00D2FF]")} />
+            <span className="hidden sm:inline">{t("dashboard.refreshLive")}</span>
+          </Button>
+
           <BranchFilter
             value={selectedBranch}
             onChange={setSelectedBranch}
             allLabel={t("dashboard.allBranches")}
             label={t("dashboard.branchFilter")}
           />
-          <DateRangeFilter
-            value={rangeKey}
-            onChange={setRangeKey}
-            customFrom={customFrom}
-            customTo={customTo}
-            onCustomFrom={setCustomFrom}
-            onCustomTo={setCustomTo}
-          />
-          <span className="hidden items-center gap-2 rounded-2xl border border-white/[0.08] bg-panel px-3.5 py-2 text-xs font-semibold text-subtle md:inline-flex shadow-sm">
-            <CalendarDays aria-hidden className="size-4 text-faint" />
-            {formatFullHeading(new Date())}
-          </span>
         </div>
       </section>
 
-      {selectedBranch !== "all" && (
-        <div className="flex items-center gap-2 px-3.5 py-1.5 rounded-xl bg-neon/10 border border-neon/20 text-xs text-neon font-semibold w-fit">
-          <Building2 className="size-3.5" />
-          <span>{t("dashboard.branchCurrent", { name: selectedBranch })}</span>
+      {/* Smart View Navigation Tabs */}
+      <div className="border-b border-white/[0.08] pb-3">
+        <Tabs
+          items={VIEW_TABS}
+          value={activeView}
+          onChange={(v) => setActiveView(v as DashboardView)}
+        />
+      </div>
+
+      {/* ============================================================== */}
+      {/* VIEW 1: PULSE (نبض الجيم اليوم - البساطة والتشغيل المباشر)       */}
+      {/* ============================================================== */}
+      {activeView === "pulse" && (
+        <div className="space-y-5 animate-in fade-in duration-200">
+          {/* Active Cash Shift Banner */}
+          {hasPermission("payments.view") && (
+            <section>
+              {openCashSession ? (
+                <div className="p-3.5 rounded-2xl border border-emerald-500/30 bg-gradient-to-r from-emerald-500/15 via-emerald-500/5 to-transparent flex flex-wrap items-center justify-between gap-3 shadow-sm">
+                  <div className="flex items-center gap-3 min-w-0">
+                    <span className="relative flex size-3">
+                      <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-emerald-400 opacity-75" />
+                      <span className="relative inline-flex rounded-full size-3 bg-emerald-400" />
+                    </span>
+                    <div>
+                      <div className="flex items-center gap-2">
+                        <span className="text-xs font-bold text-white">{t("dashboard.shiftActiveTitle")}</span>
+                        <Badge variant="success" className="text-[10px] py-0 px-2">مفتوحة</Badge>
+                      </div>
+                      <div className="flex flex-wrap items-center gap-x-3 gap-y-1 text-xs text-slate-400 mt-0.5">
+                        <span>{t("dashboard.shiftOpener", { name: openCashSession.openedByName })}</span>
+                        <span>•</span>
+                        <span>{t("dashboard.shiftOpenedAt", { time: formatTime(openCashSession.openedAt) })}</span>
+                        <span>•</span>
+                        <span>{t("dashboard.shiftStartBalance", { amount: formatMinor(openCashSession.openingBalanceMinor) })}</span>
+                      </div>
+                    </div>
+                  </div>
+                  <Link to="/treasury">
+                    <Button size="sm" variant="secondary" className="text-xs gap-1.5 h-8">
+                      <Banknote className="size-3.5 text-emerald-400" />
+                      <span>إدارة الخزينة والوردية</span>
+                    </Button>
+                  </Link>
+                </div>
+              ) : (
+                <div className="p-3.5 rounded-2xl border border-amber-500/30 bg-amber-500/10 flex flex-wrap items-center justify-between gap-3 shadow-sm">
+                  <div className="flex items-center gap-2.5">
+                    <AlertTriangle className="size-5 text-amber-400 shrink-0" />
+                    <div>
+                      <h4 className="text-xs font-bold text-white">{t("dashboard.shiftClosedTitle")}</h4>
+                      <p className="text-xs text-slate-400">{t("dashboard.shiftClosedSubtitle")}</p>
+                    </div>
+                  </div>
+                  <Link to="/treasury">
+                    <Button size="sm" className="bg-amber-400 text-black hover:bg-amber-300 font-bold text-xs gap-1 h-8">
+                      <Plus className="size-3.5" />
+                      {t("dashboard.openShiftNow")}
+                    </Button>
+                  </Link>
+                </div>
+              )}
+            </section>
+          )}
+
+          {/* 4 Core Hero Pulse KPI Cards */}
+          <section className="grid gap-3.5 sm:grid-cols-2 lg:grid-cols-4">
+            {/* KPI 1: Net Cash Flow Today */}
+            <div className="rounded-2xl border border-emerald-500/30 bg-gradient-to-br from-emerald-500/15 via-[#0A131A] to-[#0A1017] p-4.5 shadow-sm space-y-2">
+              <div className="flex items-center justify-between">
+                <span className="text-xs font-bold text-slate-400">صافي إيرادات الخزينة</span>
+                <span className="size-8 rounded-xl bg-emerald-500/20 text-emerald-400 grid place-items-center">
+                  <Banknote className="size-4" />
+                </span>
+              </div>
+              <div>
+                <p className="text-2xl font-black text-white tabnum">
+                  {finance ? formatMinor(finance.net.current) : formatMinor(0)}
+                </p>
+                <p className="text-[11px] text-slate-400 mt-0.5">
+                  إجمالي المحصل نقداً بعد المصروفات
+                </p>
+              </div>
+            </div>
+
+            {/* KPI 2: Attendance Today + Live Occupancy */}
+            <div className="rounded-2xl border border-cyan-500/30 bg-gradient-to-br from-cyan-500/15 via-[#0A131F] to-[#0A1017] p-4.5 shadow-sm space-y-2">
+              <div className="flex items-center justify-between">
+                <span className="text-xs font-bold text-slate-400">حضور الصالة اليوم</span>
+                <span className="size-8 rounded-xl bg-cyan-500/20 text-cyan-400 grid place-items-center">
+                  <ScanLine className="size-4" />
+                </span>
+              </div>
+              <div>
+                <div className="flex items-baseline gap-2">
+                  <p className="text-2xl font-black text-white tabnum">{formatNumber(stats.checkinsToday)}</p>
+                  <span className="text-xs text-slate-400 font-semibold">زيارة اليوم</span>
+                </div>
+                <div className="flex items-center gap-1.5 mt-0.5 text-[11px] text-emerald-400 font-bold">
+                  <span className="size-2 rounded-full bg-emerald-400 animate-pulse" />
+                  <span>{stats.occupancyNow} متواجد الآن بالصالة</span>
+                </div>
+              </div>
+            </div>
+
+            {/* KPI 3: Active Subscriptions & Members */}
+            <div className="rounded-2xl border border-purple-500/30 bg-gradient-to-br from-purple-500/15 via-[#130E1F] to-[#0A1017] p-4.5 shadow-sm space-y-2">
+              <div className="flex items-center justify-between">
+                <span className="text-xs font-bold text-slate-400">الاشتراكات السارية</span>
+                <span className="size-8 rounded-xl bg-purple-500/20 text-purple-400 grid place-items-center">
+                  <CreditCard className="size-4" />
+                </span>
+              </div>
+              <div>
+                <p className="text-2xl font-black text-white tabnum">{formatNumber(stats.activeSubscriptions)}</p>
+                <p className="text-[11px] text-slate-400 mt-0.5">
+                  من إجمالي {formatNumber(stats.totalMembers)} عضو مسجل
+                </p>
+              </div>
+            </div>
+
+            {/* KPI 4: Expiring Alert */}
+            <div className="rounded-2xl border border-amber-500/30 bg-gradient-to-br from-amber-500/15 via-[#1F170A] to-[#0A1017] p-4.5 shadow-sm space-y-2">
+              <div className="flex items-center justify-between">
+                <span className="text-xs font-bold text-slate-400">تنبيهات التجديد</span>
+                <span className="size-8 rounded-xl bg-amber-500/20 text-amber-400 grid place-items-center">
+                  <CalendarDays className="size-4" />
+                </span>
+              </div>
+              <div>
+                <p className="text-2xl font-black text-amber-400 tabnum">{formatNumber(expiring.length)}</p>
+                <p className="text-[11px] text-slate-400 mt-0.5">
+                  اشتراكات تنتهي خلال 7 أيام للمتابعة
+                </p>
+              </div>
+            </div>
+          </section>
+
+          {/* Quick Action Dock */}
+          <section className="rounded-2xl border border-white/[0.08] bg-panel/80 p-4 backdrop-blur-md">
+            <p className="text-xs font-bold text-slate-400 mb-3 flex items-center gap-1.5">
+              <Sparkles className="size-3.5 text-[#00D2FF]" />
+              <span>إجراءات التشغيل السريعة الأكثر طلباً:</span>
+            </p>
+            <div className="grid grid-cols-2 sm:grid-cols-5 gap-2.5">
+              <Link
+                to="/attendance"
+                className="flex items-center justify-center gap-2 py-2.5 px-3 rounded-xl bg-white/[0.03] hover:bg-emerald-500/15 hover:text-emerald-400 hover:border-emerald-500/40 border border-white/[0.07] text-xs font-bold text-slate-300 transition-all shadow-sm"
+              >
+                <ScanLine className="size-4 text-emerald-400" />
+                <span>تسجيل حضور</span>
+              </Link>
+
+              <Link
+                to="/subscriptions"
+                className="flex items-center justify-center gap-2 py-2.5 px-3 rounded-xl bg-white/[0.03] hover:bg-cyan-500/15 hover:text-cyan-400 hover:border-cyan-500/40 border border-white/[0.07] text-xs font-bold text-slate-300 transition-all shadow-sm"
+              >
+                <CreditCard className="size-4 text-cyan-400" />
+                <span>اشتراك جديد</span>
+              </Link>
+
+              <Link
+                to="/payments"
+                className="flex items-center justify-center gap-2 py-2.5 px-3 rounded-xl bg-white/[0.03] hover:bg-emerald-500/15 hover:text-emerald-400 hover:border-emerald-500/40 border border-white/[0.07] text-xs font-bold text-slate-300 transition-all shadow-sm"
+              >
+                <Banknote className="size-4 text-emerald-400" />
+                <span>تسجيل دفعة</span>
+              </Link>
+
+              <Link
+                to="/quick-sessions"
+                className="flex items-center justify-center gap-2 py-2.5 px-3 rounded-xl bg-white/[0.03] hover:bg-amber-500/15 hover:text-amber-400 hover:border-amber-500/40 border border-white/[0.07] text-xs font-bold text-slate-300 transition-all shadow-sm"
+              >
+                <Zap className="size-4 text-amber-400" />
+                <span>حصة سريعة</span>
+              </Link>
+
+              <Link
+                to="/members"
+                className="flex items-center justify-center gap-2 py-2.5 px-3 rounded-xl bg-white/[0.03] hover:bg-purple-500/15 hover:text-purple-400 hover:border-purple-500/40 border border-white/[0.07] text-xs font-bold text-slate-300 transition-all shadow-sm"
+              >
+                <UserPlus className="size-4 text-purple-400" />
+                <span>دليل المشتركين</span>
+              </Link>
+            </div>
+          </section>
+
+          {/* Operational Dual Grid: Recent Scans & Expiring Subscriptions */}
+          <section className="grid gap-4 xl:grid-cols-2">
+            <RecentCheckInsCard />
+            <ExpiringCard rows={expiring} />
+          </section>
         </div>
       )}
 
-      {/* 2. NeuroBank Grand Balance Card + Core Metrics Grid */}
-      <section className="grid gap-4 lg:grid-cols-12">
-        {/* NeuroBank Grand Hero Financial Card (5 cols on large screens) */}
-        <div className="lg:col-span-5">
-          <Card className="h-full relative overflow-hidden p-6 border-white/[0.12] bg-gradient-to-br from-panel via-surface/90 to-panel flex flex-col justify-between shadow-pop group">
-            {/* Subtle glow mesh */}
-            <div className="absolute -top-12 -end-12 w-48 h-48 bg-neon/10 rounded-full blur-3xl pointer-events-none transition-opacity group-hover:opacity-100 opacity-60" />
+      {/* ============================================================== */}
+      {/* VIEW 2: FINANCE (المالية والتدفقات النقدية والأرباح)             */}
+      {/* ============================================================== */}
+      {activeView === "finance" && (
+        <div className="space-y-5 animate-in fade-in duration-200">
+          {/* Period Selection Bar */}
+          <div className="flex flex-wrap items-center justify-between gap-3 p-3 rounded-2xl border border-white/[0.08] bg-panel/70">
+            <span className="text-xs font-bold text-slate-400">تحديد الفترة الزمنية للتقارير:</span>
+            <DateRangeFilter
+              value={rangeKey}
+              onChange={setRangeKey}
+              customFrom={customFrom}
+              customTo={customTo}
+              onCustomFrom={setCustomFrom}
+              onCustomTo={setCustomTo}
+            />
+          </div>
 
-            <div>
-              <div className="flex items-center justify-between gap-2">
-                <span className="text-xs font-bold text-subtle tracking-wide flex items-center gap-2">
-                  <span className="inline-block size-2 rounded-full bg-neon animate-pulse" />
-                  {t("dashboard.heroBalanceTitle")}
+          {/* Financial Grand Balance Card & Dual Analytics */}
+          <section className="grid gap-4 lg:grid-cols-12">
+            {/* Grand Hero Financial Balance */}
+            <div className="lg:col-span-5">
+              <Card className="h-full relative overflow-hidden p-6 border-white/[0.12] bg-gradient-to-br from-panel via-surface/90 to-panel flex flex-col justify-between shadow-pop group">
+                <div className="absolute -top-12 -end-12 w-48 h-48 bg-emerald-500/10 rounded-full blur-3xl pointer-events-none transition-opacity group-hover:opacity-100 opacity-60" />
+
+                <div>
+                  <div className="flex items-center justify-between gap-2">
+                    <span className="text-xs font-bold text-slate-400 tracking-wide flex items-center gap-2">
+                      <span className="inline-block size-2 rounded-full bg-emerald-400 animate-pulse" />
+                      {t("dashboard.heroBalanceTitle")}
+                    </span>
+                    {finance && (
+                      <span
+                        className={cn(
+                          "inline-flex items-center gap-1 rounded-full px-2.5 py-0.5 text-[11px] font-bold tabnum border",
+                          finance.net.current >= 0
+                            ? "bg-emerald-500/15 text-emerald-400 border-emerald-500/30"
+                            : "bg-rose-500/15 text-rose-400 border-rose-500/30",
+                        )}
+                      >
+                        {finance.net.deltaPct !== null
+                          ? `${finance.net.deltaPct > 0 ? "+" : ""}${finance.net.deltaPct.toFixed(1)}%`
+                          : t(RANGES.find((r) => r.value === rangeKey)?.label ?? "dashboard.trendsThisMonth")}
+                      </span>
+                    )}
+                  </div>
+
+                  <div className="mt-3">
+                    <div className="text-3xl sm:text-4xl font-black tracking-tight tabnum text-white">
+                      {finance ? formatMinor(finance.net.current) : formatMinor(0)}
+                    </div>
+                    <p className="mt-1 text-xs text-slate-400">{t("dashboard.heroBalanceSubtitle")}</p>
+                  </div>
+
+                  {/* Sub metrics: Inflow vs Outflow */}
+                  {finance && (
+                    <div className="mt-5 grid grid-cols-2 gap-3 pt-4 border-t border-white/[0.08]">
+                      <div className="p-3 rounded-xl bg-white/[0.03] border border-white/[0.05]">
+                        <div className="flex items-center gap-1.5 text-xs text-slate-400">
+                          <span className="size-2 rounded-full bg-emerald-400" />
+                          <span>{t("dashboard.kpiRevenue")}</span>
+                        </div>
+                        <div className="mt-1 text-lg font-bold tabnum text-white">
+                          {formatMinor(finance.revenue.current)}
+                        </div>
+                      </div>
+                      <div className="p-3 rounded-xl bg-white/[0.03] border border-white/[0.05]">
+                        <div className="flex items-center gap-1.5 text-xs text-slate-400">
+                          <span className="size-2 rounded-full bg-amber-400" />
+                          <span>{t("dashboard.kpiExpenses")}</span>
+                        </div>
+                        <div className="mt-1 text-lg font-bold tabnum text-white">
+                          {formatMinor(finance.expenses.current)}
+                        </div>
+                      </div>
+                    </div>
+                  )}
+                </div>
+
+                <div className="mt-6 pt-4 border-t border-white/[0.08] flex items-center justify-between text-xs">
+                  <Link to="/reports" className="font-bold text-[#00D2FF] hover:underline flex items-center gap-1">
+                    <span>فتح المركز المالي التفصيلي</span>
+                    <ChevronLeft className="size-3.5" />
+                  </Link>
+                  <Link to="/treasury" className="font-bold text-slate-400 hover:text-white">
+                    دفتر الخزينة
+                  </Link>
+                </div>
+              </Card>
+            </div>
+
+            {/* Cash Flow Chart */}
+            <div className="lg:col-span-7">
+              {finance && revenueDataset.length > 0 ? (
+                <Card className="h-full">
+                  <CardHeader
+                    title={t("dashboard.chartRevenueTitle")}
+                    description={t("dashboard.subtitle")}
+                  />
+                  <div className="px-5 pb-5">
+                    <SeriesChart series={revenueDataset} />
+                  </div>
+                </Card>
+              ) : (
+                <Card className="h-full p-5 flex items-center justify-center">
+                  <EmptyState icon={<TrendingUp />} title={t("common.noData")} />
+                </Card>
+              )}
+            </div>
+          </section>
+
+          {/* Revenue Distribution & Outstanding Debts */}
+          <section className="grid gap-4 lg:grid-cols-12">
+            <div className="lg:col-span-6">
+              <RevenueBreakdownCard finance={finance} store={store} storeStats={storeStats} />
+            </div>
+
+            {operational && (
+              <div className="lg:col-span-6 space-y-4">
+                <Link to="/payments?status=partial" className="block">
+                  <StatCard
+                    title={t("dashboard.opOutstanding")}
+                    subtitle={t("dashboard.opOutstandingMembers", { count: operational.membersWithOutstanding })}
+                    value={formatMinor(operational.outstandingTotalMinor)}
+                    icon={<Banknote className="size-5" />}
+                    accent={operational.outstandingTotalMinor > 0 ? "amber" : "neon"}
+                  />
+                </Link>
+
+                <AlertStrip overview={overview} />
+              </div>
+            )}
+          </section>
+        </div>
+      )}
+
+      {/* ============================================================== */}
+      {/* VIEW 3: OPERATIONS (حركة الصالة والنمو والأنشطة)                */}
+      {/* ============================================================== */}
+      {activeView === "operations" && (
+        <div className="space-y-5 animate-in fade-in duration-200">
+          {/* Members Birthdays Today Banner */}
+          {birthdays.length > 0 && (
+            <section className="p-4 rounded-2xl border border-purple-500/30 bg-gradient-to-r from-purple-500/15 via-pink-500/5 to-transparent space-y-3">
+              <div className="flex items-center justify-between">
+                <div className="flex items-center gap-2">
+                  <span className="p-1.5 rounded-xl bg-purple-500/25 text-purple-400">
+                    <Cake className="size-4" />
+                  </span>
+                  <div>
+                    <h3 className="text-sm font-bold text-white flex items-center gap-2">
+                      {t("dashboard.birthdaysTodayTitle")}
+                      <Badge variant="violet" className="py-0 px-2 text-[10px]">
+                        {t("dashboard.birthdaysCount", { count: birthdays.length })}
+                      </Badge>
+                    </h3>
+                    <p className="text-[11px] text-slate-400">{t("dashboard.birthdaysTodaySub")}</p>
+                  </div>
+                </div>
+              </div>
+              <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4">
+                {birthdays.map((b) => {
+                  const cleanPhone = b.phone ? b.phone.replace(/\D/g, "").replace(/^0/, "20") : "";
+                  const waText = encodeURIComponent(
+                    `كل سنة وحضرتك طيب يا كابتن ${b.fullName}! 🎉 أسرة الجيم بتتمنى لك سنة سعيدة مليانة صحة وإنجازات وقوة! 💪🎂`
+                  );
+                  const waUrl = cleanPhone ? `https://wa.me/${cleanPhone}?text=${waText}` : null;
+
+                  return (
+                    <div
+                      key={b.id}
+                      className="p-3 rounded-xl bg-panel border border-white/[0.08] flex items-center justify-between gap-3 shadow-sm hover:border-purple-500/30 transition-all"
+                    >
+                      <div className="flex items-center gap-2.5 min-w-0">
+                        <Avatar name={b.fullName} size="sm" />
+                        <div className="min-w-0">
+                          <Link
+                            to={`/members/${b.id}`}
+                            className="text-xs font-bold text-white hover:text-purple-400 truncate block transition-colors"
+                          >
+                            {b.fullName}
+                          </Link>
+                          <div className="flex items-center gap-1.5 text-[10px] text-slate-400">
+                            <span>{b.memberCode}</span>
+                            {b.age !== null && (
+                              <>
+                                <span>•</span>
+                                <span className="text-purple-400 font-medium">
+                                  {t("dashboard.yearsOld", { age: b.age })}
+                                </span>
+                              </>
+                            )}
+                          </div>
+                        </div>
+                      </div>
+                      {waUrl && (
+                        <a
+                          href={waUrl}
+                          target="_blank"
+                          rel="noopener noreferrer"
+                          className="p-2 rounded-xl bg-emerald-500/10 hover:bg-emerald-500/20 text-emerald-400 border border-emerald-500/30 transition-colors shrink-0"
+                          title={t("dashboard.congratulateWhatsApp")}
+                        >
+                          <MessageCircle className="size-4" />
+                        </a>
+                      )}
+                    </div>
+                  );
+                })}
+              </div>
+            </section>
+          )}
+
+          {/* Announcements Banner Section */}
+          {announcements.length > 0 && (
+            <section className="space-y-3">
+              <div className="flex items-center justify-between">
+                <span className="text-xs font-bold text-slate-400 flex items-center gap-1.5">
+                  <Megaphone className="size-4 text-[#00D2FF]" />
+                  التنبيهات والإعلانات العامة للنادي
                 </span>
-                {finance && (
-                  <span
+              </div>
+
+              {announcements.map((a) => {
+                const levelClass =
+                  a.level === "danger"
+                    ? "bg-rose-500/10 border-rose-500/30 text-rose-400"
+                    : a.level === "warning"
+                    ? "bg-amber-500/10 border-amber-500/30 text-amber-400"
+                    : a.level === "success"
+                    ? "bg-emerald-500/10 border-emerald-500/30 text-emerald-400"
+                    : "bg-cyan-500/10 border-cyan-500/30 text-cyan-400";
+                return (
+                  <div
+                    key={a.id}
                     className={cn(
-                      "inline-flex items-center gap-1 rounded-full px-2.5 py-0.5 text-[11px] font-bold tabnum border",
-                      finance.net.current >= 0
-                        ? "bg-neon/10 text-neon border-neon/20 shadow-glow-sm"
-                        : "bg-red/10 text-red border-red/20",
+                      "p-3.5 rounded-xl border flex items-start justify-between gap-3 shadow-sm",
+                      levelClass,
                     )}
                   >
-                    {finance.net.deltaPct !== null
-                      ? `${finance.net.deltaPct > 0 ? "+" : ""}${finance.net.deltaPct.toFixed(1)}%`
-                      : t(RANGES.find((r) => r.value === rangeKey)?.label ?? "dashboard.trendsThisMonth")}
-                  </span>
-                )}
-              </div>
-
-              <div className="mt-3">
-                <div className="text-3xl sm:text-4xl font-black tracking-tight tabnum text-ink">
-                  {finance ? formatMinor(finance.net.current) : formatMinor(0)}
-                </div>
-                <p className="mt-1 text-xs text-faint">{t("dashboard.heroBalanceSubtitle")}</p>
-              </div>
-
-              {/* Sub metrics: Inflow vs Outflow */}
-              {finance && (
-                <div className="mt-5 grid grid-cols-2 gap-3 pt-4 border-t border-white/[0.08]">
-                  <div className="p-3 rounded-xl bg-white/[0.03] border border-white/[0.05]">
-                    <div className="flex items-center gap-1.5 text-xs text-subtle">
-                      <span className="size-2 rounded-full bg-neon" />
-                      <span>{t("dashboard.kpiRevenue")}</span>
+                    <div className="flex items-start gap-2.5">
+                      <Megaphone className="size-4 mt-0.5 shrink-0" />
+                      <div>
+                        <h3 className="font-bold text-sm text-white">{a.title}</h3>
+                        <p className="text-xs mt-1 text-white/80 leading-relaxed whitespace-pre-wrap">
+                          {a.content}
+                        </p>
+                        <span className="text-[10px] text-slate-400 mt-1 block">
+                          {a.created_at?.slice(0, 10)} {a.creator_name ? `• ${a.creator_name}` : ""}
+                        </span>
+                      </div>
                     </div>
-                    <div className="mt-1 text-lg font-bold tabnum text-ink">
-                      {formatMinor(finance.revenue.current)}
-                    </div>
+                    {hasPermission("announcements.manage") && (
+                      <button
+                        onClick={async () => {
+                          if (confirm("هل تريد حذف هذا الإعلان؟")) {
+                            await api.announcements.delete(a.id);
+                            loadAnnouncements();
+                          }
+                        }}
+                        className="text-xs text-slate-400 hover:text-rose-400 p-1 transition-colors"
+                        title="حذف الإعلان"
+                      >
+                        <Trash2 className="size-3.5" />
+                      </button>
+                    )}
                   </div>
-                  <div className="p-3 rounded-xl bg-white/[0.03] border border-white/[0.05]">
-                    <div className="flex items-center gap-1.5 text-xs text-subtle">
-                      <span className="size-2 rounded-full bg-amber" />
-                      <span>{t("dashboard.kpiExpenses")}</span>
-                    </div>
-                    <div className="mt-1 text-lg font-bold tabnum text-ink">
-                      {formatMinor(finance.expenses.current)}
-                    </div>
+                );
+              })}
+            </section>
+          )}
+
+          {/* Growth Chart & Busy Hours Grid */}
+          <section className="grid gap-4 lg:grid-cols-12">
+            <div className="lg:col-span-7">
+              {growth && growthDataset.length > 0 ? (
+                <Card className="h-full">
+                  <CardHeader
+                    title={t("dashboard.chartGrowthTitle")}
+                    description={t("dashboard.vsPrevPeriod")}
+                  />
+                  <div className="px-5 pb-5">
+                    <SeriesChart series={growthDataset} />
                   </div>
-                </div>
+                </Card>
+              ) : (
+                <Card className="h-full p-5 flex items-center justify-center">
+                  <EmptyState icon={<TrendingUp />} title={t("common.noData")} />
+                </Card>
               )}
             </div>
 
-            {/* Quick Action Pills in NeuroBank Style */}
-            <div className="mt-6 pt-4 border-t border-white/[0.08] grid grid-cols-2 sm:grid-cols-4 gap-2">
-              <Link
-                to="/payments"
-                className="flex items-center justify-center gap-1.5 py-2 px-2 rounded-xl bg-white/[0.04] hover:bg-neon/15 hover:text-neon hover:border-neon/30 border border-white/[0.06] text-xs font-bold text-subtle transition-all"
-              >
-                <Banknote className="size-3.5" />
-                <span>{t("dashboard.quickDeposit")}</span>
-              </Link>
-              <Link
-                to="/expenses"
-                className="flex items-center justify-center gap-1.5 py-2 px-2 rounded-xl bg-white/[0.04] hover:bg-amber/15 hover:text-amber hover:border-amber/30 border border-white/[0.06] text-xs font-bold text-subtle transition-all"
-              >
-                <ReceiptText className="size-3.5" />
-                <span>{t("dashboard.quickExpense")}</span>
-              </Link>
-              <Link
-                to="/attendance"
-                className="flex items-center justify-center gap-1.5 py-2 px-2 rounded-xl bg-white/[0.04] hover:bg-cyan/15 hover:text-cyan hover:border-cyan/30 border border-white/[0.06] text-xs font-bold text-subtle transition-all"
-              >
-                <ScanLine className="size-3.5" />
-                <span>{t("dashboard.quickCheckin")}</span>
-              </Link>
-              <Link
-                to="/members?add=1"
-                className="flex items-center justify-center gap-1.5 py-2 px-2 rounded-xl bg-white/[0.04] hover:bg-violet/15 hover:text-violet hover:border-violet/30 border border-white/[0.06] text-xs font-bold text-subtle transition-all"
-              >
-                <UserPlus className="size-3.5" />
-                <span>{t("dashboard.quickAddMember")}</span>
-              </Link>
+            {/* Busy Hours Card */}
+            <div className="lg:col-span-5">
+              <Card className="p-5 h-full flex flex-col justify-between">
+                <CardHeader title={t("dashboard.opBusyHours")} description="أوقات الذروة وازدحام الصالة اليوم" />
+                {!operational || operational.busyHoursToday.length === 0 ? (
+                  <p className="mt-3 text-xs text-slate-500 text-center py-6">لا توجد بيانات حضور مسجلة حتى الآن اليوم</p>
+                ) : (
+                  <ul className="space-y-2.5 px-2">
+                    {operational.busyHoursToday.map((h) => (
+                      <li key={h.hour} className="flex items-center justify-between gap-3 text-xs font-semibold">
+                        <span dir="ltr" className="tabnum text-slate-300 font-mono w-14">
+                          {String(h.hour).padStart(2, "0")}:00
+                        </span>
+                        <span aria-hidden className="h-2 flex-1 overflow-hidden rounded-full bg-white/[0.06]">
+                          <span
+                            className="block h-full rounded-full bg-cyan-400 transition-all duration-300"
+                            style={{
+                              width: `${Math.max(
+                                10,
+                                Math.round((h.count / Math.max(1, operational.busyHoursToday[0].count)) * 100),
+                              )}%`,
+                            }}
+                          />
+                        </span>
+                        <span className="w-8 text-end tabnum text-slate-400 font-bold">{h.count}</span>
+                      </li>
+                    ))}
+                  </ul>
+                )}
+              </Card>
             </div>
-          </Card>
-        </div>
+          </section>
 
-        {/* 4 Stat Cards in 7 cols */}
-        <div className="lg:col-span-7 grid gap-4 sm:grid-cols-2">
-          <StatCard
-            title={t("dashboard.statsMembers")}
-            value={formatNumber(members?.totalMembers ?? stats.totalMembers)}
-            icon={<Users className="size-5" />}
-            accent="neon"
-            subtitle={`${formatNumber(members?.activeMembers ?? stats.activeMembers)} ${t("dashboard.statsActiveMembers")}`}
-          />
-          <StatCard
-            title={t("dashboard.statsActiveSubs")}
-            value={formatNumber(members?.activeSubscriptions ?? stats.activeSubscriptions)}
-            icon={<CreditCard className="size-5" />}
-            accent="cyan"
-          />
-          <StatCard
-            title={t("dashboard.statsCheckins")}
-            value={formatNumber(stats.checkinsToday)}
-            icon={<ScanLine className="size-5" />}
-            accent="violet"
-            subtitle={t("dashboard.periodToday")}
-          />
-          <StatCard
-            title={t("dashboard.kpiNewMembers")}
-            value={formatNumber(growth?.newMembers.current ?? 0)}
-            icon={<UserPlus className="size-5" />}
-            accent="amber"
-            delta={growth ? deltaProps(growth.newMembers).delta : undefined}
-            deltaDir={growth ? deltaProps(growth.newMembers).deltaDir : undefined}
-            trendLabel={prevLabel}
-          />
-        </div>
-      </section>
-
-      {/* 3. Analytics & Revenue Breakdown (Dual Grid in NeuroBank style) */}
-      <section className="grid gap-4 lg:grid-cols-12">
-        {/* Main Cash Flow Chart (7 cols) */}
-        <div className="lg:col-span-7">
-          {finance && revenueDataset.length > 0 ? (
-            <Card className="h-full">
-              <CardHeader
-                title={t("dashboard.chartRevenueTitle")}
-                description={t("dashboard.subtitle")}
-              />
-              <div className="px-5 pb-5">
-                <SeriesChart series={revenueDataset} />
-              </div>
-            </Card>
-          ) : (
-            <Card className="h-full p-5 flex items-center justify-center">
-              <EmptyState icon={<TrendingUp />} title={t("common.noData")} />
-            </Card>
-          )}
-        </div>
-
-        {/* NeuroBank Revenue Breakdown (5 cols) */}
-        <div className="lg:col-span-5">
-          <RevenueBreakdownCard finance={finance} store={store} storeStats={storeStats} />
-        </div>
-      </section>
-
-      {/* 4. Secondary Chart (Growth) & Operational Quick Alerts */}
-      <section className="grid gap-4 lg:grid-cols-12">
-        <div className="lg:col-span-7">
-          {growth && growthDataset.length > 0 && (
-            <Card className="h-full">
-              <CardHeader
-                title={t("dashboard.chartGrowthTitle")}
-                description={t("dashboard.vsPrevPeriod")}
-              />
-              <div className="px-5 pb-5">
-                <SeriesChart series={growthDataset} />
-              </div>
-            </Card>
-          )}
-        </div>
-        <div className="lg:col-span-5">
-          <AlertStrip overview={overview} />
-        </div>
-      </section>
-
-      {/* 5. Operational Stats & Busy Hours */}
-      {operational && (
-        <section className="grid gap-4 sm:grid-cols-2 xl:grid-cols-4">
-          <Link to="/payments?status=partial" className="block">
-            <StatCard
-              title={t("dashboard.opOutstanding")}
-              subtitle={t("dashboard.opOutstandingMembers", { count: operational.membersWithOutstanding })}
-              value={formatMinor(operational.outstandingTotalMinor)}
-              icon={<Banknote className="size-5" />}
-              accent={operational.outstandingTotalMinor > 0 ? "amber" : "neon"}
-            />
-          </Link>
-          <StatCard
-            title={t("dashboard.opExpiredSubs")}
-            value={formatNumber(operational.expiredSubscriptions)}
-            icon={<CalendarDays className="size-5" />}
-            accent={operational.expiredSubscriptions > 0 ? "red" : "cyan"}
-          />
-          <StatCard
-            title={t("dashboard.opLostCards")}
-            value={formatNumber(operational.lostCards)}
-            icon={<CreditCard className="size-5" />}
-            accent="violet"
-          />
-          <Card className="p-5 flex flex-col justify-between">
-            <p className="text-sm font-bold text-subtle">{t("dashboard.opBusyHours")}</p>
-            {operational.busyHoursToday.length === 0 ? (
-              <p className="mt-3 text-[12px] text-faint">{t("common.none")}</p>
-            ) : (
-              <ul className="mt-3 space-y-2">
-                {operational.busyHoursToday.map((h) => (
-                  <li key={h.hour} className="flex items-center justify-between gap-2 text-[12px] font-semibold">
-                    <span dir="ltr" className="tabnum text-subtle w-12">
-                      {String(h.hour).padStart(2, "0")}:00
-                    </span>
-                    <span aria-hidden className="h-2 flex-1 overflow-hidden rounded-full bg-white/[0.06]">
-                      <span
-                        className="block h-full rounded-full bg-cyan transition-all duration-300"
-                        style={{
-                          width: `${Math.max(
-                            10,
-                            Math.round((h.count / Math.max(1, operational.busyHoursToday[0].count)) * 100),
-                          )}%`,
-                        }}
-                      />
-                    </span>
-                    <span className="w-6 text-end tabnum text-faint">{h.count}</span>
-                  </li>
-                ))}
-              </ul>
+          {/* Store & Classes Mini Deck */}
+          <section className="grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
+            {storeStats && (
+              <>
+                <Link to="/store" className="block">
+                  <StatCard
+                    title={t("dashboard.storeTodaySales")}
+                    value={formatNumber(storeStats.salesCount)}
+                    icon={<ReceiptText className="size-5" />}
+                    accent="neon"
+                  />
+                </Link>
+                <Link to="/store" className="block">
+                  <StatCard
+                    title={t("dashboard.storeLowStock")}
+                    value={formatNumber(store ? store.lowStock : storeStats.lowStockCount)}
+                    icon={<PackageCheck className="size-5" />}
+                    accent={(store ? store.lowStock : storeStats.lowStockCount) > 0 ? "amber" : "cyan"}
+                  />
+                </Link>
+              </>
             )}
-          </Card>
-        </section>
-      )}
 
-      {/* 6. Store Quick Stats */}
-      {storeStats && (
-        <section className="grid gap-4 sm:grid-cols-2 xl:grid-cols-3">
-          <Link to="/store" className="block">
-            <StatCard
-              title={t("dashboard.storeTodaySales")}
-              value={formatNumber(storeStats.salesCount)}
-              icon={<ReceiptText className="size-5" />}
-              accent="neon"
-            />
-          </Link>
-          <Link to="/store" className="block">
-            <StatCard
-              title={t("dashboard.storeLowStock")}
-              value={formatNumber(store ? store.lowStock : storeStats.lowStockCount)}
-              icon={<PackageCheck className="size-5" />}
-              accent={(store ? store.lowStock : storeStats.lowStockCount) > 0 ? "amber" : "cyan"}
-            />
-          </Link>
-          <Link to="/store" className="block">
-            <StatCard
-              title={t("dashboard.storeDebt")}
-              value={formatMinor(store ? store.debtMinor : storeStats.creditOpenMinor)}
-              icon={<Banknote className="size-5" />}
-              accent={(store ? store.debtMinor : storeStats.creditOpenMinor) > 0 ? "amber" : "neon"}
-            />
-          </Link>
-        </section>
-      )}
+            <Link to="/classes" className="block">
+              <StatCard
+                title="الحصص والأكاديميات"
+                value={formatNumber(upcomingSessions.length)}
+                subtitle="حصص تدريبية مقررة"
+                icon={<Dumbbell className="size-5" />}
+                accent="cyan"
+              />
+            </Link>
 
-      {/* 7. Upcoming Sessions */}
-      {upcomingSessions.length > 0 && (
-        <section>
-          <Card>
-            <CardHeader title={t("dashboard.upcomingClasses")} />
-            <ul className="divide-y divide-white/[0.06] px-5 pb-4">
-              {upcomingSessions.map((s) => (
-                <li key={s.id} className="flex items-center justify-between gap-3 py-3 text-sm">
-                  <span className="min-w-0">
-                    <span className="block font-bold text-ink">{s.className}</span>
-                    <span dir="ltr" className="block text-[11px] text-faint tabnum">
-                      {s.sessionDate} {s.startTime}
-                    </span>
-                  </span>
-                  <span className="flex items-center gap-2">
-                    <Badge variant="info">{s.bookedCount}/{s.capacity}</Badge>
-                  </span>
-                </li>
-              ))}
-            </ul>
-          </Card>
-        </section>
-      )}
+            <Link to="/quick-sessions" className="block">
+              <StatCard
+                title={t("dashboard.opQuickSessions")}
+                subtitle={operational ? formatMinor(operational.quickSessionsTodayRevenueMinor) : "—"}
+                value={formatNumber(operational?.quickSessionsTodayCount ?? 0)}
+                icon={<Zap className="size-5" />}
+                accent="amber"
+              />
+            </Link>
+          </section>
 
-      {/* 8. Expiring Subscriptions & Recent Check-ins */}
-      <section className="grid gap-4 xl:grid-cols-2">
-        <ExpiringCard rows={expiring} />
-        <RecentCheckInsCard />
-      </section>
+          {/* Upcoming Sessions List */}
+          {upcomingSessions.length > 0 && (
+            <section>
+              <Card>
+                <CardHeader title={t("dashboard.upcomingClasses")} description="جدول الحصص والأنشطة القادمة" />
+                <ul className="divide-y divide-white/[0.06] px-5 pb-4">
+                  {upcomingSessions.map((s) => (
+                    <li key={s.id} className="flex items-center justify-between gap-3 py-3 text-sm">
+                      <span className="min-w-0">
+                        <span className="block font-bold text-white">{s.className}</span>
+                        <span className="block text-xs text-slate-400 tabnum font-medium">
+                          {s.sessionDate} • {formatTime(s.startTime)}
+                        </span>
+                      </span>
+                      <span className="flex items-center gap-2">
+                        <Badge variant="info">{s.bookedCount}/{s.capacity}</Badge>
+                      </span>
+                    </li>
+                  ))}
+                </ul>
+              </Card>
+            </section>
+          )}
+        </div>
+      )}
     </div>
   );
 }
@@ -556,7 +855,7 @@ function DateRangeFilter({
 }) {
   const t = useT();
   return (
-    <div className="flex flex-wrap items-center gap-3">
+    <div className="flex flex-wrap items-center gap-2">
       <Tabs
         items={RANGES.map((r) => ({ value: r.value, label: t(r.label) }))}
         value={value}
@@ -568,14 +867,14 @@ function DateRangeFilter({
             type="date"
             value={customFrom}
             onChange={(e) => onCustomFrom(e.target.value)}
-            className="rounded-lg border border-line bg-surface px-2.5 py-1.5 text-sm text-ink"
+            className="rounded-lg border border-white/10 bg-surface px-2.5 py-1 text-xs text-white"
           />
-          <span className="text-faint">→</span>
+          <ArrowLeft className="size-3 text-slate-500 shrink-0" />
           <input
             type="date"
             value={customTo}
             onChange={(e) => onCustomTo(e.target.value)}
-            className="rounded-lg border border-line bg-surface px-2.5 py-1.5 text-sm text-ink"
+            className="rounded-lg border border-white/10 bg-surface px-2.5 py-1 text-xs text-white"
           />
         </div>
       )}
@@ -588,19 +887,27 @@ function RevenueBreakdownCard({
   store,
   storeStats,
 }: {
-  finance: { revenue: { current: number }; expenses: { current: number }; net: { current: number } } | null;
+  finance: DashboardFinanceSection | null;
   store: { lowStock: number; debtMinor: number } | null;
   storeStats: StoreStats | null;
 }) {
   const t = useT();
   const totalRev = finance?.revenue.current ?? 0;
-  const storeRev = storeStats?.revenueMinor ?? 0;
-  const subRev = Math.max(0, totalRev - storeRev);
+
+  const subRev = finance?.streams
+    ? finance.streams.subscriptionsMinor
+    : Math.max(0, totalRev - (storeStats?.revenueMinor ?? 0));
+  const storeRev = finance?.streams
+    ? finance.streams.storeMinor
+    : (storeStats?.revenueMinor ?? 0);
+  const quickRev = finance?.streams?.quickSessionsMinor ?? 0;
+  const ptRev = finance?.streams?.privateTrainingMinor ?? 0;
+  const debtMinor = store?.debtMinor ?? 0;
 
   const subPct = totalRev > 0 ? Math.min(100, Math.round((subRev / totalRev) * 100)) : 0;
   const storePct = totalRev > 0 ? Math.min(100, Math.round((storeRev / totalRev) * 100)) : 0;
-
-  const debtMinor = store?.debtMinor ?? 0;
+  const quickPct = totalRev > 0 ? Math.min(100, Math.round((quickRev / totalRev) * 100)) : 0;
+  const ptPct = totalRev > 0 ? Math.min(100, Math.round((ptRev / totalRev) * 100)) : 0;
 
   return (
     <Card className="h-full flex flex-col justify-between">
@@ -612,17 +919,17 @@ function RevenueBreakdownCard({
         {/* Item 1: Subscriptions */}
         <div className="space-y-1.5">
           <div className="flex items-center justify-between text-xs">
-            <span className="font-semibold text-ink flex items-center gap-2">
-              <span className="size-2.5 rounded-full bg-neon shadow-glow-sm" />
+            <span className="font-semibold text-white flex items-center gap-2">
+              <span className="size-2.5 rounded-full bg-emerald-400 shadow-sm" />
               {t("dashboard.sourceSubscriptions")}
             </span>
-            <span className="font-bold tabnum text-ink">
-              {formatMinor(subRev)} <span className="text-subtle font-normal">({subPct}%)</span>
+            <span className="font-bold tabnum text-white">
+              {formatMinor(subRev)} <span className="text-slate-400 font-normal">({subPct}%)</span>
             </span>
           </div>
           <div className="h-2 w-full rounded-full bg-white/[0.06] overflow-hidden">
             <div
-              className="h-full rounded-full bg-neon transition-all duration-500"
+              className="h-full rounded-full bg-emerald-400 transition-all duration-500"
               style={{ width: `${subPct}%` }}
             />
           </div>
@@ -631,47 +938,88 @@ function RevenueBreakdownCard({
         {/* Item 2: Store */}
         <div className="space-y-1.5">
           <div className="flex items-center justify-between text-xs">
-            <span className="font-semibold text-ink flex items-center gap-2">
-              <span className="size-2.5 rounded-full bg-cyan shadow-sm" />
+            <span className="font-semibold text-white flex items-center gap-2">
+              <span className="size-2.5 rounded-full bg-cyan-400 shadow-sm" />
               {t("dashboard.sourceStore")}
             </span>
-            <span className="font-bold tabnum text-ink">
-              {formatMinor(storeRev)} <span className="text-subtle font-normal">({storePct}%)</span>
+            <span className="font-bold tabnum text-white">
+              {formatMinor(storeRev)} <span className="text-slate-400 font-normal">({storePct}%)</span>
             </span>
           </div>
           <div className="h-2 w-full rounded-full bg-white/[0.06] overflow-hidden">
             <div
-              className="h-full rounded-full bg-cyan transition-all duration-500"
+              className="h-full rounded-full bg-cyan-400 transition-all duration-500"
               style={{ width: `${storePct}%` }}
             />
           </div>
         </div>
 
-        {/* Item 3: Debts */}
+        {/* Item 3: Quick Sessions */}
+        {quickRev > 0 && (
+          <div className="space-y-1.5">
+            <div className="flex items-center justify-between text-xs">
+              <span className="font-semibold text-white flex items-center gap-2">
+                <span className="size-2.5 rounded-full bg-amber-400 shadow-sm" />
+                {t("dashboard.sourceQuickSessions")}
+              </span>
+              <span className="font-bold tabnum text-white">
+                {formatMinor(quickRev)} <span className="text-slate-400 font-normal">({quickPct}%)</span>
+              </span>
+            </div>
+            <div className="h-2 w-full rounded-full bg-white/[0.06] overflow-hidden">
+              <div
+                className="h-full rounded-full bg-amber-400 transition-all duration-500"
+                style={{ width: `${quickPct}%` }}
+              />
+            </div>
+          </div>
+        )}
+
+        {/* Item 4: Private Training PT */}
+        {ptRev > 0 && (
+          <div className="space-y-1.5">
+            <div className="flex items-center justify-between text-xs">
+              <span className="font-semibold text-white flex items-center gap-2">
+                <span className="size-2.5 rounded-full bg-purple-400 shadow-sm" />
+                {t("dashboard.sourcePrivateTraining")}
+              </span>
+              <span className="font-bold tabnum text-white">
+                {formatMinor(ptRev)} <span className="text-slate-400 font-normal">({ptPct}%)</span>
+              </span>
+            </div>
+            <div className="h-2 w-full rounded-full bg-white/[0.06] overflow-hidden">
+              <div
+                className="h-full rounded-full bg-purple-400 transition-all duration-500"
+                style={{ width: `${ptPct}%` }}
+              />
+            </div>
+          </div>
+        )}
+
+        {/* Item 5: Debts */}
         <div className="space-y-1.5">
           <div className="flex items-center justify-between text-xs">
-            <span className="font-semibold text-ink flex items-center gap-2">
-              <span className="size-2.5 rounded-full bg-amber shadow-sm" />
+            <span className="font-semibold text-white flex items-center gap-2">
+              <span className="size-2.5 rounded-full bg-rose-400 shadow-sm" />
               {t("dashboard.sourceDebts")}
             </span>
-            <span className="font-bold tabnum text-ink">
+            <span className="font-bold tabnum text-white">
               {formatMinor(debtMinor)}
             </span>
           </div>
           <div className="h-2 w-full rounded-full bg-white/[0.06] overflow-hidden">
             <div
-              className="h-full rounded-full bg-amber transition-all duration-500"
+              className="h-full rounded-full bg-rose-400 transition-all duration-500"
               style={{ width: debtMinor > 0 ? (totalRev > 0 ? `${Math.min(100, Math.round((debtMinor / (totalRev + debtMinor)) * 100))}%` : "100%") : "0%" }}
             />
           </div>
         </div>
       </div>
 
-      {/* Smart insights pill at the bottom */}
-      <div className="p-3.5 mx-5 mb-5 rounded-2xl bg-white/[0.03] border border-white/[0.06] flex items-center gap-3">
-        <Sparkles className="size-5 text-neon shrink-0" />
-        <div className="text-xs text-subtle leading-relaxed">
-          <span className="font-bold text-ink">{t("dashboard.smartInsightsTitle")}: </span>
+      <div className="p-3 mx-5 mb-5 rounded-2xl bg-white/[0.03] border border-white/[0.06] flex items-center gap-2.5">
+        <Sparkles className="size-4 text-emerald-400 shrink-0" />
+        <div className="text-xs text-slate-400 leading-relaxed">
+          <span className="font-bold text-white">{t("dashboard.smartInsightsTitle")}: </span>
           {finance && finance.net.current >= 0
             ? t("dashboard.insightCashFlow")
             : t("dashboard.insightOutstanding")}
@@ -766,29 +1114,26 @@ function AlertStrip({ overview }: { overview: DashboardOverview | null }) {
   return (
     <Card className="h-full flex flex-col justify-between">
       <CardHeader title={t("dashboard.alertsTitle")} />
-      <div className="grid gap-2.5 p-5">
+      <div className="grid gap-2.5 p-4">
         {visible.map((item) => (
           <Link
             key={item.label}
             to={item.link ?? "#"}
-            className={cn(
-              "group flex items-center gap-3 rounded-2xl border border-white/[0.06] bg-surface/80 p-3 transition-all duration-200",
-              "hover:border-neon/40 hover:bg-surface",
-            )}
+            className="group flex items-center gap-3 rounded-xl border border-white/[0.06] bg-surface/80 p-2.5 transition-all hover:border-emerald-500/40 hover:bg-surface"
           >
             <span
               aria-hidden
-              className={cn("grid size-10 shrink-0 place-items-center rounded-xl", ACCENT_TINTS[item.accent])}
+              className={cn("grid size-9 shrink-0 place-items-center rounded-lg", ACCENT_TINTS[item.accent])}
             >
-              <item.icon className="size-[18px]" />
+              <item.icon className="size-4" />
             </span>
             <span className="min-w-0 flex-1">
-              <span className="block text-xs font-semibold text-subtle">{item.label}</span>
-              <span className="block text-lg font-extrabold leading-tight tabnum text-ink">{item.value}</span>
+              <span className="block text-xs font-semibold text-slate-400">{item.label}</span>
+              <span className="block text-base font-extrabold leading-tight tabnum text-white">{item.value}</span>
             </span>
             <ChevronLeft
               aria-hidden
-              className="size-4 shrink-0 text-faint transition-transform group-hover:-translate-x-0.5 group-hover:text-neon"
+              className="size-4 shrink-0 text-slate-500 transition-transform group-hover:-translate-x-0.5 group-hover:text-emerald-400"
             />
           </Link>
         ))}
@@ -809,6 +1154,7 @@ function ExpiringCard({ rows }: { rows: SubscriptionWithMember[] }) {
     planName: string;
     endDateKey: string;
     left: number;
+    phone: string | null;
   }
 
   const data: Row[] = rows.map((sub) => ({
@@ -818,6 +1164,7 @@ function ExpiringCard({ rows }: { rows: SubscriptionWithMember[] }) {
     planName: sub.planName ?? "—",
     endDateKey: sub.endDate,
     left: safeDiffDaysKeys(sub.endDate, today) ?? 0,
+    phone: sub.memberPhone ? String(sub.memberPhone) : null,
   }));
 
   const columns: Column<Row>[] = [
@@ -825,45 +1172,69 @@ function ExpiringCard({ rows }: { rows: SubscriptionWithMember[] }) {
       key: "name",
       header: t("common.member"),
       render: (row) => (
-        <Link to={`/members/${row.memberId}`} className="flex items-center gap-2.5">
+        <Link to={`/members/${row.memberId}`} className="flex items-center gap-2">
           <Avatar name={row.name} size="sm" />
-          <span className="font-bold hover:text-neon text-ink">{row.name}</span>
+          <span className="font-bold hover:text-[#00D2FF] text-white text-xs">{row.name}</span>
         </Link>
       ),
     },
     {
       key: "plan",
       header: t("common.plan"),
-      render: (row) => <span className="text-subtle">{row.planName}</span>,
+      render: (row) => <span className="text-slate-400 text-xs">{row.planName}</span>,
     },
     {
-      key: "end",
+      key: "endDate",
       header: t("common.endDate"),
       render: (row) => {
-        const end = safeParseDateKey(row.endDateKey);
-        return <span className="tabnum text-subtle">{end ? formatDateShort(end) : "—"}</span>;
+        const d = safeParseDateKey(row.endDateKey);
+        return <span className="tabnum text-slate-400 text-xs">{d ? formatDateShort(d) : row.endDateKey}</span>;
       },
     },
     {
       key: "left",
       header: t("common.remaining"),
       render: (row) => (
-        <Badge variant={row.left <= 3 ? "danger" : "warning"} dot>
+        <Badge variant={row.left <= 3 ? "danger" : "warning"} dot className="text-xs">
           {row.left <= 0 ? t("dashboard.expiredToday") : t("dashboard.daysLeft", { days: row.left })}
         </Badge>
       ),
     },
+    {
+      key: "action",
+      header: "تواصل سريع",
+      render: (row) => {
+        if (!row.phone) return <span className="text-slate-500 text-xs">—</span>;
+        const clean = row.phone.replace(/\D/g, "").replace(/^0/, "20");
+        const msg = encodeURIComponent(
+          `أهلاً بحضرتك يا كابتن ${row.name} 🌹\nنود تذكيرك بأن اشتراكك في الجيم (${row.planName}) أوشك على الانتهاء.\nيسعدنا تجديد اشتراكك لاستمرار حماسك وتدريبك معنا! 💪`
+        );
+        return (
+          <a
+            href={`https://wa.me/${clean}?text=${msg}`}
+            target="_blank"
+            rel="noopener noreferrer"
+            className="inline-flex items-center gap-1 px-2 py-1 rounded-lg bg-emerald-500/10 text-emerald-400 hover:bg-emerald-500/20 border border-emerald-500/30 text-[11px] font-bold"
+            title="تذكير المشترك عبر واتساب"
+          >
+            <MessageCircle className="size-3.5" />
+            <span>تذكير</span>
+          </a>
+        );
+      },
+    },
   ];
 
   return (
-    <Card>
+    <Card className="h-full">
       <CardHeader
         title={t("dashboard.expiringTitle")}
+        description="المشتركون الذين تنتهي اشتراكاتهم قريباً لتذكيرهم والتجديد"
         action={
           hasPermission("subscriptions.view") ? (
             <Link
               to="/subscriptions"
-              className="inline-flex items-center gap-1 text-xs font-bold text-neon transition-opacity hover:opacity-80"
+              className="inline-flex items-center gap-1 text-xs font-bold text-[#00D2FF] transition-opacity hover:opacity-80"
             >
               {t("dashboard.viewAll")}
               <ChevronLeft aria-hidden className="size-3.5" />
@@ -873,12 +1244,12 @@ function ExpiringCard({ rows }: { rows: SubscriptionWithMember[] }) {
       />
       {hasPermission("subscriptions.view") ? (
         data.length === 0 ? (
-          <EmptyState icon={<CalendarDays />} title={t("dashboard.expiringEmpty")} />
+          <EmptyState icon={<CalendarDays className="size-8 text-slate-500" />} title={t("dashboard.expiringEmpty")} description="لا توجد اشتراكات توشك على الانتهاء في الـ 7 أيام القادمة" />
         ) : (
           <DataTable columns={columns} data={data} rowKey={(r) => r.id} />
         )
       ) : (
-        <EmptyState icon={<CalendarDays />} title={t("errors.forbidden")} />
+        <EmptyState icon={<CalendarDays className="size-8 text-slate-500" />} title={t("errors.forbidden")} />
       )}
     </Card>
   );
@@ -907,25 +1278,25 @@ function RecentCheckInsCard() {
   }, [actor, canView]);
 
   return (
-    <Card>
-      <CardHeader title={t("checkin.recent")} />
+    <Card className="h-full">
+      <CardHeader title={t("checkin.recent")} description="سجل المشتركين الذين دخلوا الصالة اليوم بالتوقيت اللحظي" />
       {!canView ? (
-        <EmptyState icon={<ScanLine />} title={t("errors.forbidden")} />
+        <EmptyState icon={<ScanLine className="size-8 text-slate-500" />} title={t("errors.forbidden")} />
       ) : recent.length === 0 ? (
-        <EmptyState icon={<ScanLine />} title={t("checkin.noScans")} />
+        <EmptyState icon={<ScanLine className="size-8 text-slate-500" />} title={t("checkin.noScans")} description="لم يتم تسجيل أي حركة دخول بالباركود اليوم بعد" />
       ) : (
-        <ul className="divide-y divide-white/[0.06] px-5 pb-4">
+        <ul className="divide-y divide-white/[0.06] px-4 pb-3">
           {recent.map((item) => (
-            <li key={item.id} className="flex items-center gap-3 py-3 hover:bg-white/[0.02] px-2 rounded-xl transition-colors">
+            <li key={item.id} className="flex items-center gap-3 py-2.5 hover:bg-white/[0.02] px-2 rounded-xl transition-colors">
               <Avatar name={item.memberName} size="sm" />
               <div className="min-w-0 flex-1">
-                <span className="block truncate text-sm font-bold text-ink">{item.memberName}</span>
-                <span className="block text-[11px] font-mono text-faint">{item.memberCode}</span>
+                <span className="block truncate text-xs font-bold text-white">{item.memberName}</span>
+                <span className="block text-[10px] font-mono text-slate-400">{item.memberCode}</span>
               </div>
-              <div className="flex items-center gap-2">
-                <span className="inline-block size-2 rounded-full bg-neon animate-pulse" />
-                <span dir="ltr" className="text-xs text-subtle tabnum font-mono">
-                  {item.checkinAt.slice(11, 16)}
+              <div className="flex items-center gap-1.5">
+                <span className="inline-block size-2 rounded-full bg-emerald-400 animate-pulse" />
+                <span className="text-xs text-slate-400 tabnum font-medium">
+                  {formatTime(item.checkinAt)}
                 </span>
               </div>
             </li>

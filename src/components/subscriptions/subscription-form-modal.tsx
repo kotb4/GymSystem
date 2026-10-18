@@ -4,11 +4,12 @@ import { useT } from "@/i18n";
 import { useToast } from "@/components/ui/toast";
 import { describeError } from "@/utils/app-error";
 import { todayKey } from "@/core/dates";
-import { api, type Package, type Plan } from "@/api";
-
+import { api, type Plan } from "@/api";
 
 import type { PublicMember } from "@/core/services/members.service";
-import { computeDiscount, formatMinor, minorToMajor, toMinor } from "@/core/money";
+import { computeDiscount, formatMinor, toMinor } from "@/core/money";
+import { Send } from "lucide-react";
+import { buildPaymentReceiptMessage, buildWhatsAppDirectUrl } from "@/core/whatsapp";
 import { cn } from "@/utils/cn";
 import { Modal } from "@/components/ui/modal";
 import { Button } from "@/components/ui/button";
@@ -21,16 +22,16 @@ interface SubscriptionFormModalProps {
   onClose: () => void;
   onSaved: () => void;
   presetMember?: PublicMember | null;
+  defaultCategory?: "gym" | "academy";
 }
 
-export function SubscriptionFormModal({ open, onClose, onSaved, presetMember }: SubscriptionFormModalProps) {
+export function SubscriptionFormModal({ open, onClose, onSaved, presetMember, defaultCategory = "gym" }: SubscriptionFormModalProps) {
   const t = useT();
   const { actor, hasPermission } = useAuth();
   const { toast } = useToast();
+  const [selectedCategory, setSelectedCategory] = useState<"gym" | "academy">("gym");
   const [plans, setPlans] = useState<Plan[]>([]);
   const [planId, setPlanId] = useState("");
-  const [pkgList, setPkgList] = useState<Package[]>([]);
-  const [packageId, setPackageId] = useState("");
   const [price, setPrice] = useState("");
   const [startDate, setStartDate] = useState(todayKey());
   const [member, setMember] = useState<PublicMember | null>(null);
@@ -41,40 +42,40 @@ export function SubscriptionFormModal({ open, onClose, onSaved, presetMember }: 
   const [paidMajor, setPaidMajor] = useState("");
   const [customPrice, setCustomPrice] = useState(false);
   const [payMethod, setPayMethod] = useState("cash");
+  const [referenceNo, setReferenceNo] = useState("");
   const [methods, setMethods] = useState<Array<{ code: string; labelAr: string }>>([]);
   const canDiscount = hasPermission("payments.discount");
   const [discountKind, setDiscountKind] = useState<"none" | "fixed" | "percent">("none");
   const [discountValue, setDiscountValue] = useState("");
 
+  const gymPlans = plans.filter((p) => (p.category ?? "gym") !== "academy");
+  const academyPlans = plans.filter((p) => p.category === "academy");
+
   useEffect(() => {
     if (!open || !actor) return;
     setMember(presetMember ?? null);
+    setSelectedCategory(defaultCategory);
     setError(null);
     setPayMode("full");
     setPaidMajor("");
     setDiscountKind("none");
     setDiscountValue("");
     setCustomPrice(false);
+    setReferenceNo("");
     void (async () => {
       try {
-        const [activePlans, packagesRes] = await Promise.all([
-          api.plans.list(false),
-          api.packages.list(false),
-        ]);
-        const pkgList = packagesRes as unknown as Package[];
-        setPkgList(pkgList);
-        const syntheticIds = new Set<string>(pkgList.map((p) => p.syntheticPlanId ?? "").filter(Boolean));
-        const typed = (activePlans as unknown as Plan[]).filter((p) => !syntheticIds.has(p.id));
+        const activePlans = await api.plans.list(false);
+        const typed = activePlans as unknown as Plan[];
         setPlans(typed);
-        if (pkgList.length > 0) {
-          // باشارات: الباقات هي الواجهة — نفقد على أول باقة
-          const firstPkg = pkgList[0];
-          setPackageId(firstPkg.id);
-          setPlanId("");
-          setPrice(minorToMajor(firstPkg.price).toString());
+        const gPlans = typed.filter((p) => (p.category ?? "gym") !== "academy");
+        const aPlans = typed.filter((p) => p.category === "academy");
+
+        if (defaultCategory === "academy") {
+          const first = aPlans[0];
+          setPlanId(first?.id ?? "");
+          setPrice(first ? String(first.price) : "");
         } else {
-          const first = typed[0];
-          setPackageId("");
+          const first = gPlans[0];
           setPlanId(first?.id ?? "");
           setPrice(first ? String(first.price) : "");
         }
@@ -83,20 +84,25 @@ export function SubscriptionFormModal({ open, onClose, onSaved, presetMember }: 
         setError(describeError(err, t));
       }
     })();
-  }, [open, presetMember, actor, t]);
+  }, [open, presetMember, defaultCategory, actor, t]);
+
+  const handleCategorySwitch = (cat: "gym" | "academy") => {
+    setSelectedCategory(cat);
+    if (cat === "academy") {
+      const first = academyPlans[0];
+      setPlanId(first?.id ?? "");
+      setPrice(first ? String(first.price) : "");
+    } else {
+      const first = gymPlans[0];
+      setPlanId(first?.id ?? "");
+      setPrice(first ? String(first.price) : "");
+    }
+  };
 
   const onPlanChange = (nextId: string) => {
-    setPackageId("");
     setPlanId(nextId);
     const plan = plans.find((p) => p.id === nextId);
     if (plan) setPrice(String(plan.price));
-  };
-
-  const onPkgChange = (nextId: string) => {
-    setPlanId("");
-    setPackageId(nextId);
-    const pkg = pkgList.find((p) => p.id === nextId);
-    if (pkg) setPrice(minorToMajor(pkg.price).toString());
   };
 
   const baseMinor = toMinor(price === "" ? "0" : price);
@@ -134,11 +140,9 @@ export function SubscriptionFormModal({ open, onClose, onSaved, presetMember }: 
     }
   }, [payMode, netMinor, paidMajor]);
 
-  const onSubmit = async (e: FormEvent) => {
-    e.preventDefault();
-    const selectedPkg = packageId ? pkgList.find((p) => p.id === packageId) : undefined;
-    const effectivePlanId = selectedPkg ? (selectedPkg.syntheticPlanId ?? "") : planId;
-    if (!actor || !member || (!effectivePlanId && !packageId)) return;
+  const onSubmit = async (e?: FormEvent, sendWhatsApp = false) => {
+    if (e) e.preventDefault();
+    if (!actor || !member || !planId) return;
     if (discountError && payMode !== "later") {
       setError(discountError);
       return;
@@ -149,10 +153,9 @@ export function SubscriptionFormModal({ open, onClose, onSaved, presetMember }: 
     try {
       const created = await api.subscriptions.create({
         memberId: member.id,
-        planId: effectivePlanId,
+        planId,
         startDate,
         price: price === "" ? undefined : Number(price),
-        ...(packageId ? { packageId } : {}),
       });
       if (payMode !== "later" && hasPermission("payments.create") && paidNowMinor > 0) {
         try {
@@ -168,6 +171,7 @@ export function SubscriptionFormModal({ open, onClose, onSaved, presetMember }: 
               : undefined,
             paidAmountMinor: paidNowMinor,
             methodCode: payMethod,
+            referenceNo: referenceNo.trim() || undefined,
           });
         } catch (payErr) {
           paymentErrorKey = describeError(payErr, t);
@@ -175,6 +179,39 @@ export function SubscriptionFormModal({ open, onClose, onSaved, presetMember }: 
       }
       toast("success", t("subs.createdToast"));
       if (paymentErrorKey) toast("error", paymentErrorKey);
+      if (sendWhatsApp && member.phone) {
+        const planName = plans.find((p) => p.id === planId)?.name || "اشتراك جديد";
+        const remainingMinor = Math.max(0, netMinor - paidNowMinor);
+        const receiptMsg = buildPaymentReceiptMessage({
+          memberName: member.fullName,
+          memberCode: member.memberCode,
+          planName,
+          amountPaid: paidNowMinor > 0 ? (paidNowMinor / 100).toFixed(2) : "0",
+          amountRemaining: remainingMinor > 0 ? (remainingMinor / 100).toFixed(2) : undefined,
+          date: todayKey(),
+        });
+        let sentDirectly = false;
+        try {
+          const res = await api.messages.send({
+            memberId: member.id,
+            segment: "payment",
+            body: receiptMsg,
+          });
+          if (res && res.status === "sent") {
+            sentDirectly = true;
+            toast("success", "تم إرسال إيصال وتفاصيل الاشتراك عبر الواتساب تلقائياً! ✅");
+          }
+        } catch {
+          // gateway offline or failed, fallback to manual direct url
+        }
+        if (!sentDirectly) {
+          const waUrl = buildWhatsAppDirectUrl(member.phone, receiptMsg);
+          if (waUrl) {
+            window.open(waUrl, "_blank");
+            toast("info", "تم فتح واتساب لإرسال الإيصال يدوياً لعدم اتصال البوابة");
+          }
+        }
+      }
       onSaved();
       onClose();
     } catch (err) {
@@ -192,11 +229,25 @@ export function SubscriptionFormModal({ open, onClose, onSaved, presetMember }: 
         title={presetMember ? t("members.addSubFor") : t("subs.addSubscription")}
         footer={
           <>
+            {member?.phone && (
+              <Button
+                type="button"
+                variant="secondary"
+                onClick={() => void onSubmit(undefined, true)}
+                loading={submitting}
+                disabled={submitting || !member || !planId}
+                className="text-emerald-400 hover:text-emerald-300 border-emerald-500/30 gap-1.5"
+                title="حفظ الاشتراك وفتح إيصال الواتساب مباشرة"
+              >
+                <Send className="size-3.5" />
+                <span>حفظ وإرسال واتساب</span>
+              </Button>
+            )}
             <Button
               type="submit"
               form="sub-form"
               loading={submitting}
-              disabled={submitting || !member || (!planId && !packageId)}
+              disabled={submitting || !member || !planId}
             >
               {t("common.save")}
             </Button>
@@ -224,32 +275,55 @@ export function SubscriptionFormModal({ open, onClose, onSaved, presetMember }: 
               )}
             </button>
           </div>
-          {/* Unified Plan / Package Selection Dropdown */}
+          {/* Category Toggle (Gym vs Academy) */}
+          <div className="space-y-1.5">
+            <p className="text-[13px] font-semibold text-subtle">نوع الباقة / الاشتراك</p>
+            <div className="grid grid-cols-2 gap-2">
+              <button
+                type="button"
+                onClick={() => handleCategorySwitch("gym")}
+                className={`flex items-center justify-center gap-2 rounded-xl border p-2.5 text-xs font-bold transition-all ${
+                  selectedCategory === "gym"
+                    ? "border-primary bg-primary/10 text-primary shadow-glow-sm"
+                    : "border-line bg-panel text-subtle hover:border-line-strong hover:text-ink"
+                }`}
+              >
+                <span>🏋️‍♂️ باقة جيم وصالة</span>
+              </button>
+              <button
+                type="button"
+                onClick={() => handleCategorySwitch("academy")}
+                className={`flex items-center justify-center gap-2 rounded-xl border p-2.5 text-xs font-bold transition-all ${
+                  selectedCategory === "academy"
+                    ? "border-cyan bg-cyan/10 text-cyan shadow-glow-sm"
+                    : "border-line bg-panel text-subtle hover:border-line-strong hover:text-ink"
+                }`}
+              >
+                <span>🥋 باقة أكاديمية وحصص</span>
+              </button>
+            </div>
+          </div>
+
+          {/* Plan Selection Dropdown */}
           <Select
-            label={pkgList.length > 0 ? t("packages.tabPackages") : t("subs.pickPlan")}
-            value={packageId ? `pkg:${packageId}` : planId ? `plan:${planId}` : ""}
-            onChange={(e) => {
-              const val = e.target.value;
-              if (val.startsWith("pkg:")) {
-                onPkgChange(val.slice(4));
-              } else if (val.startsWith("plan:")) {
-                onPlanChange(val.slice(5));
-              } else {
-                setPackageId("");
-                setPlanId("");
-                setPrice("");
-              }
-            }}
-            disabled={submitting || (pkgList.length === 0 && plans.length === 0)}
+            label={
+              selectedCategory === "academy"
+                ? "اختر باقة الأكاديمية / الحصص"
+                : "اختر باقة / خطة الجيم"
+            }
+            value={planId}
+            onChange={(e) => onPlanChange(e.target.value)}
+            disabled={
+              submitting ||
+              (selectedCategory === "academy"
+                ? academyPlans.length === 0
+                : gymPlans.length === 0)
+            }
             options={[
               { value: "", label: `${t("common.select")}…` },
-              ...pkgList.map((p) => ({
-                value: `pkg:${p.id}`,
-                label: `${p.name} — ${p.durationDays} ${t("common.days")} — ${formatMinor(p.price)}${p.invitationsCount > 0 ? ` (${p.invitationsCount} دعوة ضيف)` : ""}`,
-              })),
-              ...plans.map((p) => ({
-                value: `plan:${p.id}`,
-                label: `${p.name} — ${p.durationDays} ${t("common.days")} — ${p.price}${p.invitationsCount > 0 ? ` (${p.invitationsCount} دعوة ضيف)` : ""}`,
+              ...(selectedCategory === "gym" ? gymPlans : academyPlans).map((p) => ({
+                value: p.id,
+                label: `${p.name} — ${p.kind === "sessions" ? `${p.sessionsCount ?? 0} حصة` : `${p.durationDays} ${t("common.days")}`} — ${p.price} ج.م${(p.invitationsCount ?? 0) > 0 ? ` (${p.invitationsCount} دعوة ضيف)` : ""}`,
               })),
             ]}
           />
@@ -347,13 +421,39 @@ export function SubscriptionFormModal({ open, onClose, onSaved, presetMember }: 
               )}
 
               {payMode !== "later" && (
-                <Select
-                  label={t("pay.methodLabel")}
-                  value={payMethod}
-                  onChange={(e) => setPayMethod(e.target.value)}
-                  disabled={submitting}
-                  options={methods.map((m) => ({ value: m.code, label: m.labelAr }))}
-                />
+                <>
+                  <Select
+                    label={t("pay.methodLabel")}
+                    value={payMethod}
+                    onChange={(e) => setPayMethod(e.target.value)}
+                    disabled={submitting}
+                    options={methods.map((m) => ({ value: m.code, label: m.labelAr }))}
+                  />
+
+                  <div>
+                    <Input
+                      label={
+                        payMethod === "instapay" || payMethod === "wallet" || payMethod === "transfer"
+                          ? t("pay.referenceNoInstaPay")
+                          : t("pay.referenceNo")
+                      }
+                      placeholder={
+                        payMethod === "instapay" || payMethod === "wallet"
+                          ? "مثال: 948271039512"
+                          : undefined
+                      }
+                      dir="ltr"
+                      value={referenceNo}
+                      onChange={(e) => setReferenceNo(e.target.value)}
+                      disabled={submitting}
+                    />
+                    {(payMethod === "instapay" || payMethod === "wallet" || payMethod === "transfer") && (
+                      <p className="mt-1 text-[11px] text-cyan">
+                        {t("pay.referenceNoInstaPayHint")}
+                      </p>
+                    )}
+                  </div>
+                </>
               )}
 
               {payMode === "partial" && (

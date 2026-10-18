@@ -10,6 +10,11 @@ cd /d "%~dp0..\.."
 
 set GYMSYSTEM_PORT=8890
 
+if exist "dist-exe\GymGate.exe" (
+  cd dist-exe
+  start "" "GymGate.exe"
+  exit /b 0
+)
 if exist "dist-exe\GymSystem.exe" (
   cd dist-exe
   start "" "GymSystem.exe"

@@ -26,3 +26,4 @@ _*.mjs
 # Playwright CLI output (may contain credentials)
 .playwright-cli/
 *.pdf
+.agents/

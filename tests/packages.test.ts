@@ -354,9 +354,8 @@ describe("package subscription snapshot + check-in", () => {
     ).end_date;
     await freezeSubscription(db, owner, sub.id, { endDate: subEnd, reason: "سفر" });
     await unfreezeSubscription(db, owner, sub.id);
-    await expect(freezeSubscription(db, owner, sub.id, { endDate: subEnd, reason: "مرة أخرى" })).rejects.toMatchObject(
-      { messageKey: "errors.freezeMaxReached" },
-    );
+    const second = await freezeSubscription(db, owner, sub.id, { endDate: subEnd, reason: "مرة أخرى" });
+    expect(second.status).toBe("suspended");
   });
 
   it("deletes an unreferenced package hard and its synthetic plan", async () => {

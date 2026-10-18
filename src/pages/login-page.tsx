@@ -1,6 +1,6 @@
 import { useEffect, useState, type FormEvent } from "react";
 import { Navigate, useLocation, useNavigate } from "react-router-dom";
-import { LogIn, Sparkles, User } from "lucide-react";
+import { LogIn, User } from "lucide-react";
 import { useAuth } from "@/contexts/auth-context";
 import { useT } from "@/i18n";
 import { useToast } from "@/components/ui/toast";
@@ -69,9 +69,20 @@ export function LoginPage() {
 
       <div className="w-full max-w-[420px]">
         <div className="mb-8 flex flex-col items-center gap-3 text-center">
-          <div>
-            <h1 className="text-xl font-extrabold">{t("app.name")}</h1>
-            <p className="mt-1 text-xs text-faint">{t("app.tagline")}</p>
+          {/* Official Transparent KOTB Wordmark */}
+          <img
+            src="/branding/kotb-logo.png"
+            alt="KOTB Digital Solutions"
+            className="h-11 object-contain drop-shadow-md select-none"
+          />
+
+          <div className="mt-1 flex flex-col items-center gap-1.5">
+            <h1 className="text-2xl font-black tracking-tight text-white font-sans">
+              GymGate
+            </h1>
+            <span className="inline-flex items-center gap-1 rounded-full border border-[#0055FF]/40 bg-[#0055FF]/10 px-3 py-0.5 text-[11px] font-bold text-[#00D2FF] shadow-glow-sm">
+              Powered by KOTB Digital Solutions
+            </span>
           </div>
         </div>
 
@@ -132,35 +143,16 @@ export function LoginPage() {
               {!submitting && <LogIn className="size-4" />}
             </Button>
           </form>
-
-          {/* Quick Demo Access (for online evaluators) */}
-          <div className="mt-5 pt-5 border-t border-line/60">
-            <button
-              type="button"
-              onClick={async () => {
-                setUsername("owner");
-                setPassword("Owner@2026");
-                setSubmitting(true);
-                const res = await login("owner", "Owner@2026");
-                setSubmitting(false);
-                if (res.ok) {
-                  toast("success", "مرحباً بك في النسخة التجريبية!");
-                  navigate("/", { replace: true });
-                } else {
-                  setFormError("تعذر الدخول التجريبي — يرجى تسجيل الدخول يدوياً");
-                }
-              }}
-              className="w-full flex items-center justify-center gap-2 py-2.5 px-4 rounded-xl border border-neon/40 bg-neon/10 hover:bg-neon/20 text-neon font-bold text-xs transition-all shadow-glow-sm group"
-            >
-              <Sparkles className="size-4 text-neon animate-pulse group-hover:scale-110 transition-transform" />
-              <span>دخول تجريبي سريع بنقرة واحدة (ديمو)</span>
-            </button>
-          </div>
         </div>
 
-        <p className="mt-8 text-center text-[11px] text-faint">
-          © 2026 {t("app.name")} — {t("app.rights")}
-        </p>
+        <div className="mt-8 text-center space-y-1">
+          <p className="text-[12px] font-semibold text-[#94A3B8]">
+            GymGate — Powered by <span className="text-white font-bold">KOTB Digital Solutions</span>
+          </p>
+          <p className="text-[11px] text-[#64748B] font-sans">
+            قُطب للحلول الرقمية • جميع الحقوق محفوظة © 2026
+          </p>
+        </div>
       </div>
     </div>
   );

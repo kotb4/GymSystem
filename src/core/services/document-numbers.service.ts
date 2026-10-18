@@ -21,7 +21,8 @@ export type DocKind =
   | "store_return"
   | "store_debt_payment"
   | "cash_closing"
-  | "attendance";
+  | "attendance"
+  | "expense";
 
 interface KindSpec {
   kind: DocKind;
@@ -158,6 +159,21 @@ const DOC_KINDS: Record<DocKind, KindSpec> = {
     // Soft-deleted check-ins (undo) must never surface in a lookup.
     extraWhere: "x.deleted_at IS NULL",
   },
+  expense: {
+    kind: "expense",
+    prefix: "EXP",
+    counter: "expense_no",
+    table: "expenses",
+    column: "reference_no",
+    route: "/expenses",
+    summary: "سند صرف مصروف",
+    from: "expenses x LEFT JOIN expense_categories c ON c.id = x.category_id",
+    amount: "x.amount_minor",
+    occurred: "x.created_at",
+    memberId: null,
+    memberName: "c.name_ar",
+    extraWhere: "x.status = 'active'",
+  },
 };
 
 /**
@@ -166,11 +182,15 @@ const DOC_KINDS: Record<DocKind, KindSpec> = {
  * Use this when the number must be part of an INSERT (the column is NOT NULL).
  * Use `assignDocNo` when the row already exists.
  *
- * The branch prefix comes first (like member codes `B1-MEM-000001`) so two
- * branches syncing independently can never mint the same document number. It is
- * omitted when the branch has no prefix configured.
+ * The branch prefix comes first, followed by the operator/employee code (e.g. `U1`),
+ * then the operation kind, year, and sequence: `B1-U1-RCP-2026-000001`.
  */
-export function nextDocNo(db: Db, kind: DocKind, atIso: string): string {
+export function nextDocNo(
+  db: Db,
+  kind: DocKind,
+  atIso: string,
+  actorOrUserId?: string | ServiceActor | null,
+): string {
   const spec = DOC_KINDS[kind];
   const year = (atIso.slice(0, 4) || String(new Date().getFullYear())).replace(/\D/g, "");
   db.run("INSERT INTO counters (name, value) VALUES (?, 1) ON CONFLICT(name) DO UPDATE SET value = value + 1", [
@@ -179,7 +199,23 @@ export function nextDocNo(db: Db, kind: DocKind, atIso: string): string {
   const seq = Number(db.scalar("SELECT value FROM counters WHERE name = ?", [spec.counter]) ?? 1);
   const tail = `${spec.prefix}-${year}-${String(seq).padStart(6, "0")}`;
   const branch = getLocalBranchPrefix(db);
-  return branch ? `${branch}-${tail}` : tail;
+
+  let userCode: string | null = null;
+  const userId = typeof actorOrUserId === "string" ? actorOrUserId : actorOrUserId?.userId;
+  if (userId) {
+    const raw = db.scalar("SELECT user_code FROM users WHERE id = ?", [userId]);
+    userCode = typeof raw === "string" ? raw : null;
+  }
+  if (!userCode) {
+    const raw = db.scalar("SELECT user_code FROM users WHERE role_id = 'owner' AND user_code IS NOT NULL LIMIT 1");
+    userCode = typeof raw === "string" ? raw : null;
+  }
+  const cleanUserCode = (userCode || "U1").trim().toUpperCase();
+
+  if (branch) {
+    return `${branch}-${cleanUserCode}-${tail}`;
+  }
+  return `${cleanUserCode}-${tail}`;
 }
 
 /**
@@ -187,11 +223,17 @@ export function nextDocNo(db: Db, kind: DocKind, atIso: string): string {
  * MUST be called inside the same transaction as the row insert, so a number is
  * never allocated for a row that later rolls back.
  */
-export function assignDocNo(db: Db, kind: DocKind, rowId: string, atIso: string): string {
+export function assignDocNo(
+  db: Db,
+  kind: DocKind,
+  rowId: string,
+  atIso: string,
+  actorOrUserId?: string | ServiceActor | null,
+): string {
   const spec = DOC_KINDS[kind];
   const cached = db.scalar(`SELECT ${spec.column} FROM ${spec.table} WHERE id = ?`, [rowId]);
   if (typeof cached === "string" && cached !== "") return cached;
-  const docNo = nextDocNo(db, kind, atIso);
+  const docNo = nextDocNo(db, kind, atIso, actorOrUserId);
   db.run(`UPDATE ${spec.table} SET ${spec.column} = ? WHERE id = ?`, [docNo, rowId]);
   return docNo;
 }
@@ -222,18 +264,18 @@ interface RawMatch {
 /**
  * Normalise whatever the operator typed into forms we can match.
  *
- * Numbers exist in two shapes now: legacy `POS-000001` (no year, no branch) and
- * current `B1-RCP-2026-000123`. A customer may also read out only digits, or
- * only the sequence without the branch/year. So we match on the FULL string,
- * on the string with a leading branch token removed, and on the trailing
- * sequence digits.
+ * Numbers exist in shapes: legacy `POS-000001`, `B1-RCP-2026-000123`,
+ * and new `B1-U1-RCP-2026-000123` / `U1-RCP-2026-000123`.
  */
 function matchForms(rawQuery: string): { exacts: string[]; seq: string } {
   const query = rawQuery.trim().toUpperCase();
   const exacts = new Set<string>([query]);
   // Strip a leading branch token like `B1-` / `B2-`.
-  const withoutBranch = query.replace(/^[A-Z0-9]{1,6}-(?=[A-Z]{2,}-)/, "");
+  const withoutBranch = query.replace(/^[A-Z0-9]{1,6}-(?=[A-Z0-9]{2,}-)/, "");
   exacts.add(withoutBranch);
+  // Also strip branch + user code, e.g. `B1-U1-RCP-...` -> `RCP-...` or `U1-RCP-...` -> `RCP-...`
+  const withoutPrefixes = query.replace(/^(?:[A-Z0-9]{1,6}-){1,2}(?=[A-Z]{2,}-)/, "");
+  exacts.add(withoutPrefixes);
   // The sequence is the LAST purely-numeric hyphen-separated token.
   const parts = query.split("-").filter(Boolean);
   const numeric = parts.filter((p) => /^\d+$/.test(p));
@@ -289,6 +331,20 @@ export function searchByDocNo(db: Db, actor: ServiceActor, rawQuery: string): Do
 
   // Stage 2 — trailing sequence digits only.
   if (!seq) return [];
+  const padSeq = seq.length <= 6 ? seq.padStart(6, "0") : seq;
+  const trailingSeqRows = available.flatMap((spec) =>
+    db
+      .all<RawMatch>(
+        `${project(spec)}
+          WHERE (x.${spec.column} LIKE ? OR x.${spec.column} LIKE ?)
+            ${extra(spec)}
+          LIMIT 5`,
+        [`%-${padSeq}`, `%-${seq}`],
+      )
+      .map((r) => toMatch(spec, r)),
+  );
+  if (trailingSeqRows.length > 0) return trailingSeqRows;
+
   return available.flatMap((spec) =>
     db
       .all<RawMatch>(

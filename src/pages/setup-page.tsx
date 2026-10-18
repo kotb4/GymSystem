@@ -108,9 +108,25 @@ export function SetupPage() {
 
       <div className="w-full max-w-[480px]">
         <div className="mb-8 flex flex-col items-center gap-3 text-center">
-          <div>
-            <h1 className="text-xl font-extrabold">{t("setup.title")}</h1>
-            <p className="mt-1 text-xs text-subtle">{t("setup.subtitle")}</p>
+          {/* Official Transparent KOTB Wordmark */}
+          <img
+            src="/branding/kotb-logo.png"
+            alt="KOTB Digital Solutions"
+            className="h-11 object-contain drop-shadow-md select-none"
+          />
+
+          <div className="mt-1 flex flex-col items-center gap-1.5">
+            <h1 className="text-2xl font-black tracking-tight text-white font-sans">
+              GymGate
+            </h1>
+            <span className="inline-flex items-center gap-1 rounded-full border border-[#0055FF]/40 bg-[#0055FF]/10 px-3 py-0.5 text-[11px] font-bold text-[#00D2FF] shadow-glow-sm">
+              Powered by KOTB Digital Solutions
+            </span>
+          </div>
+
+          <div className="mt-1">
+            <p className="text-sm font-bold text-ink">{t("setup.title")}</p>
+            <p className="mt-0.5 text-xs text-subtle">{t("setup.subtitle")}</p>
             <p className="mt-2 inline-flex items-center gap-1.5 rounded-full border border-neon/30 bg-neon/10 px-3 py-1 text-[11px] font-bold text-neon">
               <Rocket className="size-3" />
               {t("setup.stepInfo")}
@@ -211,6 +227,15 @@ export function SetupPage() {
               {submitting ? t("setup.submitting") : t("setup.confirm")}
             </Button>
           </form>
+        </div>
+
+        <div className="mt-8 text-center space-y-1">
+          <p className="text-[12px] font-semibold text-[#94A3B8]">
+            GymGate — Powered by <span className="text-white font-bold">KOTB Digital Solutions</span>
+          </p>
+          <p className="text-[11px] text-[#64748B] font-sans">
+            قُطب للحلول الرقمية • جميع الحقوق محفوظة © 2026
+          </p>
         </div>
       </div>
     </div>

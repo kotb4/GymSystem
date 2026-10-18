@@ -19,7 +19,6 @@ import { CardsPage } from "@/pages/cards-page";
 import { StaffPage } from "@/pages/staff-page";
 import { AuditPage } from "@/pages/audit-page";
 import { SettingsPage } from "@/pages/settings-page";
-import { DocSearchPage } from "@/pages/doc-search-page";
 import { PaymentsPage } from "@/pages/payments-page";
 import { ExpensesPage } from "@/pages/expenses-page";
 import { ReportsPage } from "@/pages/reports-page";
@@ -33,6 +32,11 @@ import { ReferralsPage } from "@/pages/referrals-page";
 import { MessagesPage } from "@/pages/messages-page";
 import { TreasuryPage } from "@/pages/treasury";
 import { DeveloperPage } from "@/pages/developer-page";
+import { QuickSessionsPage } from "@/pages/quick-sessions-page";
+import { DebtsPage } from "@/pages/debts-page";
+import { PurchasesPage } from "@/pages/purchases-page";
+import { PrivateTrainingPage } from "@/pages/private-training-page";
+import { MemberPortalPage } from "@/pages/member-portal-page";
 
 function RequireAuth({ children }: { children: ReactNode }) {
   const { user, booting } = useAuth();
@@ -107,6 +111,9 @@ export function AppRoutes() {
     <Routes>
       <Route path="/login" element={user ? <Navigate to="/" replace /> : needsSetup ? <Navigate to="/setup" replace /> : <LoginPage />} />
       <Route path="/setup" element={<SetupPage />} />
+      <Route path="/portal" element={<MemberPortalPage />} />
+      <Route path="/member-portal" element={<MemberPortalPage />} />
+      <Route path="/profile" element={<MemberPortalPage />} />
       <Route
         element={
           <RequireAuth>
@@ -118,7 +125,7 @@ export function AppRoutes() {
         <Route
           path="members"
           element={
-            <RequirePermission featureFlag="featureMembersEnabled">
+            <RequirePermission permission="members.view" featureFlag="featureMembersEnabled">
               <MembersPage />
             </RequirePermission>
           }
@@ -126,7 +133,7 @@ export function AppRoutes() {
         <Route
           path="members/:memberId"
           element={
-            <RequirePermission featureFlag="featureMembersEnabled">
+            <RequirePermission permission="members.view" featureFlag="featureMembersEnabled">
               <MemberProfilePage />
             </RequirePermission>
           }
@@ -140,6 +147,38 @@ export function AppRoutes() {
           }
         />
         <Route
+          path="quick-sessions"
+          element={
+            <RequirePermission permission="quick_sessions.view">
+              <QuickSessionsPage />
+            </RequirePermission>
+          }
+        />
+        <Route
+          path="debts"
+          element={
+            <RequirePermission permission="debts.view">
+              <DebtsPage />
+            </RequirePermission>
+          }
+        />
+        <Route
+          path="purchases"
+          element={
+            <RequirePermission permission="purchases.view">
+              <PurchasesPage />
+            </RequirePermission>
+          }
+        />
+        <Route
+          path="private-training"
+          element={
+            <RequirePermission permission="private_training.view">
+              <PrivateTrainingPage />
+            </RequirePermission>
+          }
+        />
+        <Route
           path="subscriptions"
           element={
             <RequirePermission permission="subscriptions.view" featureFlag="featureSubscriptionsEnabled">
@@ -149,11 +188,7 @@ export function AppRoutes() {
         />
         <Route
           path="doc-search"
-          element={
-            <RequirePermission permission="reports.view" featureFlag="featureReportsEnabled">
-              <DocSearchPage />
-            </RequirePermission>
-          }
+          element={<Navigate to="/" replace />}
         />
         <Route
           path="payments"
@@ -184,6 +219,14 @@ export function AppRoutes() {
           element={
             <RequirePermission permission="store.view" featureFlag="featurePosEnabled">
               <StorePage />
+            </RequirePermission>
+          }
+        />
+        <Route
+          path="trainers"
+          element={
+            <RequirePermission permission="trainers.view" featureFlag="featureClassesEnabled">
+              <ClassesPage initialTab="trainers" />
             </RequirePermission>
           }
         />
@@ -289,6 +332,19 @@ export function AppRoutes() {
             user?.isDeveloper ? <DeveloperPage /> : <Navigate to="/" replace />
           }
         />
+        <Route path="trainer-attendance" element={<Navigate to="/classes?tab=trainers" replace />} />
+        {/* Navigation Aliases for Natural Access */}
+        <Route path="reception" element={<Navigate to="/attendance" replace />} />
+        <Route path="pos" element={<Navigate to="/store" replace />} />
+        <Route path="cash" element={<Navigate to="/treasury" replace />} />
+        <Route path="hr" element={<Navigate to="/employees" replace />} />
+        <Route path="leads" element={<Navigate to="/crm" replace />} />
+        <Route path="trials" element={<Navigate to="/crm" replace />} />
+        <Route path="whatsapp" element={<Navigate to="/messages" replace />} />
+        <Route path="users" element={<Navigate to="/staff" replace />} />
+        <Route path="permissions" element={<Navigate to="/staff" replace />} />
+        <Route path="backups" element={<Navigate to="/settings" replace />} />
+        <Route path="backup" element={<Navigate to="/settings" replace />} />
        </Route>
        <Route path="*" element={<Navigate to="/" replace />} />
     </Routes>

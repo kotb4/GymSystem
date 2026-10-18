@@ -6,10 +6,235 @@ const { join } = require('node:path');
 const { createRequire } = require('node:module');
 const log = require('./log');
 
-let _client = null;
-let _pairing = null;
+let _sock = null;
+let _connecting = null;
+let _reconnectTimer = null;
 let _cfg = null;
-let _lastQrBase64 = null; // raw PNG base64 (no data: prefix) for the last catchQR frame
+let _lastQrBase64 = null; // raw PNG base64 (no data: prefix)
+let _isPairedState = false;
+let _baileysModule = null;
+const _lidPhoneMap = new Map();
+const _phoneLidMap = new Map();
+const _messageStore = new Map();
+const MAX_MESSAGE_CACHE = 5000;
+let _saveTimeout = null;
+let _saveLidTimeout = null;
+
+function getMsgCachePath() {
+  const sessionDir = (_cfg && _cfg.sessionDir) || require('./config').config().sessionDir;
+  return join(sessionDir, 'messages_cache.json');
+}
+
+function getLidCachePath() {
+  const sessionDir = (_cfg && _cfg.sessionDir) || require('./config').config().sessionDir;
+  return join(sessionDir, 'lid_mappings.json');
+}
+
+function loadPersistedLidMappings() {
+  try {
+    const file = getLidCachePath();
+    if (fs.existsSync(file)) {
+      const data = JSON.parse(fs.readFileSync(file, 'utf8'));
+      if (data && data.lidToPhone) {
+        for (const [k, v] of Object.entries(data.lidToPhone)) {
+          _lidPhoneMap.set(k, v);
+        }
+      }
+      if (data && data.phoneToLid) {
+        for (const [k, v] of Object.entries(data.phoneToLid)) {
+          _phoneLidMap.set(k, v);
+        }
+      }
+      log.info(`loaded ${_phoneLidMap.size} cached WhatsApp LID mappings`);
+    }
+  } catch (err) {
+    log.warn(`could not load lid_mappings: ${err.message}`);
+  }
+}
+
+function persistLidMappingsDebounced() {
+  if (_saveLidTimeout) return;
+  _saveLidTimeout = setTimeout(() => {
+    _saveLidTimeout = null;
+    try {
+      const file = getLidCachePath();
+      const obj = {
+        lidToPhone: Object.fromEntries(_lidPhoneMap),
+        phoneToLid: Object.fromEntries(_phoneLidMap),
+      };
+      fs.writeFileSync(file, JSON.stringify(obj, null, 2), 'utf8');
+    } catch {}
+  }, 1000);
+}
+
+function loadPersistedMessages() {
+  loadPersistedLidMappings();
+  try {
+    const file = getMsgCachePath();
+    if (fs.existsSync(file)) {
+      if (!_baileysModule) {
+        try { loadBaileys(); } catch {}
+      }
+      const reviver = _baileysModule && _baileysModule.BufferJSON ? _baileysModule.BufferJSON.reviver : undefined;
+      const data = JSON.parse(fs.readFileSync(file, 'utf8'), reviver);
+      if (Array.isArray(data)) {
+        for (const item of data) {
+          if (item && item.key && item.message) {
+            _messageStore.set(item.key, item.message);
+          }
+        }
+        log.info(`loaded ${_messageStore.size} cached WhatsApp messages for retry decryption`);
+      }
+    }
+  } catch (err) {
+    log.warn(`could not load messages_cache: ${err.message}`);
+  }
+}
+
+function persistMessagesDebounced() {
+  if (_saveTimeout) return;
+  _saveTimeout = setTimeout(() => {
+    _saveTimeout = null;
+    try {
+      const file = getMsgCachePath();
+      const entries = [];
+      const keys = Array.from(_messageStore.keys());
+      const recentKeys = keys.slice(-3000);
+      for (const k of recentKeys) {
+        entries.push({ key: k, message: _messageStore.get(k) });
+      }
+      if (!_baileysModule) {
+        try { loadBaileys(); } catch {}
+      }
+      const replacer = _baileysModule && _baileysModule.BufferJSON ? _baileysModule.BufferJSON.replacer : undefined;
+      fs.writeFileSync(file, JSON.stringify(entries, replacer), 'utf8');
+    } catch {}
+  }, 2000);
+}
+
+function isRichMessage(m) {
+  if (!m) return false;
+  return Boolean(m.imageMessage || m.documentMessage || m.extendedTextMessage?.text || m.conversation);
+}
+
+function saveMessage(key, message, extraAliases = []) {
+  if (!key || !key.id || !message) return;
+  const id = String(key.id);
+  const remoteJid = key.remoteJid ? String(key.remoteJid) : '';
+  const compoundKey = `${remoteJid}_${id}`;
+  const rawMsg = message.message || message;
+
+  // Don't overwrite an existing rich message with an empty or non-rich stub
+  const existing = _messageStore.get(id);
+  if (existing && !isRichMessage(rawMsg) && isRichMessage(existing)) {
+    return;
+  }
+
+  _messageStore.set(compoundKey, rawMsg);
+  _messageStore.set(id, rawMsg);
+
+  if (key.participant) {
+    _messageStore.set(`${key.participant}_${id}`, rawMsg);
+  }
+
+  const rawId = remoteJid.replace(/@.*$/, '');
+  const mappedPhone = _lidPhoneMap.get(rawId);
+  if (mappedPhone) {
+    _messageStore.set(`${mappedPhone}@s.whatsapp.net_${id}`, rawMsg);
+  }
+  const mappedLid = _phoneLidMap.get(rawId);
+  if (mappedLid) {
+    _messageStore.set(`${mappedLid}@lid_${id}`, rawMsg);
+  }
+
+  if (Array.isArray(extraAliases)) {
+    for (const alias of extraAliases) {
+      if (alias) {
+        const cleanAlias = String(alias).trim();
+        _messageStore.set(`${cleanAlias}_${id}`, rawMsg);
+        const withoutDomain = cleanAlias.replace(/@.*$/, '');
+        _messageStore.set(`${withoutDomain}_${id}`, rawMsg);
+      }
+    }
+  }
+
+  if (_messageStore.size > MAX_MESSAGE_CACHE) {
+    const toDelete = _messageStore.size - MAX_MESSAGE_CACHE;
+    let count = 0;
+    for (const k of _messageStore.keys()) {
+      _messageStore.delete(k);
+      if (++count >= toDelete) break;
+    }
+  }
+
+  persistMessagesDebounced();
+}
+
+async function getStoredMessage(key) {
+  if (!key || !key.id) return undefined;
+  const id = String(key.id);
+  const remoteJid = key.remoteJid ? String(key.remoteJid) : '';
+  const compoundKey = `${remoteJid}_${id}`;
+
+  let msg = _messageStore.get(compoundKey);
+  if (!msg) {
+    const rawId = remoteJid.replace(/@.*$/, '');
+    const mappedPhone = _lidPhoneMap.get(rawId);
+    if (mappedPhone) {
+      msg = _messageStore.get(`${mappedPhone}@s.whatsapp.net_${id}`);
+    }
+  }
+  if (!msg) {
+    const rawId = remoteJid.replace(/@.*$/, '');
+    const mappedLid = _phoneLidMap.get(rawId);
+    if (mappedLid) {
+      msg = _messageStore.get(`${mappedLid}@lid_${id}`);
+    }
+  }
+  if (!msg) {
+    msg = _messageStore.get(id);
+  }
+
+  if (msg) {
+    log.info(`serving cached message to WhatsApp retry request for msgId=${id} (target=${remoteJid})`);
+    return msg;
+  }
+  log.warn(`retry request for msgId=${id} (${remoteJid}) not found in messageStore`);
+  return undefined;
+}
+
+function createRetryCounterCache() {
+  const map = new Map();
+  return {
+    get(key) { return map.get(key); },
+    set(key, value) { map.set(key, value); },
+    del(key) { map.delete(key); },
+    flushAll() { map.clear(); }
+  };
+}
+const _msgRetryCounterCache = createRetryCounterCache();
+
+function cacheLidMapping(lid, phone) {
+  if (lid && phone) {
+    const cleanLid = String(lid).replace(/@.*$/, '');
+    const cleanPhone = String(phone).replace(/@.*$/, '');
+    _lidPhoneMap.set(cleanLid, cleanPhone);
+    _phoneLidMap.set(cleanPhone, cleanLid);
+    persistLidMappingsDebounced();
+  }
+}
+
+function getLidForPhone(phone) {
+  if (!phone) return null;
+  const clean = String(phone).replace(/@.*$/, '');
+  return _phoneLidMap.get(clean) || null;
+}
+
+function getPhoneForLid(lid) {
+  if (!lid) return null;
+  const clean = String(lid).replace(/@.*$/, '');
+  return _lidPhoneMap.get(clean) || null;
+}
 
 function setCfg(cfg) {
   _cfg = cfg;
@@ -20,49 +245,48 @@ function getEngineDir() {
 }
 
 /**
- * Load wppconnect from the in-app engine (installed into the GymSystem data
- * dir by the backend /api/system/gateway/install-engine flow). The packaged
- * gateway carries NO node_modules — the engine is fetched once into the data
- * dir, then shared by every future launch.
+ * Loads Baileys, Pino and QRCode modules.
+ * Tries the gateway's bundled node_modules first, then falls back to AppData WhatsAppEngine.
  */
-function loadWpp() {
+function loadBaileys() {
+  // 1. Try local node_modules inside whatsapp-gateway
+  try {
+    const baileys = require('@whiskeysockets/baileys');
+    const pino = require('pino');
+    const qrcode = require('qrcode');
+    _baileysModule = baileys;
+    return { baileys, pino, qrcode };
+  } catch {}
+
+  // 2. Try engineDir under AppData
   const engineDir = getEngineDir();
-  const pkgPath = join(engineDir, 'node_modules', '@wppconnect-team', 'wppconnect');
-  if (!fs.existsSync(pkgPath)) {
-    throw new Error(
-      'engine not installed: run "تثبيت محرك الواتساب" from Settings first (expected wppconnect under the data dir).',
-    );
+  const pkgPath = join(engineDir, 'node_modules', '@whiskeysockets/baileys');
+  if (fs.existsSync(pkgPath)) {
+    const req = createRequire(join(engineDir, 'package.json'));
+    const baileys = req('@whiskeysockets/baileys');
+    const pino = req('pino');
+    const qrcode = req('qrcode');
+    _baileysModule = baileys;
+    return {
+      baileys,
+      pino,
+      qrcode,
+    };
   }
-  // createRequire keeps the resolution rooted at the engine dir so wppconnect's
-  // own requires (puppeteer, sharp, ...) resolve from the engine's node_modules.
-  const requireFromEngine = createRequire(join(engineDir, 'package.json'));
-  return requireFromEngine(pkgPath);
+
+  throw new Error('محرك الواتساب غير مثبت — يرجى تثبيت المحرك أولاً من الإعدادات');
 }
 
-/** Resolve the installed Microsoft Edge executable (Windows-first). */
-function resolveBrowserPath() {
-  const candidates = [
-    'C:/Program Files (x86)/Microsoft/Edge/Application/msedge.exe',
-    'C:/Program Files/Microsoft/Edge/Application/msedge.exe',
-    'C:/Program Files/Google/Chrome/Application/chrome.exe',
-    'C:/Program Files (x86)/Google/Chrome/Application/chrome.exe',
-  ];
-  for (const p of candidates) {
-    if (fs.existsSync(p)) return p;
+/** True when Baileys packages are available to require. */
+function engineReady() {
+  try {
+    loadBaileys();
+    return true;
+  } catch {
+    return false;
   }
-  return null;
 }
 
-/** Strip a `data:image/png;base64,` prefix into plain base64, if present. */
-function toRawBase64(value) {
-  if (!value) return null;
-  const idx = value.indexOf(',');
-  return idx >= 0 ? value.slice(idx + 1) : value;
-}
-
-// Chromium-scoped profile litter that survives a killed/crashed gateway launch
-// and then blocks the NEXT cold start with "The browser is already running for
-// <userDataDir> … use a different userDataDir" until removed by hand.
 const PROFILE_LOCK_FILES = [
   'lockfile',
   'DevToolsActivePort',
@@ -71,285 +295,516 @@ const PROFILE_LOCK_FILES = [
   'SingletonCookie',
 ];
 
-function killOrphanedBrowserProcesses(userDataDir) {
-  if (process.platform !== 'win32' || !userDataDir) return;
-  try {
-    // eslint-disable-next-line global-require
-    const { execSync } = require('node:child_process');
-    const out = execSync('wmic process where "name=\'msedge.exe\' or name=\'chrome.exe\'" get ProcessId,CommandLine /format:csv', {
-      encoding: 'utf8',
-      stdio: ['ignore', 'pipe', 'ignore'],
-    });
-    for (const line of out.split(/\r?\n/)) {
-      if (line.includes(userDataDir) || line.includes('wpp-profile') || line.includes('WhatAppGateway')) {
-        const parts = line.split(',');
-        const pid = parts[parts.length - 1].trim();
-        if (pid && !isNaN(Number(pid))) {
-          try {
-            execSync(`taskkill /F /T /PID ${pid}`, { stdio: 'ignore' });
-            log.warn(`terminated orphaned browser process PID ${pid}`);
-          } catch {}
-        }
-      }
-    }
-  } catch (err) {
-    log.warn(`could not inspect/kill orphaned browser processes: ${err.message}`);
-  }
-}
-
-/**
- * True when any running Edge/Chrome process has `profileDir` in its command
- * line. Guards deleteStaleProfileLocks: locks of a LIVE browser must never be
- * removed, only the litter left behind by a crashed launch.
- */
-function browserProcessHolds(profileDir) {
-  try {
-    // eslint-disable-next-line global-require
-    const { execFileSync } = require('node:child_process');
-    const needle = String(profileDir).replace(/'/g, "''");
-    const script =
-      `Get-CimInstance Win32_Process -Filter "Name='msedge.exe' OR Name='chrome.exe'" | ` +
-      `Where-Object { $_.CommandLine -and $_.CommandLine.IndexOf('${needle}', [System.StringComparison]::OrdinalIgnoreCase) -ge 0 } | ` +
-      `Measure-Object | Select-Object -ExpandProperty Count`;
-    const out = execFileSync(
-      'powershell.exe',
-      ['-NoProfile', '-NonInteractive', '-Command', script],
-      { encoding: 'utf8', timeout: 4000, windowsHide: true },
-    );
-    return String(out).trim() !== '0';
-  } catch {
-    // Cannot inspect (PowerShell unavailable) → assume the profile is in use so
-    // we never delete a live browser's locks by mistake.
-    return true;
-  }
-}
-
-/**
- * Cold-start hardening: remove Chromium singleton/devtools lock litter from the
- * profile dir. Terminates orphaned browser processes when force=true or when
- * no active gateway client owns the browser.
- */
-function clearStaleLocks(userDataDir, { force = false } = {}) {
-  if (!userDataDir) return [];
-  if (!fs.existsSync(userDataDir)) return [];
-  if (force) {
-    killOrphanedBrowserProcesses(userDataDir);
-  } else if (browserProcessHolds(userDataDir)) {
-    log.warn('orphaned browser process holds the profile — terminating before launch');
-    killOrphanedBrowserProcesses(userDataDir);
-  }
+/** Cleans stale lock files if present. Returns removed paths. */
+function clearStaleLocks(userDataDir) {
+  if (!userDataDir || !fs.existsSync(userDataDir)) return [];
   const locks = PROFILE_LOCK_FILES.map((name) => join(userDataDir, name)).filter((p) => fs.existsSync(p));
-  if (!locks.length) return [];
   for (const lock of locks) {
     try {
       fs.rmSync(lock, { force: true, recursive: true });
-      log.warn(`removed stale browser lock: ${lock}`);
-    } catch (err) {
-      log.warn(`could not remove stale lock ${lock}: ${err.message}`);
-    }
+    } catch {}
   }
   return locks;
 }
 
+function isSocketOpen() {
+  if (!_sock) return false;
+  if (_sock.ws && _sock.ws.isOpen) return true;
+  if (_sock.ws && _sock.ws.socket && _sock.ws.socket.readyState === 1) return true;
+  return false;
+}
+
+function isSocketActive() {
+  if (!_sock) return false;
+  if (isSocketOpen()) return true;
+  if (_sock.ws && _sock.ws.socket) {
+    const rs = _sock.ws.socket.readyState;
+    if (rs === 0 || rs === 1) return true;
+  }
+  return false;
+}
+
+function getAuthDir() {
+  const sessionDir = (_cfg && _cfg.sessionDir) || require('./config').config().sessionDir;
+  return join(sessionDir, 'baileys_auth');
+}
+
+function hasSavedCredentials() {
+  try {
+    const credsPath = join(getAuthDir(), 'creds.json');
+    if (!fs.existsSync(credsPath)) return false;
+    const stat = fs.statSync(credsPath);
+    if (stat.size < 50) return false;
+    const content = fs.readFileSync(credsPath, 'utf8');
+    const creds = JSON.parse(content);
+    return Boolean(creds && (creds.registered || (creds.me && creds.me.id)));
+  } catch {
+    return false;
+  }
+}
+
+let _reconnectAttempts = 0;
+
+/**
+ * Connects or returns the active Baileys WebSocket instance.
+ * Completely headless, zero-browser, pure protocol.
+ */
 async function ensureBrowser() {
-  // Zombie guard: if the previous client closed its page (browser killed,
-  // session logged out on the phone, etc.), drop it and relaunch fresh.
-  if (_client) {
-    const page = _client.waPage;
-    if (page && page.isClosed()) {
-      try {
-        await _client.close();
-      } catch {
-        /* already gone */
-      }
-      _client = null;
+  if (_sock && isSocketOpen()) {
+    return { ok: true, client: _sock };
+  }
+  if (_connecting) return _connecting;
+
+  if (_sock && isSocketActive()) {
+    const opened = await waitForOpen(6000);
+    if (opened || isSocketActive()) {
+      return { ok: true, client: _sock };
     }
   }
-  if (_client) return { ok: true, client: _client };
-  if (_pairing) return _pairing;
 
-  _pairing = (async () => {
-    fs.mkdirSync(_cfg.sessionDir, { recursive: true });
-    const wpp = loadWpp();
-    const executablePath = resolveBrowserPath();
-    const sessionDir = _cfg.sessionDir;
-    const profileDir = join(sessionDir, 'wpp-profile');
-    // Cold-start hardening: a gateway killed mid-launch (app force-quit,
-    // session cleanup, machine shutdown) leaves Chromium singleton/devtools
-    // litter in the profile that makes the NEXT launch fail with "The browser
-    // is already running for … use a different userDataDir". Clear it first —
-    // safely (only when no live Edge/Chrome holds the profile).
-    clearStaleLocks(profileDir);
-
-    // Profile (tokens + WhatsApp session data) must live in the app data dir so
-    // pairing survives restarts just like the old wa-profile folder. Pass it as
-    // puppeteerOptions.userDataDir — wppconnect otherwise defaults to
-    // cwd/folderNameToken/session which would scatter state under the repo.
-    const puppeteerOptions = {
-      userDataDir: profileDir,
-      args: ['--no-sandbox', '--disable-blink-features=AutomationControlled'],
-    };
-    if (executablePath) {
-      puppeteerOptions.executablePath = executablePath;
-    }
-
-    log.info(`launching browser (headless=${_cfg.headless})`);
-    const options = {
-      session: 'gym-gateway',
-      headless: _cfg.headless,
-      // useChrome:false + our own executablePath = Edge wins; without this
-      // wppconnect overwrites the path with its chrome-launcher lookup.
-      useChrome: false,
-      waitForLogin: false, // return fast; pairing/QR come via catchQR/statusFind
-      autoClose: false, // default 60000 would kill the session browser
-      logQR: false,
-      updatesLog: false,
-      disableWelcome: true,
-      puppeteerOptions,
-      catchQR: (base64Image, _asciiQR, attempt, _urlCode) => {
-        _lastQrBase64 = toRawBase64(base64Image);
-        log.info(`QR captured (attempt ${attempt})`);
-      },
-      statusFind: (status, session) => {
-        log.debug(`status: ${status} (${session})`);
-        if (status === 'inChat') _lastQrBase64 = null;
-      },
-    };
-
-    let client;
+  if (_sock) {
     try {
-      client = await wpp.create(options);
-    } catch (err) {
-      const msg = String((err && err.message) || err);
-      if (/already running|userDataDir|DevToolsActivePort|SingletonLock|Failed to launch/i.test(msg)) {
-        // Same class of failure as above, surfacing through the real launch —
-        // force-clear (the failed launch itself proves nothing alive owns the
-        // profile) and retry exactly once.
-        log.warn(`launch failed on stale profile locks — clearing and retrying once: ${msg}`);
-        clearStaleLocks(profileDir, { force: true });
-        client = await wpp.create(options);
-      } else {
-        throw err;
-      }
+      _sock.ev.removeAllListeners();
+      _sock.end(undefined);
+    } catch {}
+    _sock = null;
+  }
+
+  if (_reconnectTimer) {
+    clearTimeout(_reconnectTimer);
+    _reconnectTimer = null;
+  }
+
+  _connecting = (async () => {
+    const { baileys, pino, qrcode } = loadBaileys();
+    const {
+      default: makeWASocket,
+      useMultiFileAuthState,
+      fetchLatestBaileysVersion,
+      makeCacheableSignalKeyStore,
+      Browsers,
+    } = baileys;
+
+    const authDir = getAuthDir();
+    fs.mkdirSync(authDir, { recursive: true });
+
+    log.info(`initializing Baileys Zero-Browser WebSocket (auth=${authDir})`);
+    loadPersistedMessages();
+    const { state, saveCreds } = await useMultiFileAuthState(authDir);
+
+    let version;
+    try {
+      const v = await fetchLatestBaileysVersion();
+      version = v.version;
+    } catch {
+      version = [2, 3000, 1043857760];
     }
 
-    _client = client;
-    log.info('browser session connected to WhatsApp Web');
-    return { ok: true, client: _client };
+    const pinoLogger = pino({ level: 'silent' });
+    const authKeys = makeCacheableSignalKeyStore
+      ? makeCacheableSignalKeyStore(state.keys, pinoLogger)
+      : state.keys;
+
+    const browserDesc = Browsers && typeof Browsers.ubuntu === 'function'
+      ? Browsers.ubuntu('Chrome')
+      : (Browsers && typeof Browsers.appropriate === 'function'
+        ? Browsers.appropriate('Desktop')
+        : ['Ubuntu', 'Chrome', '120.0.6099.115']);
+
+    const sock = makeWASocket({
+      version,
+      logger: pinoLogger,
+      auth: {
+        creds: state.creds,
+        keys: authKeys,
+      },
+      msgRetryCounterCache: _msgRetryCounterCache,
+      getMessage: getStoredMessage,
+      browser: browserDesc,
+      printQRInTerminal: false,
+      syncFullHistory: false,
+      generateHighQualityLinkPreview: false,
+      connectTimeoutMs: 60000,
+      keepAliveIntervalMs: 20000,
+      defaultQueryTimeoutMs: 60000,
+      markOnlineOnConnect: true,
+    });
+
+    sock.ev.on('creds.update', saveCreds);
+
+    sock.ev.on('connection.update', async (update) => {
+      const { connection, lastDisconnect, qr } = update;
+
+      if (qr) {
+        if (!hasSavedCredentials()) {
+          try {
+            const dataUrl = await qrcode.toDataURL(qr, { margin: 2, scale: 8 });
+            _lastQrBase64 = dataUrl.replace(/^data:image\/png;base64,/, '');
+            log.info('Baileys QR code generated and ready for pairing');
+          } catch (err) {
+            log.error(`QR generation error: ${err.message}`);
+          }
+        } else {
+          log.info('Ignoring transient QR code because valid saved credentials exist in authDir');
+        }
+      }
+
+      if (connection === 'open') {
+        _isPairedState = true;
+        _lastQrBase64 = null;
+        _reconnectAttempts = 0;
+        if (_reconnectTimer) {
+          clearTimeout(_reconnectTimer);
+          _reconnectTimer = null;
+        }
+        log.info('Baileys connected to WhatsApp Multi-Device successfully (No Browser) ✅');
+        try {
+          await sock.sendPresenceUpdate('available');
+        } catch {}
+      }
+
+      if (connection === 'close') {
+        _lastQrBase64 = null;
+        if (_sock) {
+          try { _sock.ev.removeAllListeners(); } catch {}
+          _sock = null;
+        }
+
+        const statusCode = lastDisconnect?.error?.output?.statusCode;
+        const hasCreds = hasSavedCredentials();
+        log.warn(`Baileys connection closed (code=${statusCode}, hasSavedCreds=${hasCreds})`);
+
+        // User explicit instruction:
+        // "ربط واتس اب بيخرج كل شويه وانا كل الي طلبته انه يخرج لما اخرجه انا بنفسي"
+        // NEVER wipe credentials automatically here under ANY circumstances!
+        // Only explicit disconnect() clears credentials.
+        // Schedule auto-reconnect with backoff.
+        if (!_reconnectTimer) {
+          _reconnectAttempts++;
+          let delay = 4000;
+          if (statusCode === 515) {
+            delay = 1500;
+          } else if (statusCode === 408) {
+            delay = 2000;
+          } else if (statusCode === 440) {
+            delay = 8000;
+          } else if (statusCode === 401) {
+            delay = 5000;
+          } else {
+            delay = Math.min(30000, 3000 * Math.pow(1.3, Math.min(_reconnectAttempts, 8)));
+          }
+          log.info(`Scheduling auto-reconnect in ${Math.round(delay / 1000)}s (attempt ${_reconnectAttempts}, code=${statusCode})`);
+          _reconnectTimer = setTimeout(() => {
+            _reconnectTimer = null;
+            ensureBrowser().catch((err) => log.warn(`auto-reconnect failed: ${err.message}`));
+          }, delay);
+        }
+      }
+    });
+
+    setupInboundListener(sock);
+
+    _sock = sock;
+    await waitForOpen(3000).catch(() => {});
+    return { ok: true, client: _sock };
   })().catch((err) => {
-    log.error(`browser launch failed: ${err.message}`);
-    _client = null;
+    log.error(`Baileys socket creation failed: ${err.message}`);
+    _sock = null;
     return { ok: false, error: err.message };
   }).finally(() => {
-    _pairing = null;
+    _connecting = null;
   });
-  return _pairing;
+
+  return _connecting;
 }
 
-/**
- * Cheap health probe: reports pairing state WITHOUT launching the browser.
- * `browserReady:false` simply means "not launched yet" — /pair launches it.
- * Keeps /health instant so callers (ensure route, pairing modal polling)
- * never time out behind a cold browser launch.
- */
-/** True when the wppconnect engine is installed in the data dir (no launch). */
-function engineReady() {
-  try {
-    loadWpp();
-    return true;
-  } catch {
-    return false;
+const _botSentMessageIds = new Set();
+function markBotSentMessageId(id) {
+  if (!id) return;
+  _botSentMessageIds.add(String(id));
+  if (_botSentMessageIds.size > 500) {
+    const first = _botSentMessageIds.values().next().value;
+    if (first) _botSentMessageIds.delete(first);
   }
 }
 
-async function healthStatus() {
-  if (_client) {
-    try {
-      const page = _client.waPage;
-      if (page && page.isClosed()) {
-        _client = null;
-        return { browserReady: false, paired: false };
-      }
-      return { browserReady: true, paired: _client.isInChat === true };
-    } catch {
-      return { browserReady: true, paired: false };
+function extractMessageBody(msg) {
+  if (!msg) return '';
+  const m = msg.ephemeralMessage?.message || msg.viewOnceMessage?.message || msg.viewOnceMessageV2?.message || msg.documentWithCaptionMessage?.message || msg;
+  if (!m) return '';
+  if (typeof m.conversation === 'string') return m.conversation;
+  if (typeof m.extendedTextMessage?.text === 'string') return m.extendedTextMessage.text;
+  if (typeof m.imageMessage?.caption === 'string') return m.imageMessage.caption;
+  if (typeof m.videoMessage?.caption === 'string') return m.videoMessage.caption;
+  if (typeof m.documentMessage?.caption === 'string') return m.documentMessage.caption;
+  if (typeof m.buttonsResponseMessage?.selectedButtonId === 'string') return m.buttonsResponseMessage.selectedButtonId;
+  if (typeof m.buttonsResponseMessage?.selectedDisplayText === 'string') return m.buttonsResponseMessage.selectedDisplayText;
+  if (typeof m.listResponseMessage?.singleSelectReply?.selectedRowId === 'string') return m.listResponseMessage.singleSelectReply.selectedRowId;
+  if (typeof m.templateButtonReplyMessage?.selectedId === 'string') return m.templateButtonReplyMessage.selectedId;
+  return '';
+}
+
+/**
+ * Listens for incoming 1-on-1 text messages from members and forwards them to
+ * the reception bot webhook (`POST /api/whatsapp/inbound`).
+ */
+function setupInboundListener(sock) {
+  if (!sock || !sock.ev) return;
+
+  sock.ev.on('chats.phoneNumberShare', ({ lid, jid }) => {
+    if (lid && jid) {
+      cacheLidMapping(lid, jid);
+      log.info(`learned phone number share: ${lid} -> ${jid}`);
     }
-  }
-  return { browserReady: false, paired: false };
-}
+  });
 
-async function isPaired(clientOrNull) {
-  const client = clientOrNull || _client;
-  if (!client) return false;
-  try {
-    const page = client.waPage;
-    if (page && page.isClosed()) return false;
-    return client.isInChat === true;
-  } catch {
-    return false;
-  }
-}
+  sock.ev.on('messages.upsert', async ({ messages, type }) => {
+    for (const message of (messages || [])) {
+      if (message?.key?.id && message?.message) {
+        saveMessage(message.key, message.message);
+      }
+    }
 
-/**
- * Return the latest QR frame as { pngBase64 } (plain base64, no data: prefix),
- * or null while no QR is on screen. The in-gateway client renders the QR into
- * a canvas and wppconnect surfaces it via catchQR — we snapshot the latest one.
- */
-async function readQr(clientOrNull) {
-  const client = clientOrNull || _client;
-  if (!client) return null;
-  try {
-    // Refresh attempt from the live page when possible (the QR rotates every
-    // ~20s; grabbing the current frame keeps the pairing modal accurate).
-    const fresh = await client.getQrCode().catch(() => null);
-    const raw = toRawBase64(fresh && fresh.base64Image ? fresh.base64Image : _lastQrBase64);
-    if (raw) {
-      const file = join(_cfg.sessionDir, 'pairing-qr.png');
+    log.info(`messages.upsert received ${messages?.length || 0} message(s), type=${type}`);
+
+    for (const message of (messages || [])) {
       try {
-        fs.writeFileSync(file, Buffer.from(raw, 'base64'));
-      } catch {
-        /* stale path is fine */
+        if (!message || !message.key) continue;
+        const msgId = message.key.id;
+        if (msgId && _botSentMessageIds.has(String(msgId))) continue;
+
+        const remoteJid = message.key.remoteJid;
+        if (!remoteJid || remoteJid.endsWith('@g.us') || remoteJid.includes('status@broadcast')) continue;
+
+        // If fromMe is true: only allow if it is a self-chat (testing message to own number)
+        if (message.key.fromMe) {
+          const myJid = sock.user?.id ? sock.user.id.replace(/:.*@/, '@') : null;
+          const myPn = myJid ? myJid.replace(/@.*$/, '') : null;
+          const targetPn = remoteJid.replace(/@.*$/, '');
+          const isSelfChat = myPn && (targetPn === myPn || (sock.user?.lid && remoteJid === sock.user.lid));
+          if (!isSelfChat) continue;
+        }
+
+        // Check if message is recent (skip old history sync)
+        const msgTime = Number(message.messageTimestamp || 0);
+        const isRecent = msgTime > 0 ? (Date.now() / 1000 - msgTime) < 300 : true;
+        if (type !== 'notify' && !isRecent) continue;
+
+        const body = extractMessageBody(message.message).trim();
+        if (!body) continue;
+
+        const rawId = remoteJid.replace(/@.*$/, '');
+        let senderPn = message.key?.senderPn || message.key?.participantPn || null;
+        if (senderPn) {
+          senderPn = senderPn.replace(/@.*$/, '');
+          cacheLidMapping(rawId, senderPn);
+        }
+
+        const resolvedPhone = _lidPhoneMap.get(rawId) || senderPn || rawId;
+        const backendUrl = (_cfg && _cfg.backendUrl) || process.env.BACKEND_URL || 'http://127.0.0.1:8890';
+        log.info(`inbound message from ${remoteJid} (resolved phone: ${resolvedPhone}): "${body.slice(0, 40)}"`);
+
+        const controller = new AbortController();
+        const timer = setTimeout(() => controller.abort(), 20000);
+        const res = await fetch(`${backendUrl.replace(/\/+$/, '')}/api/whatsapp/inbound`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            phone: resolvedPhone,
+            remoteJid,
+            senderPn,
+            pushName: message.pushName || null,
+            body,
+            messageId: message.key.id,
+          }),
+          signal: controller.signal,
+        }).catch((e) => {
+          log.warn(`inbound webhook error: ${e.message}`);
+          return null;
+        });
+        clearTimeout(timer);
+
+        if (res && res.ok) {
+          const data = await res.json().catch(() => null);
+          if (data && (data.reply || data.media)) {
+            const { send } = require('./wa-send');
+            const targetJid = data.replyJid || remoteJid;
+            log.info(`sending bot auto-reply to ${targetJid}`);
+            const sendRes = await send(targetJid, data.reply || '', data.media || null);
+            if (!sendRes || !sendRes.ok) {
+              log.error(`bot auto-reply to ${targetJid} failed: ${(sendRes && sendRes.error) || 'unknown error'}`);
+            } else {
+              if (sendRes.messageId) {
+                markBotSentMessageId(sendRes.messageId);
+              }
+              log.info(`bot auto-reply delivered successfully to ${targetJid}`);
+            }
+          }
+        }
+      } catch (err) {
+        log.warn(`onMessage error: ${err.message}`);
       }
-      return { pngBase64: raw };
     }
-    return null;
-  } catch (err) {
-    log.warn(`qr capture failed: ${err.message}`);
-    return null;
-  }
+  });
 }
 
-async function waitForPairing(client, timeoutMs = 180000) {
-  const started = Date.now();
-  while (Date.now() - started < timeoutMs) {
-    if (await isPaired(client)) return { paired: true };
-    await new Promise((r) => setTimeout(r, 1500));
-  }
-  return { paired: false };
+/** Health probe reporting pairing state without delay. */
+async function healthStatus() {
+  const paired = Boolean(_isPairedState || hasSavedCredentials());
+  const socketOpen = isSocketOpen();
+  const ready = Boolean(_sock && (socketOpen || isSocketActive() || _connecting));
+  return { browserReady: ready, paired };
 }
 
+/** Check if the session is authenticated and paired. */
+async function isPaired(clientOrNull) {
+  if (_isPairedState) return true;
+  if (hasSavedCredentials()) {
+    _isPairedState = true;
+    _lastQrBase64 = null;
+    return true;
+  }
+  const sock = clientOrNull || _sock;
+  if (!sock) return false;
+  if (sock.user && sock.user.id) {
+    _isPairedState = true;
+    _lastQrBase64 = null;
+    return true;
+  }
+  if (sock.authState && sock.authState.creds) {
+    if (sock.authState.creds.me && sock.authState.creds.me.id) {
+      _isPairedState = true;
+      _lastQrBase64 = null;
+      return true;
+    }
+    if (sock.authState.creds.registered) {
+      _isPairedState = true;
+      _lastQrBase64 = null;
+      return true;
+    }
+  }
+  return false;
+}
+
+/** Reads the current QR code frame as raw PNG base64, or null if paired / not generated. */
+async function readQr() {
+  if (_isPairedState || hasSavedCredentials()) return null;
+  if (!_lastQrBase64) return null;
+  return { pngBase64: _lastQrBase64 };
+}
+
+/** Waits up to timeoutMs for the QR to be scanned and paired. */
+async function waitForPairing(client, timeoutMs = 15000) {
+  if (_isPairedState || hasSavedCredentials()) return { paired: true };
+  const start = Date.now();
+  while (Date.now() - start < timeoutMs) {
+    if (_isPairedState || hasSavedCredentials()) return { paired: true };
+    await new Promise((r) => setTimeout(r, 500));
+  }
+  return { paired: Boolean(_isPairedState || hasSavedCredentials()) };
+}
+
+/** Waits up to timeoutMs for the WebSocket connection to be fully open. */
+async function waitForOpen(timeoutMs = 20000) {
+  if (isSocketOpen()) return true;
+  const start = Date.now();
+  while (Date.now() - start < timeoutMs) {
+    if (isSocketOpen()) return true;
+    await new Promise((r) => setTimeout(r, 300));
+  }
+  return isSocketOpen();
+}
+
+/** Disconnects and shuts down the active socket without wiping disk credentials. */
 async function close() {
-  try {
-    if (_client) {
-      await _client.close();
-      log.info('browser closed');
-    }
-  } catch {
-    /* best effort */
+  if (_sock) {
+    try {
+      _sock.end(undefined);
+    } catch {}
+    _sock = null;
   }
-  _client = null;
+  _isPairedState = false;
   _lastQrBase64 = null;
+}
+
+/**
+ * Disconnects the WhatsApp session, logs out from WhatsApp servers,
+ * wipes authentication credentials and cache files on disk,
+ * and resets pairing state so a fresh QR scan is ready.
+ * ONLY called when user explicitly clicks disconnect button in the UI!
+ */
+async function disconnect() {
+  if (_reconnectTimer) {
+    clearTimeout(_reconnectTimer);
+    _reconnectTimer = null;
+  }
+  _reconnectAttempts = 0;
+
+  if (_sock) {
+    try {
+      await _sock.logout();
+    } catch (e) {
+      log.warn(`Baileys logout warning: ${e.message}`);
+    }
+    try {
+      _sock.ev.removeAllListeners();
+      _sock.end(undefined);
+    } catch {}
+    _sock = null;
+  }
+
+  const authDir = getAuthDir();
+
+  try {
+    fs.rmSync(authDir, { recursive: true, force: true });
+    log.info(`cleared credentials at ${authDir}`);
+  } catch (err) {
+    log.warn(`could not remove authDir: ${err.message}`);
+  }
+
+  try {
+    const msgCache = getMsgCachePath();
+    if (fs.existsSync(msgCache)) fs.unlinkSync(msgCache);
+  } catch {}
+
+  try {
+    const lidCache = getLidCachePath();
+    if (fs.existsSync(lidCache)) fs.unlinkSync(lidCache);
+  } catch {}
+
+  _lidPhoneMap.clear();
+  _phoneLidMap.clear();
+  _messageStore.clear();
+
+  _isPairedState = false;
+  _lastQrBase64 = null;
+  _connecting = null;
+
+  log.info('WhatsApp account disconnected, unlinked, and credentials cleared successfully ✅');
+  return { ok: true, disconnected: true };
 }
 
 module.exports = {
   setCfg,
   getEngineDir,
+  getAuthDir,
+  hasSavedCredentials,
   ensureBrowser,
   engineReady,
   healthStatus,
   isPaired,
+  isSocketOpen,
+  isSocketActive,
   readQr,
   waitForPairing,
+  waitForOpen,
   close,
+  disconnect,
   clearStaleLocks,
+  cacheLidMapping,
+  getLidForPhone,
+  getPhoneForLid,
+  saveMessage,
+  getStoredMessage,
+  markBotSentMessageId,
 };

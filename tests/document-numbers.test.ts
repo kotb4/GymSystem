@@ -67,7 +67,7 @@ describe("document reference numbers", () => {
     await refundPayment(db, owner, payment.id, 5000, "استرجاع جزئي");
 
     const refundNo = docNo("payment_refunds", "refund_no", firstRefundId());
-    expect(refundNo).toMatch(/^(?:[A-Z0-9]{1,6}-)?RFD-\d{4}-\d{6}$/);
+    expect(refundNo).toMatch(/^(?:[A-Z0-9]{1,6}-)+RFD-\d{4}-\d{6}$/);
 
     const hits = searchByDocNo(db, owner, refundNo);
     expect(hits).toHaveLength(1);
@@ -105,7 +105,7 @@ describe("document reference numbers", () => {
     await closeCashSession(db, owner, session.id, 10000, "مطابق");
 
     const closingNo = docNo("cash_sessions", "closing_no", session.id);
-    expect(closingNo).toMatch(/^(?:[A-Z0-9]{1,6}-)?CS-\d{4}-\d{6}$/);
+    expect(closingNo).toMatch(/^(?:[A-Z0-9]{1,6}-)+CS-\d{4}-\d{6}$/);
 
     const hits = searchByDocNo(db, owner, closingNo);
     expect(hits).toHaveLength(1);
@@ -130,7 +130,7 @@ describe("document reference numbers", () => {
 
     const rows = db.all<{ visit_no: string }>("SELECT visit_no FROM attendance ORDER BY checkin_at");
     expect(rows).toHaveLength(2);
-    expect(rows[0].visit_no).toMatch(/^(?:[A-Z0-9]{1,6}-)?ATT-\d{4}-\d{6}$/);
+    expect(rows[0].visit_no).toMatch(/^(?:[A-Z0-9]{1,6}-)+ATT-\d{4}-\d{6}$/);
     expect(rows[0].visit_no).not.toBe(rows[1].visit_no);
 
     const hits = searchByDocNo(db, owner, rows[1].visit_no);
@@ -185,8 +185,8 @@ describe("document reference numbers", () => {
     await refundPayment(db, owner, payment.id, 1000, "سبب");
     const refundNo = docNo("payment_refunds", "refund_no", firstRefundId());
 
-    // Same convention as member codes (B1-MEM-000001).
-    expect(refundNo).toMatch(/^B1-RFD-\d{4}-\d{6}$/);
+    // Same convention as member codes (B1-MEM-000001) + user code (U1).
+    expect(refundNo).toMatch(/^B1-(?:[A-Z0-9]{1,6}-)?RFD-\d{4}-\d{6}$/);
 
     // Reading it back without the branch token still resolves.
     const hits = searchByDocNo(db, owner, refundNo.replace(/^B1-/, ""));
@@ -258,7 +258,7 @@ describe("document reference numbers", () => {
       "payment_no",
       String(db.scalar("SELECT id FROM store_debt_payments LIMIT 1")),
     );
-    expect(debtNo).toMatch(/^(?:[A-Z0-9]{1,6}-)?SDP-\d{4}-\d{6}$/);
+    expect(debtNo).toMatch(/^(?:[A-Z0-9]{1,6}-)+SDP-\d{4}-\d{6}$/);
 
     const hits = searchByDocNo(db, owner, debtNo);
     expect(hits).toHaveLength(1);
@@ -266,5 +266,32 @@ describe("document reference numbers", () => {
     expect(hits[0].memberName).toBe("محمود");
     expect(hits[0].amountMinor).toBe(1500);
     expect(hits[0].route).toBe("/store");
+  });
+
+  it("resolves single unpadded digit sequence '1' to operation records with proper routes", async () => {
+    const { createProduct, createSale } = await import("@/core/services/store.service");
+    const member = await createMember(db, owner, { fullName: "سيد", phone: "01000000010" });
+    const product = await createProduct(db, owner, {
+      name: "بروتين بار",
+      costMinor: 2000,
+      priceMinor: 4000,
+      stockQty: 20,
+    });
+    const sale = await createSale(db, owner, {
+      memberId: member.id,
+      methodCode: "cash",
+      isCredit: false,
+      items: [{ productId: product.id, qty: 1 }],
+    });
+
+    const saleNo = docNo("store_sales", "sale_no", sale.id);
+    expect(saleNo).toMatch(/POS/);
+
+    // Searching with unpadded "1" must find this sale and route to /store
+    const hits = searchByDocNo(db, owner, "1");
+    const storeHit = hits.find((h) => h.kind === "store_sale");
+    expect(storeHit).toBeDefined();
+    expect(storeHit?.route).toBe("/store");
+    expect(storeHit?.rowId).toBe(sale.id);
   });
 });

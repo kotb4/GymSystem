@@ -262,4 +262,38 @@ describe("card-delivery service (TASK-044)", () => {
       globalThis.fetch = originalFetch;
     }
   });
+
+  it("sendPendingCardDeliveries sends media with caption containing member card barcode", async () => {
+    delete process.env.GYM_CRM_MOCK;
+    const member = await memberWithPhone("كابتن رامي", "01011119999");
+    const card = memberCard(member.id);
+    await queueCardDelivery(db, manager, { cardId: card.id });
+
+    // Enable WhatsApp in settings
+    db.run("INSERT OR REPLACE INTO settings (key, value) VALUES ('whatsapp_enabled', '1')");
+    db.run("INSERT OR REPLACE INTO settings (key, value) VALUES ('whatsapp_api_url', 'http://127.0.0.1:8891')");
+
+    const sentPayloads: Array<{ phone: string; message: string; media: any }> = [];
+    const originalFetch = globalThis.fetch;
+    globalThis.fetch = (async (_url: RequestInfo | URL, init?: RequestInit) => {
+      const parsed = JSON.parse(String(init?.body ?? "{}"));
+      sentPayloads.push(parsed);
+      return new Response(JSON.stringify({ ok: true }), { status: 200 });
+    }) as typeof fetch;
+
+    try {
+      const result = await sendPendingCardDeliveries(db, manager, 10);
+      expect(result.sent).toBe(1);
+      expect(sentPayloads).toHaveLength(1);
+      const payload = sentPayloads[0];
+      expect(payload.phone).toBe("01011119999");
+      expect(payload.message).toContain("بطاقة العضوية - كابتن رامي");
+      expect(payload.message).toContain(`كود العضو: ${card.barcodeValue}`);
+      expect(payload.media).toBeDefined();
+      expect(payload.media.caption).toContain(`كود العضو: ${card.barcodeValue}`);
+    } finally {
+      globalThis.fetch = originalFetch;
+      process.env.GYM_CRM_MOCK = "1";
+    }
+  });
 });

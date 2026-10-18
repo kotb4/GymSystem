@@ -8,8 +8,8 @@ const SIZES = {
 } as const;
 
 const PALETTES = [
-  { bg: "rgba(57,255,136,0.14)", fg: "#39FF88" },
-  { bg: "rgba(0,229,255,0.13)", fg: "#00E5FF" },
+  { bg: "rgba(0,85,255,0.16)", fg: "#0055FF" },
+  { bg: "rgba(0,210,255,0.14)", fg: "#00D2FF" },
   { bg: "rgba(155,92,255,0.15)", fg: "#9B5CFF" },
   { bg: "rgba(255,197,61,0.14)", fg: "#FFC53D" },
 ] as const;

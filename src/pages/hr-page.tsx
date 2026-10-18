@@ -21,12 +21,18 @@ import {
   Wallet,
   X,
   CreditCard,
+  Calculator,
+  Eye,
+  FileSpreadsheet,
+  Send,
+  Sparkles,
   type LucideIcon,
 } from "lucide-react";
 import { useAuth } from "@/contexts/auth-context";
 import { useT } from "@/i18n";
 import { useToast } from "@/components/ui/toast";
 import { describeError } from "@/utils/app-error";
+import { downloadCsvWithBom } from "@/utils/csv-helper";
 import {
   api,
   type PublicEmployee,
@@ -39,8 +45,11 @@ import {
   type PublicLeaveBalance,
   type EmployeeDailyWorked,
   type PublicEmployeeAdvance,
+  type TrainerMonthlyDuesResult,
+  type PayslipData,
 } from "@/api";
 import { formatMinor } from "@/core/money";
+import { formatTime } from "@/services/format";
 import { todayKey } from "@/core/dates";
 import { Card, CardHeader } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
@@ -51,6 +60,7 @@ import { Modal } from "@/components/ui/modal";
 import { DataTable, type Column } from "@/components/ui/table";
 import { EmptyState } from "@/components/ui/empty-state";
 import { ConfirmDialog } from "@/components/ui/confirm-dialog";
+import { DateRange } from "@/components/ui/date-range";
 
 function hoursLabel(minutes: number): string {
   const h = Math.floor(minutes / 60);
@@ -60,7 +70,7 @@ function hoursLabel(minutes: number): string {
 
 // ------------------------------- attendance ------------------------------
 
-export function AttendanceTab() {
+export function AttendanceTab({ onDataChanged }: { onDataChanged?: () => void }) {
   const t = useT();
   const { hasPermission } = useAuth();
   const isManager = hasPermission("hr.manage");
@@ -73,11 +83,32 @@ export function AttendanceTab() {
 
   const reload = useCallback(() => {
     api.employeesHr.listAttendance({ month, employeeId: empFilter === "all" ? null : empFilter }).then(setRows).catch(console.error);
-  }, [month, empFilter]);
+    onDataChanged?.();
+  }, [month, empFilter, onDataChanged]);
   useEffect(() => { reload(); }, [reload]);
   useEffect(() => {
     if (isManager) api.employees.list({ includeInactive: false }).then(setEmployees).catch(console.error);
   }, [isManager]);
+
+  const onExportAttendance = () => {
+    const headers = [
+      "التاريخ",
+      "اسم الموظف",
+      "وقت الحضور",
+      "وقت الانصراف",
+      "ساعات العمل",
+      "الحالة",
+    ];
+    const dataRows = rows.map((r) => [
+      r.dateKey,
+      r.employeeName,
+      r.clockInAt ? r.clockInAt.slice(11, 19) : "",
+      r.clockOutAt ? r.clockOutAt.slice(11, 19) : "",
+      r.workedMinutes > 0 ? hoursLabel(r.workedMinutes) : "",
+      r.isLate ? "متأخر" : "في الموعد",
+    ]);
+    downloadCsvWithBom(`سجل_حضور_الموظفين_${month}`, headers, dataRows);
+  };
 
   const saveEdit = async () => {
     if (!editing) return;
@@ -99,8 +130,8 @@ export function AttendanceTab() {
   const columns: Column<PublicAttendance>[] = [
     { key: "date", header: t("hr.dateKey"), render: (r) => <span dir="ltr" className="tabnum">{r.dateKey}</span> },
     ...(isManager ? [{ key: "emp", header: t("emp.fullName"), render: (r: PublicAttendance) => <span className="font-bold">{r.employeeName}</span> }] : []),
-    { key: "in", header: t("hr.clockInAt"), render: (r) => <span dir="ltr" className="tabnum">{r.clockInAt.slice(11, 19)}</span> },
-    { key: "out", header: t("hr.clockOutAt"), render: (r) => r.clockOutAt ? <span dir="ltr" className="tabnum">{r.clockOutAt.slice(11, 19)}</span> : <span className="text-faint">—</span> },
+    { key: "in", header: t("hr.clockInAt"), render: (r) => <span className="tabnum">{formatTime(r.clockInAt)}</span> },
+    { key: "out", header: t("hr.clockOutAt"), render: (r) => r.clockOutAt ? <span className="tabnum">{formatTime(r.clockOutAt)}</span> : <span className="text-faint">—</span> },
     { key: "worked", header: t("hr.workedHours"), render: (r) => r.workedMinutes > 0 ? <span dir="ltr" className="tabnum">{hoursLabel(r.workedMinutes)}</span> : <span>—</span> },
     { key: "late", header: t("common.status"), render: (r) => r.isLate ? <Badge variant="danger">{t("hr.late")}</Badge> : <Badge variant="success">{t("hr.onTime")}</Badge> },
     ...(isManager ? [{
@@ -130,6 +161,10 @@ export function AttendanceTab() {
               {!isManager && (
                 <SelfClockButtons onDone={reload} />
               )}
+              <Button variant="secondary" size="sm" onClick={onExportAttendance}>
+                <FileSpreadsheet className="size-4 text-neon" />
+                {t("hr.exportAttendanceCsv")}
+              </Button>
               <Input type="month" dir="ltr" value={month} onChange={(e: ChangeEvent<HTMLInputElement>) => setMonth(e.target.value)} className="w-36" />
               {isManager && employees.length > 0 && (
                 <Select value={empFilter} onChange={(e) => setEmpFilter(e.target.value)} options={[
@@ -198,13 +233,14 @@ function SelfClockButtons({ onDone }: { onDone: () => void }) {
 
 // ------------------------------- leaves -----------------------------------
 
-export function LeavesTab() {
+export function LeavesTab({ onDataChanged }: { onDataChanged?: () => void }) {
   const t = useT();
   const { hasPermission } = useAuth();
   const isManager = hasPermission("hr.manage");
   const { toast } = useToast();
   const [rows, setRows] = useState<PublicLeave[]>([]);
   const [balances, setBalances] = useState<PublicLeaveBalance[]>([]);
+  const [statusFilter, setStatusFilter] = useState<LeaveStatus | "all">("all");
   const [requesting, setRequesting] = useState(false);
   const [settingEntitlements, setSettingEntitlements] = useState(false);
   const [decideTarget, setDecideTarget] = useState<PublicLeave | null>(null);
@@ -214,13 +250,36 @@ export function LeavesTab() {
   const [employees, setEmployees] = useState<PublicEmployee[]>([]);
 
   const reload = useCallback(() => {
-    api.employeesHr.listLeaves({ status: "all" }).then(setRows).catch(console.error);
+    api.employeesHr.listLeaves({ status: statusFilter }).then(setRows).catch(console.error);
     api.employeesHr.getLeaveBalance({}).then(setBalances).catch(console.error);
-  }, []);
+    onDataChanged?.();
+  }, [statusFilter, onDataChanged]);
   useEffect(() => { reload(); }, [reload]);
   useEffect(() => {
     if (isManager) api.employees.list({ includeInactive: false }).then(setEmployees).catch(console.error);
   }, [isManager]);
+
+  const onExportLeaves = () => {
+    const headers = [
+      "اسم الموظف",
+      "نوع الإجازة",
+      "تاريخ البداية",
+      "تاريخ النهاية",
+      "عدد الأيام",
+      "السبب",
+      "الحالة",
+    ];
+    const dataRows = rows.map((r) => [
+      r.employeeName,
+      leaveTypeLabel(r.leaveType),
+      r.startDate,
+      r.endDate,
+      r.days,
+      r.reason ?? "",
+      statusLabel(r.status),
+    ]);
+    downloadCsvWithBom(`سجل_إجازات_الموظفين_${new Date().toISOString().slice(0, 10)}`, headers, dataRows);
+  };
 
   const leaveTypeLabel = (lt: LeaveType) =>
     lt === "annual" ? t("hr.ltAnnual") : lt === "sick" ? t("hr.ltSick") : lt === "unpaid" ? t("hr.ltUnpaid") : t("hr.ltEmergency");
@@ -257,7 +316,7 @@ export function LeavesTab() {
   const columns: Column<PublicLeave>[] = [
     ...(isManager ? [{ key: "emp", header: t("emp.fullName"), render: (r: PublicLeave) => <span className="font-bold">{r.employeeName}</span> }] : []),
     { key: "type", header: t("hr.leaveType"), render: (r) => leaveTypeLabel(r.leaveType) },
-    { key: "period", header: t("hr.leaveStart"), render: (r) => <span dir="ltr" className="tabnum">{r.startDate} → {r.endDate}</span> },
+    { key: "period", header: t("hr.leaveStart"), render: (r) => <DateRange start={r.startDate} end={r.endDate} /> },
     { key: "days", header: t("hr.leaveDays"), render: (r) => <span dir="ltr" className="tabnum">{r.days}</span> },
     { key: "reason", header: t("hr.leaveReason"), render: (r) => <span className="text-subtle">{r.reason ?? "—"}</span> },
     { key: "status", header: t("hr.leaveStatus"), render: (r) => <Badge variant={statusVariant(r.status)} dot>{statusLabel(r.status)}</Badge> },
@@ -336,11 +395,32 @@ export function LeavesTab() {
       </div>
       <Card>
         <CardHeader title={t("hr.tabLeaves")} action={
-          <div className="flex items-center gap-2">
+          <div className="flex flex-wrap items-center gap-2">
+            <Button variant="secondary" size="sm" onClick={onExportLeaves}>
+              <FileSpreadsheet className="size-4 text-neon" />
+              {t("hr.exportLeavesCsv")}
+            </Button>
             {isManager && <Button variant="secondary" size="sm" onClick={() => setSettingEntitlements(true)}>{t("hr.setLeaveEntitlements")}</Button>}
             {hasPermission("hr.view") && <Button size="sm" onClick={() => setRequesting(true)}><Plus className="size-3.5" />{t("hr.requestLeave")}</Button>}
           </div>
         } />
+        {/* Status Filter Pills */}
+        <div className="flex flex-wrap items-center gap-1.5 border-b border-line bg-surface/30 px-4 py-2">
+          {(["all", "pending", "approved", "rejected", "cancelled"] as const).map((st) => (
+            <button
+              key={st}
+              type="button"
+              onClick={() => setStatusFilter(st)}
+              className={`rounded-lg px-3 py-1 text-xs font-bold transition-all ${
+                statusFilter === st
+                  ? "bg-neon/15 text-neon ring-1 ring-neon/40 shadow-glow-sm"
+                  : "text-subtle hover:bg-white/5 hover:text-ink"
+              }`}
+            >
+              {st === "all" ? t("common.all") : statusLabel(st)}
+            </button>
+          ))}
+        </div>
         {rows.length === 0 ? <EmptyState icon={<CalendarDays />} title={t("hr.noAttendanceToday")} /> : <DataTable columns={columns} data={rows} rowKey={(r) => r.id} />}
       </Card>
       {settingEntitlements && (
@@ -564,16 +644,16 @@ function LeaveEntitlementsModal({ employees, onClose, onSaved }: {
 
 // --------------------------- deductions/incentives ------------------------
 
-export function DeductionsTab() {
+export function DeductionsTab({ onDataChanged }: { onDataChanged?: () => void }) {
   const t = useT();
-  return <AmountTab kind="deduction" title={t("hr.tabDeductions")} addLabel={t("hr.addDeduction")} emptyTitle={t("hr.noAttendanceToday")} />;
+  return <AmountTab kind="deduction" title={t("hr.tabDeductions")} addLabel={t("hr.addDeduction")} emptyTitle={t("hr.noAttendanceToday")} onDataChanged={onDataChanged} />;
 }
-export function IncentivesTab() {
+export function IncentivesTab({ onDataChanged }: { onDataChanged?: () => void }) {
   const t = useT();
-  return <AmountTab kind="incentive" title={t("hr.tabIncentives")} addLabel={t("hr.addIncentive")} emptyTitle={t("hr.noAttendanceToday")} />;
+  return <AmountTab kind="incentive" title={t("hr.tabIncentives")} addLabel={t("hr.addIncentive")} emptyTitle={t("hr.noAttendanceToday")} onDataChanged={onDataChanged} />;
 }
 
-function AmountTab({ kind, title, addLabel, emptyTitle }: { kind: "deduction" | "incentive"; title: string; addLabel: string; emptyTitle: string }) {
+function AmountTab({ kind, title, addLabel, emptyTitle, onDataChanged }: { kind: "deduction" | "incentive"; title: string; addLabel: string; emptyTitle: string; onDataChanged?: () => void }) {
   const t = useT();
   const { hasPermission } = useAuth();
   const { toast } = useToast();
@@ -588,7 +668,8 @@ function AmountTab({ kind, title, addLabel, emptyTitle }: { kind: "deduction" | 
   const fetchRows = useCallback(() => {
     const p = kind === "deduction" ? api.employeesHr.listDeductions : api.employeesHr.listIncentives;
     p({ month }).then(setRows).catch(console.error);
-  }, [kind, month]);
+    onDataChanged?.();
+  }, [kind, month, onDataChanged]);
   useEffect(() => { fetchRows(); }, [fetchRows]);
   useEffect(() => {
     if (isManager) api.employees.list({ includeInactive: false }).then(setEmployees).catch(console.error);
@@ -698,6 +779,30 @@ function AddAmountModal({ kind, employees, editTarget, onClose, onSaved }: {
     dateKey: editTarget?.dateKey ?? todayKey(),
   });
   const [busy, setBusy] = useState(false);
+  const [calculatingDues, setCalculatingDues] = useState(false);
+
+  const autoFillTrainerDues = async () => {
+    if (!form.employeeId) return;
+    setCalculatingDues(true);
+    try {
+      const month = form.dateKey.slice(0, 7);
+      const dues = await api.employees.calculateTrainerDues(form.employeeId, month);
+      if (dues.totalDuesMinor > 0) {
+        setForm((f) => ({
+          ...f,
+          amountMajor: String(dues.totalDuesMinor / 100),
+          reason: dues.suggestedNotes || f.reason,
+        }));
+        toast("success", t("hr.duesCalculatedSuccess"));
+      } else {
+        toast("info", t("hr.noTrainerDues"));
+      }
+    } catch (err) {
+      toast("error", describeError(err, t));
+    } finally {
+      setCalculatingDues(false);
+    }
+  };
 
   const save = async () => {
     setBusy(true);
@@ -730,6 +835,21 @@ function AddAmountModal({ kind, employees, editTarget, onClose, onSaved }: {
       footer={<><Button loading={busy} onClick={save}>{t("common.save")}</Button><Button variant="secondary" onClick={onClose}>{t("common.cancel")}</Button></>}>
       <div className="space-y-3.5">
         <Select label={t("emp.fullName")} value={form.employeeId} onChange={(e) => setForm((f) => ({ ...f, employeeId: e.target.value }))} options={employees.map((e) => ({ value: e.id, label: e.fullName }))} disabled={isEdit} />
+        {kind === "incentive" && !isEdit && (
+          <div className="flex justify-end">
+            <Button
+              type="button"
+              size="sm"
+              variant="secondary"
+              loading={calculatingDues}
+              onClick={() => void autoFillTrainerDues()}
+              className="text-xs"
+            >
+              <Sparkles className="size-3 text-neon" />
+              {t("hr.calculateTrainerDues")}
+            </Button>
+          </div>
+        )}
         <div className="grid grid-cols-2 gap-3">
           <Input label={t("hr.amount")} type="number" step="0.01" min={0} dir="ltr" value={form.amountMajor} onChange={(e) => setForm((f) => ({ ...f, amountMajor: e.target.value }))} />
           <Input label={t("hr.dateKey")} type="date" dir="ltr" value={form.dateKey} onChange={(e) => setForm((f) => ({ ...f, dateKey: e.target.value }))} />
@@ -742,7 +862,7 @@ function AddAmountModal({ kind, employees, editTarget, onClose, onSaved }: {
 
 // ----------------------------- advances -----------------------------------
 
-export function AdvancesTab() {
+export function AdvancesTab({ onDataChanged }: { onDataChanged?: () => void }) {
   const t = useT();
   const { hasPermission } = useAuth();
   const { toast } = useToast();
@@ -755,11 +875,33 @@ export function AdvancesTab() {
 
   const fetchRows = useCallback(() => {
     api.employeesHr.listAdvances({ month }).then(setRows).catch(console.error);
-  }, [month]);
+    onDataChanged?.();
+  }, [month, onDataChanged]);
   useEffect(() => { fetchRows(); }, [fetchRows]);
   useEffect(() => {
     if (isManager) api.employees.list({ includeInactive: false }).then(setEmployees).catch(console.error);
   }, [isManager]);
+
+  const onExportAdvances = () => {
+    const headers = [
+      "اسم الموظف",
+      "شهر الخصم",
+      "مبلغ السلفة (ج.م)",
+      "الحالة",
+      "ملاحظات",
+    ];
+    const dataRows = rows.map((r) => [
+      r.employeeName,
+      r.deductionMonth,
+      (r.amountMinor / 100).toFixed(2),
+      r.status === "open" ? t("hr.advanceStatusOpen") : r.status === "settled" ? t("hr.advanceStatusSettled") : t("hr.advanceStatusCancelled"),
+      r.notes ?? "",
+    ]);
+    downloadCsvWithBom(`كشف_سلف_الموظفين_${month}`, headers, dataRows);
+  };
+
+  const openTotalMinor = rows.filter((r) => r.status === "open").reduce((sum, r) => sum + r.amountMinor, 0);
+  const settledTotalMinor = rows.filter((r) => r.status === "settled").reduce((sum, r) => sum + r.amountMinor, 0);
 
   const columns: Column<PublicEmployeeAdvance>[] = [
     ...(isManager ? [{ key: "emp", header: t("emp.fullName"), render: (r: PublicEmployeeAdvance) => <span className="font-bold">{r.employeeName}</span> }] : []),
@@ -792,9 +934,31 @@ export function AdvancesTab() {
 
   return (
     <>
+      {/* Advances Summary Cards */}
+      <div className="grid grid-cols-2 gap-3 mb-3">
+        <div className="rounded-xl border border-line bg-surface/80 p-3.5 backdrop-blur-sm">
+          <span className="text-xs font-semibold text-subtle">{t("hr.advanceStatusOpen")}</span>
+          <div className="mt-1 flex items-baseline justify-between">
+            <span dir="ltr" className="text-lg font-black tabnum text-amber-400">{formatMinor(openTotalMinor)}</span>
+            <span className="text-xs text-faint">{rows.filter((r) => r.status === "open").length} سلف</span>
+          </div>
+        </div>
+        <div className="rounded-xl border border-line bg-surface/80 p-3.5 backdrop-blur-sm">
+          <span className="text-xs font-semibold text-subtle">{t("hr.advanceStatusSettled")}</span>
+          <div className="mt-1 flex items-baseline justify-between">
+            <span dir="ltr" className="text-lg font-black tabnum text-emerald-400">{formatMinor(settledTotalMinor)}</span>
+            <span className="text-xs text-faint">{rows.filter((r) => r.status === "settled").length} سلف</span>
+          </div>
+        </div>
+      </div>
+
       <Card>
         <CardHeader title={t("hr.tabAdvances")} action={
-          <div className="flex items-center gap-2">
+          <div className="flex flex-wrap items-center gap-2">
+            <Button variant="secondary" size="sm" onClick={onExportAdvances}>
+              <FileSpreadsheet className="size-4 text-neon" />
+              {t("hr.exportAdvancesCsv")}
+            </Button>
             {isManager && (
               <Button size="sm" onClick={() => setAdding(true)}>
                 <Plus className="size-3.5" />{t("hr.addAdvance")}
@@ -894,12 +1058,13 @@ function AddAdvanceModal({ employees, defaultMonth, onClose, onSaved }: {
 
 // ----------------------------- salary summary ----------------------------
 
-export function SalarySummaryTab() {
+export function SalarySummaryTab({ onDataChanged }: { onDataChanged?: () => void }) {
   const t = useT();
   const { hasPermission } = useAuth();
   const { toast } = useToast();
   const [month, setMonth] = useState(todayKey().slice(0, 7));
   const [rows, setRows] = useState<SummaryRow[]>([]);
+  const [statusFilter, setStatusFilter] = useState<"all" | "pending" | "paid" | "none">("all");
   const [approving, setApproving] = useState(false);
   const [payTarget, setPayTarget] = useState<{ id: string; name: string; netMinor: number } | null>(null);
   const canManage = hasPermission("salaries.manage");
@@ -945,11 +1110,20 @@ export function SalarySummaryTab() {
           salaryId: rec?.salaryId ?? null,
         };
       }));
+      onDataChanged?.();
     });
-  }, [month]);
+  }, [month, onDataChanged]);
   useEffect(() => { reload(); }, [reload]);
 
   const [printingId, setPrintingId] = useState<string | null>(null);
+  const [sendingId, setSendingId] = useState<string | null>(null);
+  const [previewPayslip, setPreviewPayslip] = useState<PayslipData | null>(null);
+  const [loadingPayslipId, setLoadingPayslipId] = useState<string | null>(null);
+
+  const [duesTarget, setDuesTarget] = useState<{ empId: string; name: string } | null>(null);
+  const [duesData, setDuesData] = useState<TrainerMonthlyDuesResult | null>(null);
+  const [loadingDues, setLoadingDues] = useState(false);
+  const [applyingDues, setApplyingDues] = useState(false);
 
   const printPayslip = async (salaryId: string) => {
     setPrintingId(salaryId);
@@ -966,6 +1140,72 @@ export function SalarySummaryTab() {
       toast("error", describeError(err, t));
     } finally {
       setPrintingId(null);
+    }
+  };
+
+  const sendWhatsAppPayslip = async (salaryId: string) => {
+    setSendingId(salaryId);
+    try {
+      const res = await api.employees.sendPayslipWhatsApp(salaryId);
+      if (res.success) {
+        toast("success", t("hr.payslipSentSuccess"));
+      } else if (res.directUrl) {
+        toast("info", t("hr.payslipSentFailFallback"));
+        window.open(res.directUrl, "_blank");
+      } else {
+        toast("info", t("hr.payslipSentSuccess"));
+      }
+    } catch (err) {
+      toast("error", describeError(err, t));
+    } finally {
+      setSendingId(null);
+    }
+  };
+
+  const openPayslipPreview = async (salaryId: string) => {
+    setLoadingPayslipId(salaryId);
+    try {
+      const data = await api.employees.getPayslip(salaryId);
+      setPreviewPayslip(data);
+    } catch (err) {
+      toast("error", describeError(err, t));
+    } finally {
+      setLoadingPayslipId(null);
+    }
+  };
+
+  const calculateDues = async (empId: string, name: string) => {
+    setDuesTarget({ empId, name });
+    setLoadingDues(true);
+    try {
+      const res = await api.employees.calculateTrainerDues(empId, month);
+      setDuesData(res);
+    } catch (err) {
+      toast("error", describeError(err, t));
+      setDuesTarget(null);
+    } finally {
+      setLoadingDues(false);
+    }
+  };
+
+  const applyDuesAsIncentive = async () => {
+    if (!duesTarget || !duesData || duesData.totalDuesMinor <= 0) return;
+    setApplyingDues(true);
+    try {
+      await api.employeesHr.addIncentive({
+        employeeId: duesTarget.empId,
+        amountMinor: duesData.totalDuesMinor,
+        reason: duesData.suggestedNotes || "مستحقات تدريب وكلاسات",
+        dateKey: `${month}-01`,
+      });
+      toast("success", t("hr.duesCalculatedSuccess"));
+      setDuesTarget(null);
+      setDuesData(null);
+      reload();
+    } catch (err) {
+      toast("error", describeError(err, t));
+    } finally {
+      setApplyingDues(false);
     }
   };
 
@@ -994,7 +1234,48 @@ export function SalarySummaryTab() {
     }
   };
 
+  const filteredRows = useMemo(() => {
+    if (statusFilter === "all") return rows;
+    return rows.filter((r) => r.status === statusFilter);
+  }, [rows, statusFilter]);
+
+  const onExportPayroll = () => {
+    const headers = [
+      "الموظف",
+      "الراتب الأساسي (ج.م)",
+      "الحوافز والمكافآت (ج.م)",
+      "الخصومات والغياب (ج.م)",
+      "السلف المستقطعة (ج.م)",
+      "أثر الإجازات بدون أجر (ج.م)",
+      "صافي الراتب المستحق (ج.م)",
+      "حالة الصرف",
+      "شهر الاستحقاق",
+    ];
+    const dataRows = filteredRows.map((r) => [
+      r.employeeName,
+      (r.baseMinor / 100).toFixed(2),
+      (r.incentivesMinor / 100).toFixed(2),
+      ((r.deductionsMinor + r.unpaidLeaveImpactMinor) / 100).toFixed(2),
+      (r.advancesMinor / 100).toFixed(2),
+      (r.unpaidLeaveImpactMinor / 100).toFixed(2),
+      (r.netMinor / 100).toFixed(2),
+      r.status === "paid"
+        ? t("emp.paid")
+        : r.status === "pending"
+          ? t("emp.pending")
+          : t("hr.salaryNotGenerated"),
+      month,
+    ]);
+    downloadCsvWithBom(`مسير_رواتب_${month}`, headers, dataRows);
+  };
+
+  const totalBase = rows.reduce((sum, r) => sum + r.baseMinor, 0);
+  const totalIncentives = rows.reduce((sum, r) => sum + r.incentivesMinor, 0);
+  const totalDeductions = rows.reduce((sum, r) => sum + r.deductionsMinor + r.unpaidLeaveImpactMinor, 0);
+  const totalAdvances = rows.reduce((sum, r) => sum + r.advancesMinor, 0);
   const totalNet = rows.reduce((sum, r) => sum + r.netMinor, 0);
+  const totalPaid = rows.filter((r) => r.status === "paid").reduce((sum, r) => sum + r.netMinor, 0);
+  const totalPending = rows.filter((r) => r.status === "pending").reduce((sum, r) => sum + r.netMinor, 0);
 
   const columns: Column<SummaryRow>[] = [
     { key: "emp", header: t("emp.fullName"), render: (r) => <span className="font-bold">{r.employeeName}</span> },
@@ -1013,16 +1294,45 @@ export function SalarySummaryTab() {
       key: "actions", header: "", align: "end" as const,
       render: (r: SummaryRow) => (
         <div className="flex items-center justify-end gap-1.5">
+          <Button
+            size="sm"
+            variant="ghost"
+            title={t("hr.calculateTrainerDues")}
+            onClick={() => void calculateDues(r.employeeId, r.employeeName)}
+          >
+            <Calculator className="size-3.5 text-neon" />
+          </Button>
           {r.salaryId && (
-            <Button
-              size="sm"
-              variant="secondary"
-              loading={printingId === r.salaryId}
-              onClick={() => void printPayslip(r.salaryId!)}
-              title={t("hr.printPayslip")}
-            >
-              <Printer className="size-3.5" />
-            </Button>
+            <>
+              <Button
+                size="sm"
+                variant="secondary"
+                loading={loadingPayslipId === r.salaryId}
+                onClick={() => void openPayslipPreview(r.salaryId!)}
+                title={t("hr.payslipPreview")}
+              >
+                <Eye className="size-3.5" />
+              </Button>
+              <Button
+                size="sm"
+                variant="secondary"
+                loading={printingId === r.salaryId}
+                onClick={() => void printPayslip(r.salaryId!)}
+                title={t("hr.printPayslip")}
+              >
+                <Printer className="size-3.5" />
+              </Button>
+              <Button
+                size="sm"
+                variant="secondary"
+                className="text-emerald-400 hover:text-emerald-300"
+                loading={sendingId === r.salaryId}
+                onClick={() => void sendWhatsAppPayslip(r.salaryId!)}
+                title={t("hr.sendPayslipWhatsApp")}
+              >
+                <Send className="size-3.5" />
+              </Button>
+            </>
           )}
           {canManage && r.status === "pending" && r.salaryId ? (
             <Button size="sm" variant="secondary" onClick={() => setPayTarget({ id: r.salaryId!, name: r.employeeName, netMinor: r.netMinor })}>
@@ -1036,17 +1346,80 @@ export function SalarySummaryTab() {
 
   return (
     <>
+      {/* Monthly Payroll High-Level KPI Summary */}
+      <div className="grid grid-cols-2 gap-3 sm:grid-cols-3 lg:grid-cols-5 mb-3">
+        <div className="rounded-xl border border-line bg-surface/80 p-3.5 backdrop-blur-sm">
+          <span className="text-xs font-semibold text-subtle">{t("hr.monthlySalariesTotal")}</span>
+          <div className="mt-1">
+            <span dir="ltr" className="text-lg font-black tabnum text-neon">{formatMinor(totalNet)}</span>
+          </div>
+        </div>
+        <div className="rounded-xl border border-line bg-surface/80 p-3.5 backdrop-blur-sm">
+          <span className="text-xs font-semibold text-subtle">{t("hr.totalPaidSalaries")}</span>
+          <div className="mt-1">
+            <span dir="ltr" className="text-lg font-black tabnum text-emerald-400">{formatMinor(totalPaid)}</span>
+          </div>
+        </div>
+        <div className="rounded-xl border border-line bg-surface/80 p-3.5 backdrop-blur-sm">
+          <span className="text-xs font-semibold text-subtle">{t("hr.totalPendingSalaries")}</span>
+          <div className="mt-1">
+            <span dir="ltr" className="text-lg font-black tabnum text-amber-400">{formatMinor(totalPending)}</span>
+          </div>
+        </div>
+        <div className="rounded-xl border border-line bg-surface/80 p-3.5 backdrop-blur-sm">
+          <span className="text-xs font-semibold text-subtle">{t("hr.baseSalary")} / {t("hr.incentivesBonus")}</span>
+          <div className="mt-1 flex items-baseline justify-between text-xs">
+            <span dir="ltr" className="font-bold tabnum text-ink">{formatMinor(totalBase)}</span>
+            <span dir="ltr" className="font-bold tabnum text-neon">+{formatMinor(totalIncentives)}</span>
+          </div>
+        </div>
+        <div className="rounded-xl border border-line bg-surface/80 p-3.5 backdrop-blur-sm">
+          <span className="text-xs font-semibold text-subtle">{t("hr.deductions")} / {t("hr.tabAdvances")}</span>
+          <div className="mt-1 flex items-baseline justify-between text-xs">
+            <span dir="ltr" className="font-bold tabnum text-red">-{formatMinor(totalDeductions)}</span>
+            <span dir="ltr" className="font-bold tabnum text-warning">-{formatMinor(totalAdvances)}</span>
+          </div>
+        </div>
+      </div>
+
       <Card>
         <CardHeader title={t("hr.tabSalarySummary")} action={
-          <div className="flex items-center gap-2">
+          <div className="flex flex-wrap items-center gap-2">
+            <Button variant="secondary" size="sm" onClick={onExportPayroll}>
+              <FileSpreadsheet className="size-4 text-neon" />
+              {t("hr.exportPayrollCsv")}
+            </Button>
             {canManage && <Button size="sm" loading={approving} onClick={() => void approve()}><Check className="size-3.5" />{t("hr.approveSalaries")}</Button>}
             <Input type="month" dir="ltr" value={month} onChange={(e: ChangeEvent<HTMLInputElement>) => setMonth(e.target.value)} className="w-36" />
           </div>
         } />
-        {rows.length === 0 ? (
+        {/* Status Filter Pills */}
+        <div className="flex flex-wrap items-center gap-1.5 border-b border-line bg-surface/30 px-4 py-2">
+          {(["all", "pending", "paid", "none"] as const).map((st) => (
+            <button
+              key={st}
+              type="button"
+              onClick={() => setStatusFilter(st)}
+              className={`rounded-lg px-3 py-1 text-xs font-bold transition-all ${
+                statusFilter === st
+                  ? "bg-neon/15 text-neon ring-1 ring-neon/40 shadow-glow-sm"
+                  : "text-subtle hover:bg-white/5 hover:text-ink"
+              }`}
+            >
+              {st === "all"
+                ? t("hr.filterPayrollStatusAll")
+                : st === "pending"
+                  ? t("hr.filterPayrollStatusPending")
+                  : st === "paid"
+                    ? t("hr.filterPayrollStatusPaid")
+                    : t("hr.filterPayrollStatusNotGenerated")}
+            </button>
+          ))}
+        </div>
+        {filteredRows.length === 0 ? (
           <EmptyState icon={<Wallet />} title={t("hr.noAttendanceToday")} />
         ) : (
-          <DataTable columns={columns} data={rows} rowKey={(r) => r.employeeId} />
+          <DataTable columns={columns} data={filteredRows} rowKey={(r) => r.employeeId} />
         )}
       </Card>
       <div className="flex items-center justify-between rounded-xl border border-line bg-surface px-4 py-3">
@@ -1061,6 +1434,162 @@ export function SalarySummaryTab() {
         confirmLabel={t("common.confirm")}
         onConfirm={() => void doPay()}
       />
+
+      {/* Trainer Dues Calculation Modal */}
+      {duesTarget && (
+        <Modal
+          open
+          onClose={() => { setDuesTarget(null); setDuesData(null); }}
+          title={t("hr.calculateTrainerDues")}
+          widthClass="max-w-md"
+          footer={
+            <>
+              {duesData && duesData.totalDuesMinor > 0 && (
+                <Button loading={applyingDues} onClick={() => void applyDuesAsIncentive()}>
+                  <Plus className="size-3.5" />
+                  {t("hr.duesCalculatedSuccess")}
+                </Button>
+              )}
+              <Button variant="secondary" onClick={() => { setDuesTarget(null); setDuesData(null); }}>
+                {t("common.close")}
+              </Button>
+            </>
+          }
+        >
+          <div className="space-y-4">
+            <div className="rounded-lg bg-surface p-3 text-sm">
+              <span className="block text-faint">{t("emp.fullName")}:</span>
+              <span className="font-bold text-white">{duesTarget.name}</span>
+              <span className="block text-xs text-subtle">{month}</span>
+            </div>
+
+            {loadingDues ? (
+              <div className="flex items-center justify-center p-6 text-sm text-subtle">
+                {t("hr.calculatingDues")}
+              </div>
+            ) : !duesData || !duesData.trainerId ? (
+              <div className="rounded-lg border border-dashed border-line p-4 text-center text-sm text-subtle">
+                {t("trainers.noLinkedEmployee")}
+              </div>
+            ) : (
+              <div className="space-y-3">
+                <div className="rounded-lg border border-line p-3">
+                  <div className="flex items-center justify-between text-sm">
+                    <span>{t("hr.ptDuesCount", { count: duesData.ptSessionsCount, amount: (duesData.ptCommissionMinor / 100).toFixed(0) })}</span>
+                    <span dir="ltr" className="font-bold tabnum text-neon">{formatMinor(duesData.ptCommissionMinor)}</span>
+                  </div>
+                </div>
+
+                <div className="rounded-lg border border-line p-3">
+                  <div className="flex items-center justify-between text-sm">
+                    <span>{t("hr.classesDuesCount", { count: duesData.classesCount, amount: (duesData.classesEarningsMinor / 100).toFixed(0) })}</span>
+                    <span dir="ltr" className="font-bold tabnum text-neon">{formatMinor(duesData.classesEarningsMinor)}</span>
+                  </div>
+                </div>
+
+                <div className="flex items-center justify-between rounded-lg bg-white/5 p-3 text-base font-bold">
+                  <span>{t("hr.totalTrainerDues", { amount: (duesData.totalDuesMinor / 100).toFixed(0) })}</span>
+                  <span dir="ltr" className="font-extrabold tabnum text-neon">{formatMinor(duesData.totalDuesMinor)}</span>
+                </div>
+
+                {duesData.suggestedNotes && (
+                  <p className="rounded bg-surface p-2 text-xs text-faint">
+                    {duesData.suggestedNotes}
+                  </p>
+                )}
+              </div>
+            )}
+          </div>
+        </Modal>
+      )}
+
+      {/* Payslip Preview Modal */}
+      {previewPayslip && (
+        <Modal
+          open
+          onClose={() => setPreviewPayslip(null)}
+          title={t("hr.payslipPreview")}
+          widthClass="max-w-lg"
+          footer={
+            <>
+              <Button
+                variant="secondary"
+                loading={printingId === previewPayslip.salary.id}
+                onClick={() => void printPayslip(previewPayslip.salary.id)}
+              >
+                <Printer className="size-3.5" />
+                {t("hr.printSlip")}
+              </Button>
+              <Button
+                className="bg-emerald-600 hover:bg-emerald-500 text-white"
+                loading={sendingId === previewPayslip.salary.id}
+                onClick={() => void sendWhatsAppPayslip(previewPayslip.salary.id)}
+              >
+                <Send className="size-3.5" />
+                {t("hr.sendPayslipWhatsApp")}
+              </Button>
+              <Button variant="secondary" onClick={() => setPreviewPayslip(null)}>
+                {t("common.close")}
+              </Button>
+            </>
+          }
+        >
+          <div className="space-y-4 rounded-xl border border-line bg-surface p-4">
+            <div className="border-b border-line pb-3 text-center">
+              <h3 className="text-base font-extrabold text-neon">{previewPayslip.gymName}</h3>
+              <p className="text-xs text-subtle">{t("hr.printPayslip")} — {previewPayslip.salary.periodMonth}</p>
+            </div>
+
+            <div className="grid grid-cols-2 gap-3 text-xs">
+              <div>
+                <span className="text-faint">{t("emp.fullName")}:</span>{" "}
+                <strong className="text-white">{previewPayslip.employee.fullName}</strong>
+              </div>
+              <div>
+                <span className="text-faint">{t("emp.roleTitle")}:</span>{" "}
+                <span className="text-white">{previewPayslip.employee.roleTitle || "موظف"}</span>
+              </div>
+              <div>
+                <span className="text-faint">{t("common.phone")}:</span>{" "}
+                <span dir="ltr" className="text-white">{previewPayslip.employee.phone || "—"}</span>
+              </div>
+              <div>
+                <span className="text-faint">{t("hr.tabAttendance")}:</span>{" "}
+                <span className="text-white">{previewPayslip.attendanceDays} يوم</span>
+              </div>
+            </div>
+
+            <div className="space-y-2 rounded-lg bg-base p-3 text-sm">
+              <div className="flex justify-between">
+                <span>{t("hr.salaryBase")}</span>
+                <span dir="ltr" className="font-bold tabnum">{formatMinor(previewPayslip.salary.baseMinor)}</span>
+              </div>
+              {previewPayslip.salary.bonusMinor > 0 && (
+                <div className="flex justify-between text-neon">
+                  <span>{t("hr.incentivesBonus")} (+)</span>
+                  <span dir="ltr" className="font-bold tabnum">{formatMinor(previewPayslip.salary.bonusMinor)}</span>
+                </div>
+              )}
+              {previewPayslip.salary.deductionMinor > 0 && (
+                <div className="flex justify-between text-red">
+                  <span>{t("hr.deductions")} (-)</span>
+                  <span dir="ltr" className="font-bold tabnum">{formatMinor(previewPayslip.salary.deductionMinor)}</span>
+                </div>
+              )}
+              <div className="flex justify-between border-t border-line pt-2 text-base font-extrabold">
+                <span className="text-white">{t("hr.netPayable")}</span>
+                <span dir="ltr" className="tabnum text-neon">{formatMinor(previewPayslip.salary.netMinor)}</span>
+              </div>
+            </div>
+
+            {previewPayslip.salary.notes && (
+              <p className="text-xs text-subtle">
+                <span className="font-semibold text-white">{t("common.notes")}:</span> {previewPayslip.salary.notes}
+              </p>
+            )}
+          </div>
+        </Modal>
+      )}
     </>
   );
 }
@@ -1171,8 +1700,8 @@ export function MonthlyHoursTab() {
 
   const columns: Column<EmployeeDailyWorked>[] = [
     { key: "date", header: t("hr.dateKey"), render: (r) => <span dir="ltr" className="tabnum">{r.dateKey}</span> },
-    { key: "in", header: t("hr.clockInAt"), render: (r) => <span dir="ltr" className="tabnum">{r.clockInAt ? r.clockInAt.slice(11, 19) : "—"}</span> },
-    { key: "out", header: t("hr.clockOutAt"), render: (r) => r.clockOutAt ? <span dir="ltr" className="tabnum">{r.clockOutAt.slice(11, 19)}</span> : <span className="text-faint">—</span> },
+    { key: "in", header: t("hr.clockInAt"), render: (r) => <span className="tabnum">{r.clockInAt ? formatTime(r.clockInAt) : "—"}</span> },
+    { key: "out", header: t("hr.clockOutAt"), render: (r) => r.clockOutAt ? <span className="tabnum">{formatTime(r.clockOutAt)}</span> : <span className="text-faint">—</span> },
     { key: "worked", header: t("hr.workedHours"), render: (r) => r.workedMinutes > 0 ? <span dir="ltr" className="font-bold tabnum">{hoursLabel(r.workedMinutes)}</span> : <span>—</span> },
     { key: "late", header: t("common.status"), render: (r) => r.isLate ? <Badge variant="danger">{t("hr.late")}</Badge> : <Badge variant="success">{t("hr.onTime")}</Badge> },
   ];

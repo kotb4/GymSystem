@@ -8,6 +8,8 @@ type PdfDoc = InstanceType<typeof PDFDocumentType>;
 
 export interface SubscriptionContractData {
   gymName: string;
+  gymPhone?: string | null;
+  gymAddress?: string | null;
   contractNo: string;
   issuedAt: string;
   branchName: string | null;
@@ -28,11 +30,14 @@ export interface SubscriptionContractData {
   remainingMinor: number;
   terms: string[];
   title?: string;
+  logoBuffer?: Buffer | null;
+  showQr?: boolean;
+  footerText?: string | null;
 }
 
 const PAGE_MARGIN = 36;
-const COLOR_PRIMARY = "#0f766e"; // Emerald 700
-const COLOR_PRIMARY_DARK = "#115e59"; // Emerald 800
+const COLOR_PRIMARY = "#0055FF"; // Electric Cobalt Blue
+const COLOR_PRIMARY_DARK = "#080B11"; // Obsidian Black
 const COLOR_LABEL = "#475569"; // Slate 600
 const COLOR_VALUE = "#0f172a"; // Slate 900
 const COLOR_MUTED = "#64748b"; // Slate 500
@@ -41,21 +46,23 @@ const COLOR_CARD_BG = "#f8fafc"; // Slate 50
 
 /** Render the modern member subscription agreement/contract PDF. */
 export async function renderSubscriptionContractPdf(data: SubscriptionContractData): Promise<Buffer> {
-  const qrPayload = JSON.stringify({
-    contract: data.contractNo,
-    member: data.memberCode,
-    plan: data.planName,
-    end: data.endDate,
-  });
   let qrBuffer: Buffer | null = null;
-  try {
-    qrBuffer = await QRCode.toBuffer(qrPayload, {
-      width: 140,
-      margin: 1,
-      color: { dark: "#0f172a", light: "#ffffff" },
+  if (data.showQr !== false) {
+    const qrPayload = JSON.stringify({
+      contract: data.contractNo,
+      member: data.memberCode,
+      plan: data.planName,
+      end: data.endDate,
     });
-  } catch {
-    qrBuffer = null;
+    try {
+      qrBuffer = await QRCode.toBuffer(qrPayload, {
+        width: 140,
+        margin: 1,
+        color: { dark: "#0f172a", light: "#ffffff" },
+      });
+    } catch {
+      qrBuffer = null;
+    }
   }
 
   return new Promise((resolve, reject) => {
@@ -66,7 +73,7 @@ export async function renderSubscriptionContractPdf(data: SubscriptionContractDa
         Title: `Membership Contract ${data.contractNo}`,
         Author: data.gymName,
         Subject: "Gym Membership Agreement",
-        Creator: "GymSystem",
+        Creator: "GymGate",
       },
     });
     const chunks: Buffer[] = [];
@@ -114,25 +121,42 @@ function paint(doc: PdfDoc, data: SubscriptionContractData, qrBuffer: Buffer | n
   const gymTitle = data.gymName;
   const subTitle = data.title ?? "عقد اشتراك عضوية رسمي";
 
-  // Right side of Header Banner (Gym & Invoice Type)
+  // Right side of Header Banner (Gym & Invoice Type & Address/Phone)
   const headerRightW = width * 0.6 - 20;
-  drawText(doc, gymTitle, left + width - headerRightW - 20, PAGE_MARGIN + 14, headerRightW, {
-    size: 20,
+  drawText(doc, gymTitle, left + width - headerRightW - 20, PAGE_MARGIN + 12, headerRightW, {
+    size: 19,
     align: "right",
     color: "#ffffff",
     weight: "bold",
   });
 
-  drawText(doc, subTitle, left + width - headerRightW - 20, PAGE_MARGIN + 44, headerRightW, {
-    size: 11,
+  const subLineParts = [subTitle];
+  if (data.gymAddress) subLineParts.push(data.gymAddress);
+  if (data.gymPhone) subLineParts.push(`هاتف: ${toAsciiDigits(data.gymPhone)}`);
+  const subText = subLineParts.join(" • ");
+
+  drawText(doc, subText, left + width - headerRightW - 20, PAGE_MARGIN + 42, headerRightW, {
+    size: 9,
     align: "right",
     color: "#ccfbf1",
     weight: "regular",
   });
 
-  // Left side of Header Banner (Contract Number & Date)
-  const headerLeftW = width * 0.4 - 20;
-  drawText(doc, `عقد رقم: ${toAsciiDigits(data.contractNo)}`, left + 20, PAGE_MARGIN + 16, headerLeftW, {
+  // Left side of Header Banner (Contract Number & Date & Optional Logo)
+  let headerLeftStart = left + 20;
+  let headerLeftW = width * 0.4 - 20;
+
+  if (data.logoBuffer) {
+    try {
+      doc.image(data.logoBuffer, left + 16, PAGE_MARGIN + 12, { fit: [54, 54] });
+      headerLeftStart = left + 78;
+      headerLeftW = width * 0.4 - 78;
+    } catch {
+      // Fallback
+    }
+  }
+
+  drawText(doc, `عقد رقم: ${toAsciiDigits(data.contractNo)}`, headerLeftStart, PAGE_MARGIN + 15, headerLeftW, {
     size: 11,
     align: "left",
     color: "#ffffff",
@@ -141,8 +165,8 @@ function paint(doc: PdfDoc, data: SubscriptionContractData, qrBuffer: Buffer | n
 
   const dateClean = data.issuedAt.slice(0, 10);
   const dateStr = data.branchName ? `${toAsciiDigits(dateClean)} • فرع: ${data.branchName}` : `تاريخ التحرير: ${toAsciiDigits(dateClean)}`;
-  drawText(doc, dateStr, left + 20, PAGE_MARGIN + 44, headerLeftW, {
-    size: 9.5,
+  drawText(doc, dateStr, headerLeftStart, PAGE_MARGIN + 43, headerLeftW, {
+    size: 9,
     align: "left",
     color: "#e6fffa",
     weight: "regular",
@@ -281,6 +305,18 @@ function paint(doc: PdfDoc, data: SubscriptionContractData, qrBuffer: Buffer | n
   // QR Code on far left
   if (qrBuffer) {
     doc.image(qrBuffer, left + 16, footerY + 8, { width: 68, height: 68 });
+  }
+
+  // Footer note if configured
+  if (data.footerText) {
+    const footX = left + (qrBuffer ? 90 : 20);
+    const footW = width - (qrBuffer ? 110 : 40);
+    drawText(doc, data.footerText, footX, footerY + 68, footW, {
+      size: 8.5,
+      align: "center",
+      color: COLOR_MUTED,
+      weight: "bold",
+    });
   }
 
   // Centered Developer Credit (see ./credit.ts)

@@ -283,7 +283,7 @@ export async function setCardBlocked(
 }
 
 export interface CardListQuery {
-  status?: CardStatus | "all";
+  status?: CardStatus | "all" | "lost_or_blocked";
   kind?: CardKind | "all";
   search?: string;
   page?: number;
@@ -308,8 +308,12 @@ export function listCards(
   const params: Array<string | number> = [];
 
   if (query.status && query.status !== "all") {
-    conditions.push("c.status = ?");
-    params.push(query.status);
+    if (query.status === "lost_or_blocked") {
+      conditions.push("c.status IN ('lost', 'blocked')");
+    } else {
+      conditions.push("c.status = ?");
+      params.push(query.status);
+    }
   }
   if (query.kind && query.kind !== "all") {
     conditions.push("c.kind = ?");
@@ -348,6 +352,104 @@ export function listMemberCards(db: Db, actor: ServiceActor, memberId: string): 
       [memberId],
     )
     .map((row) => ({ ...toCard(row), memberCode: row.member_code, memberName: row.full_name, memberPhone: row.phone }));
+}
+
+export interface CardStats {
+  total: number;
+  assigned: number;
+  available: number;
+  virtual: number;
+  physical: number;
+  lost: number;
+  blocked: number;
+}
+
+export function getCardStats(db: Db, actor: ServiceActor): CardStats {
+  requirePermission(actor, "cards.view");
+  const row = db.first<{
+    total: number;
+    assigned: number;
+    available: number;
+    virtual: number;
+    physical: number;
+    lost: number;
+    blocked: number;
+  }>(
+    `SELECT
+      COUNT(*) AS total,
+      COALESCE(SUM(CASE WHEN status = 'assigned' THEN 1 ELSE 0 END), 0) AS assigned,
+      COALESCE(SUM(CASE WHEN status = 'available' THEN 1 ELSE 0 END), 0) AS available,
+      COALESCE(SUM(CASE WHEN kind = 'virtual' THEN 1 ELSE 0 END), 0) AS virtual,
+      COALESCE(SUM(CASE WHEN kind = 'physical' THEN 1 ELSE 0 END), 0) AS physical,
+      COALESCE(SUM(CASE WHEN status = 'lost' THEN 1 ELSE 0 END), 0) AS lost,
+      COALESCE(SUM(CASE WHEN status = 'blocked' THEN 1 ELSE 0 END), 0) AS blocked
+    FROM cards`,
+  );
+  return {
+    total: Number(row?.total ?? 0),
+    assigned: Number(row?.assigned ?? 0),
+    available: Number(row?.available ?? 0),
+    virtual: Number(row?.virtual ?? 0),
+    physical: Number(row?.physical ?? 0),
+    lost: Number(row?.lost ?? 0),
+    blocked: Number(row?.blocked ?? 0),
+  };
+}
+
+export interface AutoGenerateCardsInput {
+  count: number;
+  prefix?: string;
+}
+
+export interface AutoGenerateCardsResult {
+  count: number;
+  fromBarcode: string;
+  toBarcode: string;
+  registered: string[];
+}
+
+export async function autoGenerateCards(
+  db: Db,
+  actor: ServiceActor,
+  input: AutoGenerateCardsInput,
+): Promise<AutoGenerateCardsResult> {
+  requirePermission(actor, "cards.register");
+  const count = Math.min(200, Math.max(1, Number(input.count) || 1));
+  const rawPrefix = (input.prefix ?? "GYM").trim().toUpperCase();
+  const cleanPrefix = rawPrefix.endsWith("-") ? rawPrefix : `${rawPrefix}-`;
+
+  const existing = db.all<{ barcode_value: string }>(
+    "SELECT barcode_value FROM cards WHERE barcode_value LIKE ? ORDER BY barcode_value DESC LIMIT 500",
+    [`${cleanPrefix}%`],
+  );
+
+  let maxNum = 100;
+  const numRegex = new RegExp(`^${cleanPrefix.replace("-", "\\-")}(\\d+)$`);
+  for (const row of existing) {
+    const m = row.barcode_value.match(numRegex);
+    if (m && m[1]) {
+      const n = parseInt(m[1], 10);
+      if (!isNaN(n) && n > maxNum) {
+        maxNum = n;
+      }
+    }
+  }
+
+  const generatedBarcodes: string[] = [];
+  for (let i = 1; i <= count; i++) {
+    const nextNum = maxNum + i;
+    const barcode = `${cleanPrefix}${String(nextNum).padStart(6, "0")}`;
+    generatedBarcodes.push(barcode);
+  }
+
+  const bulkRes = await registerCardsBulk(db, actor, { values: generatedBarcodes });
+
+  return {
+    count: bulkRes.registered.length,
+    fromBarcode: generatedBarcodes[0] ?? "",
+    toBarcode: generatedBarcodes[generatedBarcodes.length - 1] ?? "",
+    registered: bulkRes.registered,
+  };
 }
 
 export interface BulkRegisterResult {

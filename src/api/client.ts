@@ -1,7 +1,7 @@
 import { AppError } from "@/core/errors";
 
 /**
- * Thin HTTP bridge to the local GymSystem backend (127.0.0.1).
+ * Thin HTTP bridge to the local GymGate backend (127.0.0.1).
  * The browser never opens SQLite and never stores business data —
  * sessions live server-side in an HttpOnly cookie.
  */
@@ -26,14 +26,50 @@ function toError(payload: unknown, status: number): Error {
   return new AppError("INTERNAL", "errors.unexpected");
 }
 
-const TOKEN_STORAGE_KEY = "gymsystem_auth_token";
+const TOKEN_STORAGE_KEY = "gymgate_auth_token";
+const LEGACY_TOKEN_STORAGE_KEY = "gymsystem_auth_token";
+const SERVER_URL_STORAGE_KEY = "gymgate_server_url";
 let inMemoryToken: string | null = null;
+let inMemoryServerUrl: string | null = null;
+
+export function getStoredServerUrl(): string | null {
+  if (inMemoryServerUrl) return inMemoryServerUrl;
+  try {
+    if (typeof window !== "undefined" && window.localStorage) {
+      const stored = window.localStorage.getItem(SERVER_URL_STORAGE_KEY);
+      if (stored) {
+        inMemoryServerUrl = stored;
+        return stored;
+      }
+    }
+  } catch {
+    // localStorage restricted/disabled
+  }
+  return null;
+}
+
+export function setStoredServerUrl(url: string | null): void {
+  inMemoryServerUrl = url ? url.trim().replace(/\/+$/, "") : null;
+  try {
+    if (typeof window !== "undefined" && window.localStorage) {
+      if (inMemoryServerUrl) {
+        window.localStorage.setItem(SERVER_URL_STORAGE_KEY, inMemoryServerUrl);
+      } else {
+        window.localStorage.removeItem(SERVER_URL_STORAGE_KEY);
+      }
+    }
+  } catch {
+    // localStorage restricted/disabled
+  }
+}
 
 export function getStoredToken(): string | null {
   if (inMemoryToken) return inMemoryToken;
   try {
     if (typeof window !== "undefined" && window.localStorage) {
-      const stored = window.localStorage.getItem(TOKEN_STORAGE_KEY);
+      const stored =
+        window.localStorage.getItem(TOKEN_STORAGE_KEY) ??
+        window.localStorage.getItem(LEGACY_TOKEN_STORAGE_KEY);
       if (stored) {
         inMemoryToken = stored;
         return stored;
@@ -53,6 +89,7 @@ export function setStoredToken(token: string | null): void {
         window.localStorage.setItem(TOKEN_STORAGE_KEY, token);
       } else {
         window.localStorage.removeItem(TOKEN_STORAGE_KEY);
+        window.localStorage.removeItem(LEGACY_TOKEN_STORAGE_KEY);
       }
     }
   } catch {
@@ -68,9 +105,16 @@ async function request<T>(url: string, init?: RequestInit): Promise<T> {
   }
   headers.set("x-disable-cookies", "1");
 
+  const serverUrl = getStoredServerUrl();
+  const targetUrl = serverUrl && url.startsWith("/")
+    ? `${serverUrl}${url}`
+    : url;
+  const isCrossOrigin = Boolean(serverUrl && typeof window !== "undefined" && !targetUrl.startsWith(window.location.origin));
+  const credentialsMode: RequestCredentials = isCrossOrigin ? "omit" : "same-origin";
+
   let res: Response;
   try {
-    res = await fetch(url, { credentials: "same-origin", ...init, headers });
+    res = await fetch(targetUrl, { credentials: credentialsMode, ...init, headers });
   } catch {
     // backend not reachable (should not happen in the packaged app)
     throw new AppError("INTERNAL", "boot.failed");

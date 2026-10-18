@@ -1776,6 +1776,672 @@ CREATE INDEX IF NOT EXISTS idx_backups_created ON backups_log(created_at);`,
         }
       },
     },
+    {
+      version: 50,
+      statements: [],
+      callback: (db: Db) => {
+        const tables = new Set(
+          db.all<{ name: string }>("SELECT name FROM sqlite_master WHERE type = 'table'").map((t) => t.name),
+        );
+        if (!tables.has("expense_categories")) return;
+        db.run(
+          "INSERT OR IGNORE INTO expense_categories (id, name_ar, is_active, created_at) VALUES ('cat-owner-withdrawal', 'مسحوبات المالك / الإدارة', 1, '2026-10-08T00:00:00Z')",
+        );
+      },
+    },
+    {
+      version: 51,
+      statements: [
+        `CREATE TABLE IF NOT EXISTS payment_methods (
+          code TEXT PRIMARY KEY,
+          label_ar TEXT NOT NULL,
+          is_active INTEGER NOT NULL DEFAULT 1 CHECK (is_active IN (0, 1)),
+          sort_order INTEGER NOT NULL DEFAULT 0,
+          created_at TEXT NOT NULL
+        )`,
+        "INSERT OR IGNORE INTO payment_methods (code, label_ar, sort_order, created_at) VALUES ('instapay', 'انستاباي', 5, '2026-10-08 00:00:00'), ('wallet', 'محفظة إلكترونية', 6, '2026-10-08 00:00:00')",
+        `CREATE TABLE IF NOT EXISTS quick_sessions (
+          id TEXT PRIMARY KEY,
+          client_type TEXT NOT NULL CHECK (client_type IN ('member', 'guest')),
+          member_id TEXT REFERENCES members(id),
+          guest_name TEXT,
+          guest_phone TEXT,
+          guest_gender TEXT CHECK (guest_gender IN ('male', 'female')),
+          session_name TEXT NOT NULL,
+          price_minor INTEGER NOT NULL CHECK (price_minor >= 0),
+          paid_amount_minor INTEGER NOT NULL CHECK (paid_amount_minor >= 0),
+          method_code TEXT NOT NULL REFERENCES payment_methods(code),
+          trainer_id TEXT REFERENCES trainers(id),
+          session_date TEXT NOT NULL,
+          session_time TEXT NOT NULL,
+          attendance_recorded INTEGER NOT NULL DEFAULT 1 CHECK (attendance_recorded IN (0, 1)),
+          notes TEXT,
+          created_by TEXT NOT NULL REFERENCES users(id),
+          created_at TEXT NOT NULL
+        )`,
+        "CREATE INDEX IF NOT EXISTS idx_quick_sessions_date ON quick_sessions(session_date)",
+        "CREATE INDEX IF NOT EXISTS idx_quick_sessions_member ON quick_sessions(member_id)",
+        `CREATE TABLE IF NOT EXISTS suppliers (
+          id TEXT PRIMARY KEY,
+          name TEXT NOT NULL,
+          phone TEXT,
+          address TEXT,
+          company_name TEXT,
+          notes TEXT,
+          is_active INTEGER NOT NULL DEFAULT 1 CHECK (is_active IN (0, 1)),
+          created_at TEXT NOT NULL,
+          updated_at TEXT NOT NULL
+        )`,
+        `CREATE TABLE IF NOT EXISTS purchase_invoices (
+          id TEXT PRIMARY KEY,
+          invoice_no TEXT NOT NULL UNIQUE,
+          supplier_id TEXT NOT NULL REFERENCES suppliers(id),
+          invoice_date TEXT NOT NULL,
+          total_amount_minor INTEGER NOT NULL CHECK (total_amount_minor >= 0),
+          paid_amount_minor INTEGER NOT NULL DEFAULT 0 CHECK (paid_amount_minor >= 0),
+          remaining_amount_minor INTEGER NOT NULL DEFAULT 0 CHECK (remaining_amount_minor >= 0),
+          method_code TEXT REFERENCES payment_methods(code),
+          status TEXT NOT NULL CHECK (status IN ('paid', 'partial', 'unpaid')),
+          notes TEXT,
+          created_by TEXT NOT NULL REFERENCES users(id),
+          created_at TEXT NOT NULL
+        )`,
+        "CREATE INDEX IF NOT EXISTS idx_purchase_invoices_supplier ON purchase_invoices(supplier_id)",
+        "CREATE INDEX IF NOT EXISTS idx_purchase_invoices_date ON purchase_invoices(invoice_date)",
+        `CREATE TABLE IF NOT EXISTS purchase_invoice_items (
+          id TEXT PRIMARY KEY,
+          invoice_id TEXT NOT NULL REFERENCES purchase_invoices(id) ON DELETE CASCADE,
+          product_id TEXT NOT NULL REFERENCES products(id),
+          quantity INTEGER NOT NULL CHECK (quantity > 0),
+          unit_cost_minor INTEGER NOT NULL CHECK (unit_cost_minor >= 0),
+          total_cost_minor INTEGER NOT NULL CHECK (total_cost_minor >= 0)
+        )`,
+        "CREATE INDEX IF NOT EXISTS idx_purchase_items_invoice ON purchase_invoice_items(invoice_id)",
+        `CREATE TABLE IF NOT EXISTS private_training_packages (
+          id TEXT PRIMARY KEY,
+          name TEXT NOT NULL,
+          sessions_count INTEGER NOT NULL CHECK (sessions_count > 0),
+          price_minor INTEGER NOT NULL CHECK (price_minor >= 0),
+          duration_days INTEGER NOT NULL CHECK (duration_days > 0),
+          coach_commission_percent REAL DEFAULT 0,
+          is_active INTEGER NOT NULL DEFAULT 1 CHECK (is_active IN (0, 1)),
+          created_at TEXT NOT NULL
+        )`,
+        `CREATE TABLE IF NOT EXISTS private_trainings (
+          id TEXT PRIMARY KEY,
+          member_id TEXT NOT NULL REFERENCES members(id),
+          trainer_id TEXT NOT NULL REFERENCES trainers(id),
+          package_id TEXT REFERENCES private_training_packages(id),
+          total_sessions INTEGER NOT NULL CHECK (total_sessions > 0),
+          completed_sessions INTEGER NOT NULL DEFAULT 0 CHECK (completed_sessions >= 0),
+          price_minor INTEGER NOT NULL CHECK (price_minor >= 0),
+          paid_amount_minor INTEGER NOT NULL DEFAULT 0 CHECK (paid_amount_minor >= 0),
+          remaining_amount_minor INTEGER NOT NULL DEFAULT 0 CHECK (remaining_amount_minor >= 0),
+          method_code TEXT REFERENCES payment_methods(code),
+          start_date TEXT NOT NULL,
+          end_date TEXT NOT NULL,
+          status TEXT NOT NULL DEFAULT 'active' CHECK (status IN ('active', 'completed', 'cancelled', 'expired')),
+          notes TEXT,
+          created_by TEXT NOT NULL REFERENCES users(id),
+          created_at TEXT NOT NULL,
+          updated_at TEXT NOT NULL
+        )`,
+        "CREATE INDEX IF NOT EXISTS idx_pt_member ON private_trainings(member_id)",
+        "CREATE INDEX IF NOT EXISTS idx_pt_trainer ON private_trainings(trainer_id)",
+        `CREATE TABLE IF NOT EXISTS private_training_sessions (
+          id TEXT PRIMARY KEY,
+          private_training_id TEXT NOT NULL REFERENCES private_trainings(id) ON DELETE CASCADE,
+          trainer_id TEXT NOT NULL REFERENCES trainers(id),
+          session_date TEXT NOT NULL,
+          session_time TEXT NOT NULL,
+          notes TEXT,
+          created_by TEXT NOT NULL REFERENCES users(id),
+          created_at TEXT NOT NULL
+        )`,
+        "CREATE INDEX IF NOT EXISTS idx_pt_sessions_pt ON private_training_sessions(private_training_id)",
+        `CREATE TABLE IF NOT EXISTS gym_announcements (
+          id TEXT PRIMARY KEY,
+          title TEXT NOT NULL,
+          content TEXT NOT NULL,
+          level TEXT NOT NULL DEFAULT 'info' CHECK (level IN ('info', 'success', 'warning', 'danger')),
+          is_active INTEGER NOT NULL DEFAULT 1 CHECK (is_active IN (0, 1)),
+          created_by TEXT REFERENCES users(id),
+          created_at TEXT NOT NULL
+        )`,
+      ],
+      callback: (db: Db) => {
+        const tableExists = (table: string) =>
+          db.count("SELECT COUNT(*) FROM sqlite_master WHERE type = 'table' AND name = ?", [table]) > 0;
+        const columnNames = (table: string) =>
+          new Set(db.all<{ name: string }>(`PRAGMA table_info(${table})`).map((c) => c.name));
+
+        if (tableExists("member_subscriptions")) {
+          const cols = columnNames("member_subscriptions");
+          if (!cols.has("sales_user_id")) {
+            db.exec("ALTER TABLE member_subscriptions ADD COLUMN sales_user_id TEXT REFERENCES users(id)");
+          }
+        }
+        if (tableExists("membership_plans")) {
+          const cols = columnNames("membership_plans");
+          if (!cols.has("allowed_days")) {
+            db.exec("ALTER TABLE membership_plans ADD COLUMN allowed_days TEXT");
+          }
+        }
+
+        for (const p of PERMS) {
+          db.run("INSERT OR IGNORE INTO permissions (code) VALUES (?)", [p]);
+        }
+        for (const role of ROLES) {
+          for (const p of ROLE_GRANTS[role]) {
+            db.run("INSERT OR IGNORE INTO role_permissions (role_id, permission_code) VALUES (?, ?)", [role, p]);
+          }
+        }
+      },
+    },
+    {
+      version: 52,
+      statements: [
+        `CREATE TABLE IF NOT EXISTS championship_categories (
+          id TEXT PRIMARY KEY,
+          name TEXT NOT NULL UNIQUE,
+          description TEXT,
+          color TEXT,
+          created_at TEXT NOT NULL
+        )`,
+        `CREATE TABLE IF NOT EXISTS championships (
+          id TEXT PRIMARY KEY,
+          category_id TEXT REFERENCES championship_categories(id) ON DELETE SET NULL,
+          title TEXT NOT NULL,
+          date TEXT,
+          location TEXT,
+          description TEXT,
+          created_at TEXT NOT NULL
+        )`,
+        "CREATE INDEX IF NOT EXISTS idx_championships_cat ON championships(category_id)",
+        `CREATE TABLE IF NOT EXISTS championship_achievements (
+          id TEXT PRIMARY KEY,
+          championship_id TEXT NOT NULL REFERENCES championships(id) ON DELETE CASCADE,
+          member_id TEXT NOT NULL REFERENCES members(id) ON DELETE CASCADE,
+          rank_title TEXT NOT NULL,
+          medal TEXT,
+          notes TEXT,
+          created_at TEXT NOT NULL
+        )`,
+        "CREATE INDEX IF NOT EXISTS idx_champ_achieve_champ ON championship_achievements(championship_id)",
+        "CREATE INDEX IF NOT EXISTS idx_champ_achieve_member ON championship_achievements(member_id)",
+        `CREATE TABLE IF NOT EXISTS trainer_attendance (
+          id TEXT PRIMARY KEY,
+          trainer_id TEXT NOT NULL REFERENCES trainers(id) ON DELETE CASCADE,
+          date TEXT NOT NULL,
+          check_in_time TEXT NOT NULL,
+          check_out_time TEXT,
+          status TEXT NOT NULL DEFAULT 'present' CHECK (status IN ('present', 'late', 'absent', 'excused')),
+          notes TEXT,
+          created_at TEXT NOT NULL
+        )`,
+        "CREATE INDEX IF NOT EXISTS idx_trainer_att_date ON trainer_attendance(date)",
+        "CREATE INDEX IF NOT EXISTS idx_trainer_att_trainer ON trainer_attendance(trainer_id)",
+        `CREATE TABLE IF NOT EXISTS member_direct_messages (
+          id TEXT PRIMARY KEY,
+          member_id TEXT NOT NULL REFERENCES members(id) ON DELETE CASCADE,
+          sender_type TEXT NOT NULL CHECK (sender_type IN ('gym', 'member')),
+          sender_user_id TEXT REFERENCES users(id),
+          message TEXT NOT NULL,
+          channel TEXT NOT NULL DEFAULT 'whatsapp' CHECK (channel IN ('whatsapp', 'internal')),
+          status TEXT NOT NULL DEFAULT 'sent' CHECK (status IN ('sent', 'delivered', 'read', 'failed')),
+          created_at TEXT NOT NULL
+        )`,
+        "CREATE INDEX IF NOT EXISTS idx_member_direct_msgs_member ON member_direct_messages(member_id)",
+        "CREATE INDEX IF NOT EXISTS idx_member_direct_msgs_created ON member_direct_messages(created_at)",
+      ],
+      callback: (db: Db) => {
+        const catCount = db.count("SELECT COUNT(*) FROM championship_categories");
+        if (catCount === 0) {
+          const defaultCats = [
+            { id: "cat-bb", name: "كمال الأجسام", description: "Bodybuilding", color: "#f59e0b" },
+            { id: "cat-cp", name: "كلاسيك فيزيك", description: "Classic Physique", color: "#3b82f6" },
+            { id: "cat-mp", name: "منس فيزيك", description: "Men's Physique", color: "#10b981" },
+            { id: "cat-bk", name: "بيكيني", description: "Bikini Fitness", color: "#ec4899" },
+            { id: "cat-pl", name: "باور ليفتنج", description: "Powerlifting", color: "#8b5cf6" },
+          ];
+          for (const c of defaultCats) {
+            db.run(
+              "INSERT OR IGNORE INTO championship_categories (id, name, description, color, created_at) VALUES (?, ?, ?, ?, ?)",
+              [c.id, c.name, c.description, c.color, nowStamp()]
+            );
+          }
+        }
+
+        for (const p of PERMS) {
+          db.run("INSERT OR IGNORE INTO permissions (code) VALUES (?)", [p]);
+        }
+        for (const role of ROLES) {
+          for (const p of ROLE_GRANTS[role]) {
+            db.run("INSERT OR IGNORE INTO role_permissions (role_id, permission_code) VALUES (?, ?)", [role, p]);
+          }
+        }
+      },
+    },
+    {
+      version: 53,
+      statements: [],
+      callback: (db: Db) => {
+        const hasTrainers = db.count("SELECT COUNT(*) FROM sqlite_master WHERE type = 'table' AND name = 'trainers'") > 0;
+        if (!hasTrainers) return;
+        const cols = new Set(
+          db.all<{ name: string }>("PRAGMA table_info(trainers)").map((c) => c.name),
+        );
+        if (!cols.has("employee_id")) {
+          db.exec("ALTER TABLE trainers ADD COLUMN employee_id TEXT REFERENCES employees(id) ON DELETE SET NULL");
+          db.exec("CREATE INDEX IF NOT EXISTS idx_trainers_employee ON trainers(employee_id)");
+        }
+      },
+    },
+    {
+      version: 54,
+      statements: [],
+      callback: (db: Db) => {
+        const hasMembers = db.count("SELECT COUNT(*) FROM sqlite_master WHERE type = 'table' AND name = 'members'") > 0;
+        if (!hasMembers) return;
+        const cols = new Set(
+          db.all<{ name: string }>("PRAGMA table_info(members)").map((c) => c.name),
+        );
+        if (!cols.has("home_branch_only")) {
+          db.exec("ALTER TABLE members ADD COLUMN home_branch_only INTEGER NOT NULL DEFAULT 0 CHECK (home_branch_only IN (0, 1))");
+        }
+      },
+    },
+    {
+      version: 55,
+      statements: [],
+      callback: (db: Db) => {
+        const hasUsers = db.count("SELECT COUNT(*) FROM sqlite_master WHERE type = 'table' AND name = 'users'") > 0;
+        if (!hasUsers) return;
+        const cols = new Set(
+          db.all<{ name: string }>("PRAGMA table_info(users)").map((c) => c.name),
+        );
+        if (!cols.has("user_code")) {
+          db.exec("ALTER TABLE users ADD COLUMN user_code TEXT");
+          db.exec("CREATE UNIQUE INDEX IF NOT EXISTS idx_users_user_code ON users(user_code)");
+        }
+        if (db.count("SELECT COUNT(*) FROM sqlite_master WHERE type = 'table' AND name = 'counters'") > 0) {
+          db.run("INSERT INTO counters (name, value) VALUES ('user_code', 0) ON CONFLICT(name) DO NOTHING");
+        }
+        const orderBy = cols.has("created_at") ? "ORDER BY created_at ASC, rowid ASC" : "ORDER BY rowid ASC";
+        const rows = db.all<{ id: string; user_code: string | null }>(
+          `SELECT id, user_code FROM users ${orderBy}`,
+        );
+        let seq = 0;
+        for (const row of rows) {
+          if (!row.user_code) {
+            seq++;
+            const code = `U${seq}`;
+            db.run("UPDATE users SET user_code = ? WHERE id = ?", [code, row.id]);
+          } else {
+            const m = row.user_code.match(/^U(\d+)$/i);
+            if (m) {
+              const num = parseInt(m[1], 10);
+              if (num > seq) seq = num;
+            }
+          }
+        }
+        if (seq > 0) {
+          db.run(
+            "INSERT INTO counters (name, value) VALUES ('user_code', ?) ON CONFLICT(name) DO UPDATE SET value = MAX(value, ?)",
+            [seq, seq],
+          );
+        }
+      },
+    },
+    {
+      version: 56,
+      statements: [],
+      callback: (db: Db) => {
+        const hasClasses = db.count("SELECT COUNT(*) FROM sqlite_master WHERE type = 'table' AND name = 'classes'") > 0;
+        if (hasClasses) {
+          const classCols = new Set(db.all<{ name: string }>("PRAGMA table_info(classes)").map((c) => c.name));
+          if (!classCols.has("plan_id")) {
+            db.exec("ALTER TABLE classes ADD COLUMN plan_id TEXT REFERENCES membership_plans(id)");
+            db.exec("CREATE INDEX IF NOT EXISTS idx_classes_plan_id ON classes(plan_id)");
+          }
+          if (!classCols.has("default_trainer_fee_minor")) {
+            db.exec("ALTER TABLE classes ADD COLUMN default_trainer_fee_minor INTEGER NOT NULL DEFAULT 0");
+          }
+        }
+
+        const hasSessions = db.count("SELECT COUNT(*) FROM sqlite_master WHERE type = 'table' AND name = 'class_sessions'") > 0;
+        if (hasSessions) {
+          const sessionCols = new Set(db.all<{ name: string }>("PRAGMA table_info(class_sessions)").map((c) => c.name));
+          if (!sessionCols.has("trainer_fee_minor")) {
+            db.exec("ALTER TABLE class_sessions ADD COLUMN trainer_fee_minor INTEGER NOT NULL DEFAULT 0");
+          }
+          if (!sessionCols.has("paid_to_trainer")) {
+            db.exec("ALTER TABLE class_sessions ADD COLUMN paid_to_trainer INTEGER NOT NULL DEFAULT 0 CHECK (paid_to_trainer IN (0, 1))");
+          }
+          if (!sessionCols.has("expense_id")) {
+            db.exec("ALTER TABLE class_sessions ADD COLUMN expense_id TEXT REFERENCES expenses(id)");
+            db.exec("CREATE INDEX IF NOT EXISTS idx_class_sessions_expense ON class_sessions(expense_id)");
+          }
+          if (!sessionCols.has("paid_at")) {
+            db.exec("ALTER TABLE class_sessions ADD COLUMN paid_at TEXT");
+          }
+        }
+
+        const hasTrainers = db.count("SELECT COUNT(*) FROM sqlite_master WHERE type = 'table' AND name = 'trainers'") > 0;
+        if (hasTrainers) {
+          const trainerCols = new Set(db.all<{ name: string }>("PRAGMA table_info(trainers)").map((c) => c.name));
+          if (!trainerCols.has("default_session_fee_minor")) {
+            db.exec("ALTER TABLE trainers ADD COLUMN default_session_fee_minor INTEGER NOT NULL DEFAULT 0");
+          }
+        }
+      },
+    },
+    {
+      version: 57,
+      statements: [
+        `CREATE TABLE IF NOT EXISTS member_whatsapp_identities (
+          id TEXT PRIMARY KEY,
+          member_id TEXT REFERENCES members(id) ON DELETE CASCADE,
+          phone TEXT NOT NULL,
+          lid TEXT UNIQUE,
+          remote_jid TEXT,
+          push_name TEXT,
+          created_at TEXT NOT NULL,
+          updated_at TEXT NOT NULL
+        )`,
+        "CREATE INDEX IF NOT EXISTS idx_member_wa_phone ON member_whatsapp_identities(phone)",
+        "CREATE UNIQUE INDEX IF NOT EXISTS idx_member_wa_lid ON member_whatsapp_identities(lid) WHERE lid IS NOT NULL",
+        "CREATE INDEX IF NOT EXISTS idx_member_wa_member ON member_whatsapp_identities(member_id)",
+      ],
+      callback: (db: Db) => {
+        const hasDirectMsgs = db.count("SELECT COUNT(*) FROM sqlite_master WHERE type = 'table' AND name = 'member_direct_messages'") > 0;
+        if (hasDirectMsgs) {
+          const cols = new Set(db.all<{ name: string }>("PRAGMA table_info(member_direct_messages)").map((c) => c.name));
+          if (!cols.has("error_reason")) {
+            db.exec("ALTER TABLE member_direct_messages ADD COLUMN error_reason TEXT");
+          }
+          if (!cols.has("message_type")) {
+            db.exec("ALTER TABLE member_direct_messages ADD COLUMN message_type TEXT DEFAULT 'direct'");
+          }
+          if (!cols.has("retry_count")) {
+            db.exec("ALTER TABLE member_direct_messages ADD COLUMN retry_count INTEGER NOT NULL DEFAULT 0");
+          }
+        }
+
+        const memberCols = db.all<{ name: string }>("PRAGMA table_info(members)");
+        if (memberCols.some((c) => c.name === "phone")) {
+          const members = db.all<{ id: string; phone: string; full_name: string }>(
+            "SELECT id, phone, full_name FROM members WHERE phone IS NOT NULL AND phone != '' AND deleted_at IS NULL",
+          );
+          const now = nowStamp();
+          for (const m of members) {
+            const clean = m.phone.replace(/[^\d]/g, "");
+            if (!clean) continue;
+            db.run(
+              `INSERT OR IGNORE INTO member_whatsapp_identities (id, member_id, phone, push_name, created_at, updated_at)
+               VALUES (?, ?, ?, ?, ?, ?)`,
+              [crypto.randomUUID(), m.id, clean, m.full_name, now, now],
+            );
+          }
+        }
+      },
+    },
+    {
+      version: 58,
+      statements: [],
+      callback: (db: Db) => {
+        const tableExists = (table: string) =>
+          Boolean(db.scalar("SELECT 1 FROM sqlite_master WHERE type='table' AND name = ?", [table]));
+        if (tableExists("membership_plans")) {
+          const cols = new Set(
+            db.all<{ name: string }>("PRAGMA table_info(membership_plans)").map((c) => c.name),
+          );
+          if (!cols.has("category")) {
+            db.exec(
+              "ALTER TABLE membership_plans ADD COLUMN category TEXT NOT NULL DEFAULT 'gym' CHECK (category IN ('gym', 'academy'))",
+            );
+          }
+          if (tableExists("classes")) {
+            db.exec(
+              "UPDATE membership_plans SET category = 'academy' WHERE id IN (SELECT plan_id FROM classes WHERE plan_id IS NOT NULL)",
+            );
+          }
+          db.exec("CREATE INDEX IF NOT EXISTS idx_membership_plans_category ON membership_plans(category)");
+        }
+      },
+    },
+    {
+      version: 59,
+      statements: [],
+      callback: (db: Db) => {
+        const tableExists = (table: string) =>
+          Boolean(db.scalar("SELECT 1 FROM sqlite_master WHERE type='table' AND name = ?", [table]));
+
+        // 1. Add schedule_json to classes for detailed days & times
+        if (tableExists("classes")) {
+          const cols = new Set(
+            db.all<{ name: string }>("PRAGMA table_info(classes)").map((c) => c.name),
+          );
+          if (!cols.has("schedule_json")) {
+            db.exec("ALTER TABLE classes ADD COLUMN schedule_json TEXT DEFAULT NULL");
+          }
+        }
+
+        // 2. Ensure trainer payouts expense category exists
+        if (tableExists("expense_categories")) {
+          db.run(
+            "INSERT OR IGNORE INTO expense_categories (id, name_ar, is_active, created_at) VALUES ('cat-trainers', 'مستحقات وأتعاب المدربين', 1, ?)",
+            [nowStamp()],
+          );
+        }
+
+        // 3. Create trainer_payouts table
+        db.exec(`
+          CREATE TABLE IF NOT EXISTS trainer_payouts (
+            id TEXT PRIMARY KEY,
+            trainer_id TEXT NOT NULL REFERENCES trainers(id),
+            amount_minor INTEGER NOT NULL CHECK (amount_minor > 0),
+            payout_date TEXT NOT NULL,
+            payout_type TEXT NOT NULL DEFAULT 'academy_fee' CHECK (payout_type IN ('monthly_salary', 'academy_fee', 'pt_commission', 'bonus', 'advance', 'other')),
+            method_code TEXT NOT NULL DEFAULT 'cash' REFERENCES payment_methods(code),
+            notes TEXT,
+            expense_id TEXT REFERENCES expenses(id),
+            created_by TEXT REFERENCES users(id),
+            created_at TEXT NOT NULL,
+            updated_at TEXT NOT NULL,
+            branch_id TEXT DEFAULT 'main'
+          );
+          CREATE INDEX IF NOT EXISTS idx_trainer_payouts_trainer ON trainer_payouts(trainer_id);
+          CREATE INDEX IF NOT EXISTS idx_trainer_payouts_date ON trainer_payouts(payout_date);
+        `);
+      },
+    },
+    {
+      version: 60,
+      statements: [],
+      callback: (db) => {
+        const tableExists = (table: string) =>
+          Boolean(db.scalar("SELECT 1 FROM sqlite_master WHERE type='table' AND name = ?", [table]));
+
+        if (tableExists("quick_sessions")) {
+          const cols = new Set(
+            db.all<{ name: string }>("PRAGMA table_info(quick_sessions)").map((c) => c.name),
+          );
+          if (!cols.has("lead_id")) {
+            db.exec("ALTER TABLE quick_sessions ADD COLUMN lead_id TEXT REFERENCES leads(id) DEFAULT NULL");
+            db.exec("CREATE INDEX IF NOT EXISTS idx_quick_sessions_lead ON quick_sessions(lead_id)");
+          }
+          if (!cols.has("invitation_member_id")) {
+            db.exec("ALTER TABLE quick_sessions ADD COLUMN invitation_member_id TEXT REFERENCES members(id) DEFAULT NULL");
+            db.exec("CREATE INDEX IF NOT EXISTS idx_quick_sessions_inv_member ON quick_sessions(invitation_member_id)");
+          }
+        }
+      },
+    },
+    {
+      version: 61,
+      statements: [],
+      callback: (db) => {
+        const tableExists = (table: string) =>
+          Boolean(db.scalar("SELECT 1 FROM sqlite_master WHERE type='table' AND name = ?", [table]));
+
+        if (tableExists("trainers")) {
+          const cols = new Set(
+            db.all<{ name: string }>("PRAGMA table_info(trainers)").map((c) => c.name),
+          );
+          if (!cols.has("working_schedule")) {
+            db.exec("ALTER TABLE trainers ADD COLUMN working_schedule TEXT DEFAULT NULL");
+          }
+        }
+      },
+    },
+    {
+      version: 62,
+      statements: [],
+      callback: (db) => {
+        const tableExists = (table: string) =>
+          Boolean(db.scalar("SELECT 1 FROM sqlite_master WHERE type='table' AND name = ?", [table]));
+
+        if (tableExists("membership_plans") && tableExists("classes")) {
+          // 1. Ensure all plans linked to classes have category = 'academy'
+          db.exec(
+            "UPDATE membership_plans SET category = 'academy' WHERE id IN (SELECT plan_id FROM classes WHERE plan_id IS NOT NULL)",
+          );
+
+          // 2. Fix inflated prices for plans linked to classes created when form multiplied by 100 (e.g. 500 -> 50000)
+          db.exec(`
+            UPDATE membership_plans
+            SET price = ROUND(price / 100, 2)
+            WHERE id IN (SELECT plan_id FROM classes WHERE plan_id IS NOT NULL)
+              AND price >= 10000
+              AND (CAST(price AS INTEGER) % 100) = 0
+          `);
+
+          // 3. Fix corresponding subscriptions created with inflated plan price
+          if (tableExists("member_subscriptions")) {
+            db.exec(`
+              UPDATE member_subscriptions
+              SET price = ROUND(price / 100, 2)
+              WHERE plan_id IN (SELECT plan_id FROM classes WHERE plan_id IS NOT NULL)
+                AND price >= 10000
+                AND (CAST(price AS INTEGER) % 100) = 0
+            `);
+          }
+
+          // 4. Fix corresponding payments and ledger entries if inflated
+          if (tableExists("payments") && tableExists("member_subscriptions")) {
+            db.exec(`
+              UPDATE payments
+              SET base_amount_minor = ROUND(base_amount_minor / 100),
+                  paid_amount_minor = CASE
+                    WHEN paid_amount_minor >= 1000000 AND (paid_amount_minor % 100) = 0
+                    THEN ROUND(paid_amount_minor / 100)
+                    ELSE paid_amount_minor
+                  END
+              WHERE subscription_id IN (
+                SELECT ms.id FROM member_subscriptions ms
+                WHERE ms.plan_id IN (SELECT plan_id FROM classes WHERE plan_id IS NOT NULL)
+              )
+              AND base_amount_minor >= 1000000
+              AND (base_amount_minor % 100) = 0
+            `);
+
+            if (tableExists("financial_ledger")) {
+              db.exec(`
+                UPDATE financial_ledger
+                SET amount_minor = ROUND(amount_minor / 100)
+                WHERE ref_table = 'payments'
+                  AND ref_id IN (
+                    SELECT p.id FROM payments p
+                    WHERE p.subscription_id IN (
+                      SELECT ms.id FROM member_subscriptions ms
+                      WHERE ms.plan_id IN (SELECT plan_id FROM classes WHERE plan_id IS NOT NULL)
+                    )
+                  )
+                  AND amount_minor >= 1000000
+                  AND (amount_minor % 100) = 0
+              `);
+            }
+          }
+        }
+      },
+    },
+    {
+      version: 63,
+      statements: [
+        `CREATE TABLE IF NOT EXISTS member_belt_gradings (
+          id TEXT PRIMARY KEY,
+          member_id TEXT NOT NULL REFERENCES members(id) ON DELETE CASCADE,
+          discipline TEXT NOT NULL,
+          belt_name TEXT NOT NULL,
+          belt_color TEXT DEFAULT '#10B981',
+          grading_date TEXT NOT NULL,
+          examiner_name TEXT,
+          score_or_grade TEXT,
+          certificate_no TEXT,
+          notes TEXT,
+          branch_id TEXT DEFAULT 'main',
+          created_at TEXT NOT NULL,
+          created_by TEXT NOT NULL
+        )`,
+        `CREATE INDEX IF NOT EXISTS idx_belt_gradings_member ON member_belt_gradings(member_id)`,
+        `CREATE INDEX IF NOT EXISTS idx_belt_gradings_date ON member_belt_gradings(grading_date)`,
+        `CREATE INDEX IF NOT EXISTS idx_belt_gradings_discipline ON member_belt_gradings(discipline)`,
+      ],
+    },
+    {
+      version: 64,
+      statements: [
+        `CREATE TABLE IF NOT EXISTS whatsapp_bot_handovers (
+          id TEXT PRIMARY KEY,
+          phone TEXT NOT NULL,
+          member_id TEXT REFERENCES members(id) ON DELETE SET NULL,
+          customer_name TEXT NOT NULL,
+          last_message TEXT,
+          status TEXT NOT NULL DEFAULT 'pending' CHECK (status IN ('pending', 'resolved', 'ignored')),
+          created_at TEXT NOT NULL,
+          resolved_at TEXT,
+          resolved_by TEXT REFERENCES users(id)
+        )`,
+        `CREATE INDEX IF NOT EXISTS idx_bot_handovers_status ON whatsapp_bot_handovers(status)`,
+        `CREATE INDEX IF NOT EXISTS idx_bot_handovers_phone ON whatsapp_bot_handovers(phone)`,
+        `CREATE INDEX IF NOT EXISTS idx_bot_handovers_created ON whatsapp_bot_handovers(created_at)`,
+      ],
+    },
+    {
+      version: 65,
+      statements: [],
+      callback: (db: Db) => {
+        const tableExists = (table: string) =>
+          db.count("SELECT COUNT(*) FROM sqlite_master WHERE type = 'table' AND name = ?", [table]) > 0;
+        if (tableExists("cash_sessions")) {
+          const cols = new Set(db.all<{ name: string }>("PRAGMA table_info(cash_sessions)").map((c) => c.name));
+          if (!cols.has("previous_session_id")) {
+            db.exec("ALTER TABLE cash_sessions ADD COLUMN previous_session_id TEXT REFERENCES cash_sessions(id)");
+          }
+          if (!cols.has("previous_closing_minor")) {
+            db.exec("ALTER TABLE cash_sessions ADD COLUMN previous_closing_minor INTEGER");
+          }
+          if (!cols.has("inter_shift_gap_minor")) {
+            db.exec("ALTER TABLE cash_sessions ADD COLUMN inter_shift_gap_minor INTEGER DEFAULT 0");
+          }
+          if (!cols.has("gap_reason")) {
+            db.exec("ALTER TABLE cash_sessions ADD COLUMN gap_reason TEXT");
+          }
+          if (!cols.has("gap_expense_id")) {
+            db.exec("ALTER TABLE cash_sessions ADD COLUMN gap_expense_id TEXT REFERENCES expenses(id)");
+          }
+          db.exec("CREATE INDEX IF NOT EXISTS idx_cash_sessions_prev_session ON cash_sessions(previous_session_id)");
+          db.exec("CREATE INDEX IF NOT EXISTS idx_cash_sessions_gap_expense ON cash_sessions(gap_expense_id)");
+        }
+
+        if (tableExists("expense_categories")) {
+          db.run(
+            "INSERT OR IGNORE INTO expense_categories (id, name_ar, is_active, created_at) VALUES ('cat-cash-shortage', 'عجز ونواقص الخزينة', 1, datetime('now'))",
+          );
+        }
+      },
+    },
   ];
 }
 

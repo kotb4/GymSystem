@@ -8,6 +8,8 @@ type PdfDoc = InstanceType<typeof PDFDocumentType>;
 
 export interface ReceiptData {
   gymName: string;
+  gymPhone?: string | null;
+  gymAddress?: string | null;
   receiptNo: string;
   issuedAt: string;
   memberCode: string;
@@ -28,11 +30,19 @@ export interface ReceiptData {
   branchName: string | null;
   /** Title shown in header banner. Defaults to "فاتورة دفع". */
   title?: string;
+  logoBuffer?: Buffer | null;
+  logoWidth?: number;
+  showQr?: boolean;
+  showTax?: boolean;
+  taxPercent?: number;
+  taxAmountMinor?: number;
+  footerText?: string | null;
+  terms?: string[];
 }
 
 const PAGE_MARGIN = 36;
-const COLOR_PRIMARY = "#0f766e"; // Emerald 700
-const COLOR_PRIMARY_DARK = "#115e59"; // Emerald 800
+const COLOR_PRIMARY = "#0055FF"; // Electric Cobalt Blue
+const COLOR_PRIMARY_DARK = "#080B11"; // Obsidian Black
 const COLOR_LABEL = "#475569"; // Slate 600
 const COLOR_VALUE = "#0f172a"; // Slate 900
 const COLOR_LIGHT_BORDER = "#cbd5e1"; // Slate 300
@@ -50,22 +60,24 @@ const STATUS_LABELS: Record<string, string> = {
 
 /** Render the modern receipt and return the raw PDF bytes. */
 export async function renderReceiptPdf(data: ReceiptData): Promise<Buffer> {
-  // Generate verification QR code buffer
-  const qrPayload = JSON.stringify({
-    receipt: data.receiptNo,
-    member: data.memberCode,
-    paid: (data.paidAmountMinor / 100).toFixed(2),
-    date: data.issuedAt,
-  });
+  // Generate verification QR code buffer if enabled (default true)
   let qrBuffer: Buffer | null = null;
-  try {
-    qrBuffer = await QRCode.toBuffer(qrPayload, {
-      width: 140,
-      margin: 1,
-      color: { dark: "#0f172a", light: "#ffffff" },
+  if (data.showQr !== false) {
+    const qrPayload = JSON.stringify({
+      receipt: data.receiptNo,
+      member: data.memberCode,
+      paid: (data.paidAmountMinor / 100).toFixed(2),
+      date: data.issuedAt,
     });
-  } catch {
-    qrBuffer = null;
+    try {
+      qrBuffer = await QRCode.toBuffer(qrPayload, {
+        width: 140,
+        margin: 1,
+        color: { dark: "#0f172a", light: "#ffffff" },
+      });
+    } catch {
+      qrBuffer = null;
+    }
   }
 
   return new Promise((resolve, reject) => {
@@ -76,7 +88,7 @@ export async function renderReceiptPdf(data: ReceiptData): Promise<Buffer> {
         Title: `Receipt ${data.receiptNo}`,
         Author: data.gymName,
         Subject: "Payment receipt",
-        Creator: "GymSystem",
+        Creator: "GymGate",
       },
     });
     const chunks: Buffer[] = [];
@@ -126,26 +138,44 @@ function paint(doc: PdfDoc, data: ReceiptData, qrBuffer: Buffer | null): void {
   const gymTitle = data.gymName;
   const subTitle = data.title ?? "فاتورة دفع رسمية";
 
-  // Right side of Header Banner (Gym & Invoice Type)
+  // Right side of Header Banner (Gym & Invoice Type & Address/Phone)
   const headerRightW = width * 0.6 - 20;
-  drawText(doc, gymTitle, left + width - headerRightW - 20, PAGE_MARGIN + 14, headerRightW, {
-    size: 20,
+  drawText(doc, gymTitle, left + width - headerRightW - 20, PAGE_MARGIN + 12, headerRightW, {
+    size: 19,
     align: "right",
     color: "#ffffff",
     weight: "bold",
   });
 
-  drawText(doc, subTitle, left + width - headerRightW - 20, PAGE_MARGIN + 44, headerRightW, {
-    size: 11,
+  const subLineParts = [subTitle];
+  if (data.gymAddress) subLineParts.push(data.gymAddress);
+  if (data.gymPhone) subLineParts.push(`هاتف: ${toAsciiDigits(data.gymPhone)}`);
+  const subText = subLineParts.join(" • ");
+
+  drawText(doc, subText, left + width - headerRightW - 20, PAGE_MARGIN + 42, headerRightW, {
+    size: 9,
     align: "right",
     color: "#ccfbf1",
     weight: "regular",
   });
 
-  // Left side of Header Banner (Receipt Number & Date)
-  const headerLeftW = width * 0.45 - 20;
-  drawText(doc, `رقم المرجع: ${toAsciiDigits(data.receiptNo)}`, left + 20, PAGE_MARGIN + 14, headerLeftW, {
-    size: 13,
+  // Left side of Header Banner (Receipt Number & Date & Optional Logo)
+  let headerLeftStart = left + 20;
+  let headerLeftW = width * 0.45 - 20;
+
+  if (data.logoBuffer) {
+    try {
+      const fitWidth = Math.max(30, Math.min(140, Math.round((data.logoWidth ?? 100) * 0.75)));
+      doc.image(data.logoBuffer, left + 16, PAGE_MARGIN + 12, { fit: [fitWidth, 54] });
+      headerLeftStart = left + 16 + fitWidth + 10;
+      headerLeftW = width * 0.45 - (fitWidth + 12);
+    } catch {
+      // Fallback
+    }
+  }
+
+  drawText(doc, `رقم المرجع: ${toAsciiDigits(data.receiptNo)}`, headerLeftStart, PAGE_MARGIN + 14, headerLeftW, {
+    size: 12,
     align: "left",
     color: "#ffffff",
     weight: "bold",
@@ -153,8 +183,8 @@ function paint(doc: PdfDoc, data: ReceiptData, qrBuffer: Buffer | null): void {
 
   const dateClean = data.issuedAt.slice(0, 10);
   const dateStr = data.branchName ? `${toAsciiDigits(dateClean)} • فرع: ${data.branchName}` : `التاريخ: ${toAsciiDigits(dateClean)}`;
-  drawText(doc, dateStr, left + 20, PAGE_MARGIN + 44, headerLeftW, {
-    size: 9.5,
+  drawText(doc, dateStr, headerLeftStart, PAGE_MARGIN + 44, headerLeftW, {
+    size: 9,
     align: "left",
     color: "#e6fffa",
     weight: "regular",
@@ -221,7 +251,11 @@ function paint(doc: PdfDoc, data: ReceiptData, qrBuffer: Buffer | null): void {
   if (data.discountAmountMinor > 0) {
     curY = tableRow(doc, tableX, curY, tableW, "الخصم المطبق", -data.discountAmountMinor, false, true);
   }
-  curY = tableRow(doc, tableX, curY, tableW, "الإجمالي بعد الخصم", data.netAmountMinor, true);
+  if (data.showTax && data.taxPercent && data.taxAmountMinor && data.taxAmountMinor > 0) {
+    curY = tableRow(doc, tableX, curY, tableW, `ضريبة القيمة المضافة (${toAsciiDigits(String(data.taxPercent))}%)`, data.taxAmountMinor);
+  }
+  const netWithTax = data.netAmountMinor + (data.taxAmountMinor ?? 0);
+  curY = tableRow(doc, tableX, curY, tableW, "الإجمالي المستحق", netWithTax, true);
 
   // ── Prominent Paid Box (Grand Badge) ────────────────────────────────────
   curY += 10;
@@ -273,29 +307,65 @@ function paint(doc: PdfDoc, data: ReceiptData, qrBuffer: Buffer | null): void {
     cardField(doc, colLeftX, curY + 40, colW, "ملاحظات", data.notes);
   }
 
-  curY += metaCardH + 18;
+  curY += metaCardH + 14;
 
   // ── Notes block if present and not placed yet ───────────────────────────
   if (data.notes && data.referenceNo) {
-    doc.roundedRect(tableX, curY, tableW, 30, 6).fill("#fffbeb");
-    doc.roundedRect(tableX, curY, tableW, 30, 6).lineWidth(0.6).strokeColor("#fde68a").stroke();
-    drawText(doc, `ملاحظات: ${data.notes}`, tableX + 12, curY + 8, tableW - 24, {
-      size: 9.5,
+    doc.roundedRect(tableX, curY, tableW, 28, 6).fill("#fffbeb");
+    doc.roundedRect(tableX, curY, tableW, 28, 6).lineWidth(0.6).strokeColor("#fde68a").stroke();
+    drawText(doc, `ملاحظات: ${data.notes}`, tableX + 12, curY + 6, tableW - 24, {
+      size: 9,
       align: "right",
       color: "#92400e",
     });
-    curY += 40;
+    curY += 34;
   }
 
-  // ── Footer with QR Code and Gym Stamp ───────────────────────────────────
+  // ── Terms & Rules block if present ──────────────────────────────────────
+  if (data.terms && data.terms.length > 0) {
+    const termsCount = Math.min(3, data.terms.length);
+    const termsH = termsCount * 13 + 22;
+    doc.roundedRect(tableX, curY, tableW, termsH, 6).fill("#f8fafc");
+    doc.roundedRect(tableX, curY, tableW, termsH, 6).lineWidth(0.6).strokeColor(COLOR_LIGHT_BORDER).stroke();
+    drawText(doc, "شروط وقواعد الاشتراك بالصالة:", tableX + 12, curY + 4, tableW - 24, {
+      size: 8.5,
+      align: "right",
+      color: COLOR_VALUE,
+      weight: "bold",
+    });
+    let tY = curY + 17;
+    for (let i = 0; i < termsCount; i += 1) {
+      drawText(doc, `• ${data.terms[i]}`, tableX + 12, tY, tableW - 24, {
+        size: 7.8,
+        align: "right",
+        color: COLOR_LABEL,
+      });
+      tY += 12;
+    }
+    curY += termsH + 10;
+  }
+
+  // ── Footer with QR Code, Footer Text, and Gym Stamp ─────────────────────
   const footerH = 88;
   const footerY = pageHeight - PAGE_MARGIN - footerH - 12;
 
   doc.moveTo(left + 12, footerY).lineTo(right - 12, footerY).lineWidth(0.8).strokeColor(COLOR_LIGHT_BORDER).stroke();
 
-  // QR Code on Left
+  // QR Code on Left (only if enabled)
   if (qrBuffer) {
     doc.image(qrBuffer, left + 20, footerY + 10, { width: 68, height: 68 });
+  }
+
+  // Footer text
+  if (data.footerText) {
+    const footX = left + (qrBuffer ? 100 : 20);
+    const footW = width - (qrBuffer ? 120 : 40);
+    drawText(doc, data.footerText, footX, footerY + 14, footW, {
+      size: 9,
+      align: "center",
+      color: COLOR_LABEL,
+      weight: "bold",
+    });
   }
 
   // Centered Developer Credit (see ./credit.ts)

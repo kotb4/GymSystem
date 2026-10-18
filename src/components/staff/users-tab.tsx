@@ -1,11 +1,11 @@
 import { useCallback, useEffect, useState } from "react";
-import { KeyRound, UserCog, UserPlus, MoreHorizontal, Pencil, Power } from "lucide-react";
+import { KeyRound, UserCog, UserPlus, MoreHorizontal, Pencil, Power, Download } from "lucide-react";
 import { useAuth } from "@/contexts/auth-context";
 import { useT } from "@/i18n";
 import { useToast } from "@/components/ui/toast";
 import { describeError } from "@/utils/app-error";
 import { api, type PublicUser } from "@/api";
-import { parseDateKey } from "@/core/dates";
+import { parseDateKey, todayKey } from "@/core/dates";
 import { formatDateShort } from "@/services/format";
 import { Card, CardHeader } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
@@ -17,6 +17,7 @@ import { ConfirmDialog } from "@/components/ui/confirm-dialog";
 import { Dropdown, DropdownDivider, DropdownItem } from "@/components/ui/dropdown";
 import { UserFormModal } from "@/components/users/user-form-modal";
 import { ResetPasswordModal } from "@/components/users/reset-password-modal";
+import { downloadCsvWithBom } from "@/utils/csv-helper";
 
 export function UsersTab() {
   const t = useT();
@@ -69,6 +70,31 @@ export function UsersTab() {
     }
   };
 
+  const onExportUsers = () => {
+    if (users.length === 0) {
+      toast("info", t("users.empty"));
+      return;
+    }
+    const headers = [
+      "كود الموظف",
+      t("users.fullName"),
+      t("users.username"),
+      t("users.role"),
+      t("users.activeCol"),
+      t("users.createdAt"),
+    ];
+    const dataRows = users.map((u) => [
+      u.userCode ?? "—",
+      u.fullName,
+      u.username,
+      t(`roles.${u.roleId}`) || u.roleId,
+      u.isActive ? t("status.active") : t("status.inactive"),
+      u.createdAt.slice(0, 10),
+    ]);
+    downloadCsvWithBom(`قائمة_المستخدمين_${todayKey()}`, headers, dataRows);
+    toast("success", t("users.exportSuccess"));
+  };
+
   interface Row {
     id: string;
     username: string;
@@ -76,6 +102,7 @@ export function UsersTab() {
     roleId: PublicUser["roleId"];
     isActive: boolean;
     createdAtKey: string;
+    userCode: string | null;
   }
 
   const rows: Row[] = users.map((u) => ({
@@ -85,6 +112,7 @@ export function UsersTab() {
     roleId: u.roleId,
     isActive: u.isActive,
     createdAtKey: u.createdAt.slice(0, 10),
+    userCode: u.userCode ?? null,
   }));
 
   const columns: Column<Row>[] = [
@@ -109,6 +137,18 @@ export function UsersTab() {
           </span>
         </span>
       ),
+    },
+    {
+      key: "userCode",
+      header: "كود الموظف",
+      render: (row) =>
+        row.userCode ? (
+          <span dir="ltr" className="inline-block rounded-md bg-white/5 border border-line/40 px-2 py-0.5 font-mono text-[11px] font-bold text-cyan">
+            {row.userCode}
+          </span>
+        ) : (
+          <span className="text-faint">—</span>
+        ),
     },
     {
       key: "role",
@@ -194,17 +234,23 @@ export function UsersTab() {
         <CardHeader
           title={t("nav.users")}
           action={
-            hasPermission("users.manage") ? (
-              <Button
-                onClick={() => {
-                  setEditTarget(null);
-                  setFormOpen(true);
-                }}
-              >
-                <UserPlus className="size-4" />
-                {t("users.addUser")}
+            <div className="flex items-center gap-2">
+              <Button variant="secondary" size="sm" onClick={onExportUsers}>
+                <Download className="size-3.5" />
+                {t("users.exportUsers")}
               </Button>
-            ) : undefined
+              {hasPermission("users.manage") && (
+                <Button
+                  onClick={() => {
+                    setEditTarget(null);
+                    setFormOpen(true);
+                  }}
+                >
+                  <UserPlus className="size-4" />
+                  {t("users.addUser")}
+                </Button>
+              )}
+            </div>
           }
         />
         {rows.length === 0 ? (

@@ -19,7 +19,25 @@ import {
   listClassRecurrences,
   generateRecurrenceWeeks,
   deactivateClassRecurrence,
+  createClassWithPackage,
+  saveSessionAttendanceRoster,
+  payTrainerForSession,
+  getClassProfitsReport,
+  getTrainerProfile,
+  listClassEnrolledMembers,
+  recordDirectClassAttendance,
+  recordBatchClassAttendance,
+  parseScheduleSlots,
+  formatScheduleText,
 } from "@/core/services/classes.service";
+import {
+  createTrainer,
+  updateTrainer,
+  recordTrainerPayout,
+  listTrainerPayouts,
+  deleteTrainerPayout,
+  getTrainerFinancialSummary,
+} from "@/core/services/trainers.service";
 import { todayKey } from "@/core/dates";
 import type { Db } from "@/db/engine";
 import { createTestDb } from "./helpers/test-db";
@@ -371,5 +389,316 @@ describe("class recurrences", () => {
     expect(() => listClassRecurrences(db, trainer)).not.toThrow();
     await expect(generateRecurrenceWeeks(db, trainer, res.recurrence.id)).rejects.toMatchObject({ code: "FORBIDDEN" });
     await expect(deactivateClassRecurrence(db, trainer, res.recurrence.id)).rejects.toMatchObject({ code: "FORBIDDEN" });
+  });
+});
+
+describe("advanced class academy, roster attendance, profits & coach payouts", () => {
+  it("creates class with all-in-one package and recurrence", async () => {
+    const coach = await createTrainer(db, owner, {
+      fullName: "كابتن أحمد",
+      phone: "01099998888",
+      defaultSessionFeeMinor: 15000,
+    });
+
+    const res = await createClassWithPackage(db, owner, {
+      name: "أكاديمية الكيك بوكسينج",
+      trainerId: coach.id,
+      capacity: 12,
+      defaultTrainerFeeMinor: 15000,
+      package: {
+        createPlan: true,
+        planName: "باقة 12 حصة كيك بوكسينج",
+        price: 600, // 600 EGP
+        sessionCount: 12,
+        durationDays: 30,
+      },
+      schedule: {
+        daysOfWeek: [1, 3],
+        startDate: "2027-02-01",
+        startTime: "19:00",
+        durationMin: 60,
+        weeks: 2,
+      },
+    });
+
+    expect(res.class.name).toBe("أكاديمية الكيك بوكسينج");
+    expect(res.class.planId).toBeTruthy();
+    expect(res.planId).toBeTruthy();
+    const createdPlanRow = db.first<{ category: string; price: number }>(
+      "SELECT category, price FROM membership_plans WHERE id = ?",
+      [res.planId!],
+    );
+    expect(createdPlanRow?.category).toBe("academy");
+    expect(createdPlanRow?.price).toBe(600);
+    expect(res.recurrence).toBeDefined();
+
+    const sessions = listSessions(db, owner, { classId: res.class.id, status: "all" });
+    expect(sessions).toHaveLength(4);
+    expect(sessions[0].trainerFeeMinor).toBe(15000);
+  });
+
+  it("saves attendance roster and consumes session from trainee subscription", async () => {
+    const coach = await createTrainer(db, owner, { fullName: "كابتن سيف", phone: "01122223333" });
+    const clsRes = await createClassWithPackage(db, owner, {
+      name: "حصة ملاكمة",
+      trainerId: coach.id,
+      capacity: 10,
+      defaultTrainerFeeMinor: 10000,
+      package: {
+        createPlan: true,
+        planName: "باقة ملاكمة 8 حصص",
+        price: 400,
+        sessionCount: 8,
+        durationDays: 30,
+      },
+    });
+
+    const mem1 = await createMember(db, owner, { fullName: "مشترك 1", phone: "01011111111" });
+    const mem2 = await createMember(db, owner, { fullName: "مشترك 2", phone: "01022222222" });
+
+    // Subscribe mem1 to the class plan
+    const sub1 = await createSubscription(db, owner, {
+      memberId: mem1.id,
+      planId: clsRes.planId!,
+      startDate: todayKey(),
+    });
+
+    // Create session
+    const session = await createClassSession(db, owner, clsRes.class.id, {
+      sessionDate: todayKey(),
+      startTime: "17:00",
+      durationMin: 60,
+    });
+
+    // Book members
+    const b1 = await bookMember(db, owner, { sessionId: session.id, memberId: mem1.id });
+    const b2 = await bookMember(db, owner, { sessionId: session.id, memberId: mem2.id });
+
+    // Save roster: mark b1 attended, b2 no_show
+    const rosterRes = await saveSessionAttendanceRoster(db, owner, session.id, [
+      { bookingId: b1.id, status: "attended" },
+      { bookingId: b2.id, status: "no_show" },
+    ]);
+
+    expect(rosterRes.savedCount).toBe(2);
+    expect(rosterRes.attendedCount).toBe(1);
+
+    // Verify sub1 has consumed 1 session
+    const sub1After = db.first<{ sessions_used: number }>(
+      "SELECT sessions_used FROM member_subscriptions WHERE id = ?",
+      [sub1.id],
+    );
+    expect(Number(sub1After!.sessions_used)).toBe(1);
+
+    // Verify profits report
+    const profits = getClassProfitsReport(db, owner, { classId: clsRes.class.id });
+    expect(profits).toHaveLength(1);
+    expect(profits[0].attendedCount).toBe(1);
+    expect(profits[0].grossRevenueMinor).toBe(5000); // 40000 / 8 = 5000
+    expect(profits[0].trainerFeeMinor).toBe(10000);
+    expect(profits[0].netProfitMinor).toBe(-5000); // 5000 - 10000
+  });
+
+  it("pays trainer for session, marks session paid and generates expense", async () => {
+    const coach = await createTrainer(db, owner, { fullName: "كابتن رامي", phone: "01233334444" });
+    const cls = await createClass(db, owner, {
+      name: "حصة خاصة",
+      trainerId: coach.id,
+      capacity: 10,
+      defaultTrainerFeeMinor: 20000,
+    });
+    const session = await createClassSession(db, owner, cls.id, {
+      sessionDate: todayKey(),
+      startTime: "18:00",
+      durationMin: 60,
+    });
+
+    // Pay trainer
+    const payRes = await payTrainerForSession(db, owner, {
+      sessionId: session.id,
+      amountMinor: 20000,
+      methodCode: "cash",
+      notes: "أتعاب كابتن رامي",
+    });
+
+    expect(payRes.session).toBeDefined();
+    expect(payRes.expenseId).toBeTruthy();
+
+    const sessDb = db.first<{ paid_to_trainer: number; expense_id: string }>(
+      "SELECT paid_to_trainer, expense_id FROM class_sessions WHERE id = ?",
+      [session.id],
+    );
+    expect(sessDb?.paid_to_trainer).toBe(1);
+    expect(sessDb?.expense_id).toBe(payRes.expenseId);
+
+    // Verify trainer profile
+    const profile = getTrainerProfile(db, owner, coach.id);
+    expect(profile.trainer.fullName).toBe("كابتن رامي");
+    expect(profile.completedSessionsCount).toBe(1);
+    expect(profile.totalEarningsMinor).toBe(20000);
+    expect(profile.pendingEarningsMinor).toBe(0);
+
+    // Second payout throws conflict
+    await expect(
+      payTrainerForSession(db, owner, { sessionId: session.id, amountMinor: 20000 }),
+    ).rejects.toMatchObject({ code: "CONFLICT" });
+  });
+
+  it("handles detailed schedule slots with day-of-week and custom times", async () => {
+    const slots = [
+      { dayOfWeek: 0, startTime: "16:00", endTime: "17:30" }, // Sunday
+      { dayOfWeek: 2, startTime: "18:00", endTime: "19:00" }, // Tuesday
+    ];
+    const cls = await createClass(db, owner, {
+      name: "كاراتيه أطفال",
+      capacity: 15,
+      scheduleSlots: slots,
+    });
+
+    expect(cls.scheduleSlots).toHaveLength(2);
+    expect(cls.scheduleSlots[0].dayOfWeek).toBe(0);
+    expect(cls.scheduleSlots[0].startTime).toBe("16:00");
+    expect(cls.scheduleSlots[0].endTime).toBe("17:30");
+
+    expect(cls.scheduleText).toContain("الأحد (16:00 - 17:30)");
+    expect(cls.scheduleText).toContain("الثلاثاء (18:00 - 19:00)");
+
+    // Update schedule
+    const updated = await updateClass(db, owner, cls.id, {
+      scheduleSlots: [{ dayOfWeek: 5, startTime: "10:00" }],
+    });
+    expect(updated.scheduleText).toBe("الجمعة (10:00)");
+  });
+
+  it("executes direct class attendance and batch attendance with session deduction", async () => {
+    const plan = await createPlan(db, owner, {
+      name: "باقة ملاكمة 8 حصص",
+      category: "academy",
+      kind: "sessions",
+      durationDays: 30,
+      price: 500,
+      sessionsCount: 8,
+    });
+    const cls = await createClass(db, owner, { name: "ملاكمة", capacity: 20, planId: plan.id });
+
+    const m1 = await createMember(db, owner, { fullName: "مشترك 1", phone: "01011112222" });
+    const m2 = await createMember(db, owner, { fullName: "مشترك 2", phone: "01033334444" });
+
+    const sub1 = await createSubscription(db, owner, { memberId: m1.id, planId: plan.id, startDate: todayKey() });
+    const sub2 = await createSubscription(db, owner, { memberId: m2.id, planId: plan.id, startDate: todayKey() });
+
+    // List enrolled members
+    const enrolled = listClassEnrolledMembers(db, owner, cls.id);
+    expect(enrolled).toHaveLength(2);
+    expect(enrolled[0].sessionsTotal).toBe(8);
+    expect(enrolled[0].sessionsRemaining).toBe(8);
+
+    // Direct check-in member 1
+    const res1 = await recordDirectClassAttendance(db, owner, {
+      memberId: m1.id,
+      classId: cls.id,
+      notes: "حضور أول حصة",
+    });
+    expect(res1.attendanceId).toBeTruthy();
+    expect(res1.sessionsRemaining).toBe(7);
+
+    // Batch check-in
+    const batchRes = await recordBatchClassAttendance(db, owner, {
+      classId: cls.id,
+      memberIds: [m1.id, m2.id],
+    });
+    expect(batchRes.attendedCount).toBe(2);
+    expect(batchRes.errors).toHaveLength(0);
+
+    // Deduce class from subscription when classId omitted
+    const autoClassRes = await recordDirectClassAttendance(db, owner, {
+      memberId: m2.id,
+      subscriptionId: sub2.id,
+    });
+    expect(autoClassRes.sessionsRemaining).toBe(6);
+  });
+
+  it("records direct trainer payout, deducts treasury ledger, and allows voiding", async () => {
+    const coach = await createTrainer(db, owner, { fullName: "كابتن زياد", phone: "01599998888" });
+
+    // Record cash payout
+    const payout = await recordTrainerPayout(db, owner, {
+      trainerId: coach.id,
+      amountMinor: 150000, // 1500 EGP
+      payoutType: "pt_commission",
+      methodCode: "cash",
+      notes: "مستحقات أكاديمية السباحة",
+    });
+
+    expect(payout.id).toBeTruthy();
+    expect(payout.amountMinor).toBe(150000);
+    expect(payout.expenseId).toBeTruthy();
+
+    // Verify ledger
+    const ledger = db.first<{ amount_minor: number; direction: number }>(
+      "SELECT amount_minor, direction FROM financial_ledger WHERE ref_table = 'expenses' AND ref_id = ?",
+      [payout.expenseId],
+    );
+    expect(ledger?.amount_minor).toBe(150000);
+    expect(ledger?.direction).toBe(-1); // disbursement
+
+    // List payouts
+    const list = listTrainerPayouts(db, owner, coach.id);
+    expect(list).toHaveLength(1);
+    expect(list[0].amountMinor).toBe(150000);
+    expect(list[0].trainerName).toBe("كابتن زياد");
+
+    // Void / delete payout
+    await deleteTrainerPayout(db, owner, payout.id);
+
+    const listAfter = listTrainerPayouts(db, owner, coach.id);
+    expect(listAfter).toHaveLength(0);
+  });
+
+  it("stores and retrieves trainer workingSchedule and calculates financial summary", async () => {
+    const scheduleSlots = [
+      { dayOfWeek: 6, dayNameAr: "السبت", startTime: "16:00", endTime: "22:00", isActive: true },
+      { dayOfWeek: 1, dayNameAr: "الإثنين", startTime: "17:00", endTime: "21:00", isActive: true },
+      { dayOfWeek: 5, dayNameAr: "الجمعة", startTime: "", endTime: "", isActive: false },
+    ];
+
+    const coach = await createTrainer(db, owner, {
+      fullName: "كابتن طارق الشناوي",
+      phone: "01099887766",
+      defaultSessionFeeMinor: 7500, // 75 EGP
+      workingSchedule: scheduleSlots,
+    });
+
+    expect(coach.workingSchedule).toHaveLength(3);
+    expect(coach.workingSchedule![0].dayNameAr).toBe("السبت");
+    expect(coach.workingSchedule![0].startTime).toBe("16:00");
+    expect(coach.workingSchedule![2].isActive).toBe(false);
+
+    // Update schedule
+    const updated = await updateTrainer(db, owner, coach.id, {
+      fullName: "كابتن طارق الشناوي (محدث)",
+      workingSchedule: [
+        { dayOfWeek: 0, dayNameAr: "الأحد", startTime: "10:00", endTime: "14:00", isActive: true },
+      ],
+    });
+    expect(updated.workingSchedule).toHaveLength(1);
+    expect(updated.workingSchedule![0].dayNameAr).toBe("الأحد");
+
+    // Check financial summary initial
+    const initialSummary = getTrainerFinancialSummary(db, owner, coach.id);
+    expect(initialSummary.totalPaidMinor).toBe(0);
+    expect(initialSummary.totalPtDuesMinor).toBe(0);
+    expect(initialSummary.balanceDueMinor).toBe(0);
+
+    // Make a payout
+    await recordTrainerPayout(db, owner, {
+      trainerId: coach.id,
+      amountMinor: 50000,
+      payoutType: "monthly_salary",
+    });
+
+    const summaryAfter = getTrainerFinancialSummary(db, owner, coach.id);
+    expect(summaryAfter.totalPaidMinor).toBe(50000);
+    expect(summaryAfter.payoutsCount).toBe(1);
   });
 });

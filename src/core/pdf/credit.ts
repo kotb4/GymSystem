@@ -10,14 +10,14 @@ type PdfDoc = InstanceType<typeof PDFDocumentType>;
  * The pair is centred on the PAGE (not the content column) so it lines up
  * optically regardless of the surrounding layout.
  */
-const CREDIT_LABEL = "System by :";
-const CREDIT_NAME = "Yassen Mohamed Kotb | 01288536381";
+const CREDIT_LABEL = "GymGate  —";
+const CREDIT_NAME = "Powered by KOTB Digital Solutions";
 
 const LABEL_SIZE = 7.5;
-const NAME_SIZE = 8.5;
+const NAME_SIZE = 8;
 const GAP = 4;
 const COLOR_LABEL = "#64748b"; // Slate 500
-const COLOR_NAME = "#000000";
+const COLOR_NAME = "#080B11";
 
 export function drawDeveloperCredit(doc: PdfDoc, y: number): void {
   const labelW = measureText(CREDIT_LABEL, { size: LABEL_SIZE, weight: "regular" });

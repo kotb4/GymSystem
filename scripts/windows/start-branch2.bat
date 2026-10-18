@@ -10,9 +10,19 @@ cd /d "%~dp0..\.."
 set GYMSYSTEM_PORT=8895
 set GYMSYSTEM_DATA_DIR=%LOCALAPPDATA%\GymSystem_Branch2
 
+if exist "dist-exe\GymGate-Branch2.exe" (
+  cd dist-exe
+  start "" "GymGate-Branch2.exe"
+  exit /b 0
+)
 if exist "dist-exe\GymSystem-Branch2.exe" (
   cd dist-exe
   start "" "GymSystem-Branch2.exe"
+  exit /b 0
+)
+if exist "dist-exe\GymGate.exe" (
+  cd dist-exe
+  start "" "GymGate.exe"
   exit /b 0
 )
 if exist "dist-exe\GymSystem.exe" (

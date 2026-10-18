@@ -40,6 +40,7 @@ export interface MemberRow extends Row {
   created_by: string | null;
   archived_at: string | null;
   branch_id: string | null;
+  home_branch_only: number | null;
   created_at: string;
   updated_at: string;
 }
@@ -64,6 +65,7 @@ export interface PublicMember {
   photoFileId: string | null;
   deletedAt: string | null;
   branchId?: string | null;
+  homeBranchOnly?: boolean;
 }
 
 export interface MemberInput {
@@ -79,6 +81,7 @@ export interface MemberInput {
   emergencyContactName?: string | null;
   emergencyContactPhone?: string | null;
   department?: DepartmentScope;
+  homeBranchOnly?: boolean;
 }
 
 interface NormalizedMemberValues {
@@ -94,6 +97,7 @@ interface NormalizedMemberValues {
   emergencyContactName: string | null;
   emergencyContactPhone: string | null;
   department: DepartmentScope;
+  homeBranchOnly: boolean;
 }
 
 export type SmartFilter =
@@ -113,6 +117,7 @@ export interface MemberListQuery {
   status?: MemberStatus | "all";
   smart?: SmartFilter;
   inactiveDays?: number;
+  department?: DepartmentScope | "all";
   page?: number;
   pageSize?: number;
 }
@@ -132,6 +137,7 @@ const EMPTY_BASE: NormalizedMemberValues = {
   emergencyContactName: null,
   emergencyContactPhone: null,
   department: "general",
+  homeBranchOnly: false,
 };
 
 export function toPublicMember(row: MemberRow): PublicMember {
@@ -155,6 +161,7 @@ export function toPublicMember(row: MemberRow): PublicMember {
     photoFileId: row.photo_file_id == null ? null : String(row.photo_file_id),
     deletedAt: row.deleted_at ?? null,
     branchId: row.branch_id ?? "main",
+    homeBranchOnly: Number(row.home_branch_only ?? 0) === 1,
   };
 }
 
@@ -217,6 +224,10 @@ function resolveValues(base: NormalizedMemberValues, patch: MemberInput): Normal
       patch.department !== undefined && DEPARTMENTS.includes(patch.department)
         ? patch.department
         : base.department,
+    homeBranchOnly:
+      patch.homeBranchOnly !== undefined
+        ? Boolean(patch.homeBranchOnly)
+        : base.homeBranchOnly,
   };
 }
 
@@ -279,7 +290,7 @@ export async function createMember(
     const branchId = getLocalBranchId(db);
     memberCode = formatMemberCode(codeValue, branchPrefix);
     db.run(
-      "INSERT INTO members (id, member_code, full_name, phone, email, gender, date_of_birth, address, notes, height_cm, weight_kg, emergency_contact_name, emergency_contact_phone, department, registration_date, status, created_by, archived_at, created_at, updated_at, branch_id)\nVALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'active', ?, NULL, ?, ?, ?)",
+      "INSERT INTO members (id, member_code, full_name, phone, email, gender, date_of_birth, address, notes, height_cm, weight_kg, emergency_contact_name, emergency_contact_phone, department, registration_date, status, created_by, archived_at, created_at, updated_at, branch_id, home_branch_only)\nVALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'active', ?, NULL, ?, ?, ?, ?)",
       [
         id,
         memberCode,
@@ -300,6 +311,7 @@ export async function createMember(
         nowStamp(),
         nowStamp(),
         branchId,
+        values.homeBranchOnly ? 1 : 0,
       ],
     );
     recordAudit(db, actor, "MEMBER_CREATED", "member", id, {
@@ -344,6 +356,7 @@ export async function updateMember(
       emergencyContactName: row.emergency_contact_name,
       emergencyContactPhone: row.emergency_contact_phone,
       department: (row.department ?? "general") as DepartmentScope,
+      homeBranchOnly: Number(row.home_branch_only ?? 0) === 1,
     },
     patch,
   );
@@ -351,7 +364,7 @@ export async function updateMember(
 
   await db.transaction(async () => {
     db.run(
-      "UPDATE members SET full_name = ?, phone = ?, email = ?, gender = ?, date_of_birth = ?, address = ?, notes = ?, height_cm = ?, weight_kg = ?, emergency_contact_name = ?, emergency_contact_phone = ?, department = ?, updated_at = ? WHERE id = ?",
+      "UPDATE members SET full_name = ?, phone = ?, email = ?, gender = ?, date_of_birth = ?, address = ?, notes = ?, height_cm = ?, weight_kg = ?, emergency_contact_name = ?, emergency_contact_phone = ?, department = ?, home_branch_only = ?, updated_at = ? WHERE id = ?",
       [
         values.fullName,
         values.phone,
@@ -365,6 +378,7 @@ export async function updateMember(
         values.emergencyContactName,
         values.emergencyContactPhone,
         values.department,
+        values.homeBranchOnly ? 1 : 0,
         nowStamp(),
         memberId,
       ],
@@ -424,6 +438,11 @@ export function listMembers(
   const scope = departmentScopeCondition(actor);
   if (scope.sql) conditions.push(scope.sql.replace(/^\s*AND\s*/, ""));
   if (scope.params.length) params.push(...scope.params);
+
+  if (query.department && query.department !== "all") {
+    conditions.push("m.department = ?");
+    params.push(query.department);
+  }
 
   if (query.smart === "trash") {
     conditions.push("m.deleted_at IS NOT NULL");

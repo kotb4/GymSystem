@@ -22,6 +22,12 @@ function main() {
 
   server.on('listening', () => {
     log.info(`ready at http://${cfg.host}:${cfg.port}  (/health /pair /send)`);
+    if (wa.engineReady() && wa.hasSavedCredentials()) {
+      log.info('saved WhatsApp credentials detected on startup; auto-connecting in background...');
+      wa.ensureBrowser().catch((err) => {
+        log.warn(`startup auto-connect notice: ${err.message}`);
+      });
+    }
   });
   server.on('error', (err) => {
     log.error(`server error: ${err.message}`);

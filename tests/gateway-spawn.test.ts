@@ -1,4 +1,4 @@
-﻿import { describe, expect, it, vi } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import {
   ensureGateway,
   isLoopbackUrl,
@@ -117,6 +117,31 @@ describe("ensureGateway", () => {
     });
     expect(result.running).toBe(false);
     expect(result.error).toBe("not_found");
+  });
+
+  it("spawns a new gateway when forceRestart is true even if initially healthy", async () => {
+    let probeCount = 0;
+    const probe = vi.fn(async () => {
+      probeCount++;
+      return probeCount > 2;
+    });
+    const launched = vi.fn();
+    const spawnFn: SpawnFn = (launch: GatewayLaunch) => {
+      launched(launch);
+      return fakeChild();
+    };
+    const result = await ensureGateway(VALID_URL, {
+      packaged: false,
+      log: noop,
+      probe,
+      spawnFn,
+      pollMs: 2,
+      startTimeoutMs: 200,
+      forceRestart: true,
+    });
+    expect(result.running).toBe(true);
+    expect(result.alreadyRunning).toBe(false);
+    expect(launched).toHaveBeenCalledTimes(1);
   });
 });
 

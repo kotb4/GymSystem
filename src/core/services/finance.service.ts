@@ -262,47 +262,124 @@ export interface LedgerEntry {
   refTable: string;
   refId: string;
   memberId: string | null;
+  memberName: string | null;
+  memberCode: string | null;
   methodCode: string;
+  methodLabel: string;
   direction: 1 | -1;
   amountMinor: number;
+  box: "gym" | "store";
+  createdById: string;
+  createdByName: string;
   occurredAt: string;
+}
+
+export interface LedgerListQuery {
+  page?: number;
+  pageSize?: number;
+  fromKey?: string;
+  toKey?: string;
+  createdBy?: string;
+  box?: "gym" | "store" | "all";
+  methodCode?: string;
+  entryType?: string;
+  direction?: 1 | -1 | "all";
+  memberId?: string;
 }
 
 export function listLedgerEntries(
   db: Db,
   actor: ServiceActor,
-  query: { page?: number; pageSize?: number; fromKey?: string; toKey?: string },
-): { items: LedgerEntry[]; total: number } {
+  query: LedgerListQuery = {},
+): { items: LedgerEntry[]; total: number; totalInMinor: number; totalOutMinor: number } {
   requirePermission(actor, "reports.view");
   const page = Math.max(1, query.page ?? 1);
   const pageSize = Math.min(200, Math.max(1, query.pageSize ?? 50));
   const conditions: string[] = [];
-  const params: string[] = [];
-  if (query.fromKey) {
-    conditions.push("occurred_at >= ?");
+  const params: Array<string | number> = [];
+
+  if (query.fromKey && query.fromKey.trim() !== "") {
+    conditions.push("l.occurred_at >= ?");
     params.push(dayStartStamp(query.fromKey));
   }
-  if (query.toKey) {
-    conditions.push("occurred_at < ?");
+  if (query.toKey && query.toKey.trim() !== "") {
+    conditions.push("l.occurred_at < ?");
     params.push(nextDayStart(query.toKey));
   }
+  if (query.createdBy && query.createdBy.trim() !== "" && query.createdBy !== "all") {
+    conditions.push("l.created_by = ?");
+    params.push(query.createdBy);
+  }
+  if (query.box && query.box !== "all") {
+    conditions.push("l.box = ?");
+    params.push(query.box);
+  }
+  if (query.methodCode && query.methodCode.trim() !== "" && query.methodCode !== "all") {
+    conditions.push("l.method_code = ?");
+    params.push(query.methodCode);
+  }
+  if (query.entryType && query.entryType.trim() !== "" && query.entryType !== "all") {
+    conditions.push("l.entry_type = ?");
+    params.push(query.entryType);
+  }
+  if (query.direction !== undefined && query.direction !== "all") {
+    conditions.push("l.direction = ?");
+    params.push(Number(query.direction));
+  }
+  if (query.memberId && query.memberId.trim() !== "") {
+    conditions.push("l.member_id = ?");
+    params.push(query.memberId);
+  }
+
   const where = conditions.length > 0 ? `WHERE ${conditions.join(" AND ")}` : "";
-  const total = db.count(`SELECT COUNT(*) FROM financial_ledger ${where}`, params);
+
+  // Aggregate totals for the filtered range
+  const summaryRow = db.first<{ in_minor: number; out_minor: number; count_all: number }>(
+    `SELECT
+      COUNT(*) AS count_all,
+      COALESCE(SUM(CASE WHEN l.direction = 1 THEN l.amount_minor ELSE 0 END), 0) AS in_minor,
+      COALESCE(SUM(CASE WHEN l.direction = -1 THEN l.amount_minor ELSE 0 END), 0) AS out_minor
+     FROM financial_ledger l
+     ${where}`,
+    params,
+  );
+  const total = Number(summaryRow?.count_all ?? 0);
+  const totalInMinor = Number(summaryRow?.in_minor ?? 0);
+  const totalOutMinor = Number(summaryRow?.out_minor ?? 0);
+
   const rows = db.all<{
     id: number;
     entry_type: string;
     ref_table: string;
     ref_id: string;
     member_id: string | null;
+    member_name: string | null;
+    member_code: string | null;
     method_code: string;
+    method_label: string | null;
     direction: number;
     amount_minor: number;
     occurred_at: string;
     box: string;
+    created_by: string;
+    creator_name: string | null;
   }>(
-    `SELECT * FROM financial_ledger ${where} ORDER BY id DESC LIMIT ? OFFSET ?`,
+    `SELECT
+      l.*,
+      u.full_name AS creator_name,
+      m.full_name AS member_name,
+      m.member_code AS member_code,
+      pm.label_ar AS method_label
+    FROM financial_ledger l
+    LEFT JOIN users u ON u.id = l.created_by
+    LEFT JOIN members m ON m.id = l.member_id
+    LEFT JOIN payment_methods pm ON pm.code = l.method_code
+    ${where}
+    ORDER BY l.id DESC
+    LIMIT ? OFFSET ?`,
     [...params, pageSize, (page - 1) * pageSize],
   );
+
   return {
     items: rows.map((r) => ({
       id: Number(r.id),
@@ -310,13 +387,20 @@ export function listLedgerEntries(
       refTable: r.ref_table,
       refId: r.ref_id,
       memberId: r.member_id,
+      memberName: r.member_name ?? null,
+      memberCode: r.member_code ?? null,
       methodCode: r.method_code,
+      methodLabel: r.method_label ?? r.method_code,
       direction: Number(r.direction) === -1 ? -1 : 1,
       amountMinor: Number(r.amount_minor),
       box: r.box === "store" ? "store" : "gym",
+      createdById: r.created_by,
+      createdByName: r.creator_name ?? r.created_by,
       occurredAt: r.occurred_at,
     })),
     total,
+    totalInMinor,
+    totalOutMinor,
   };
 }
 

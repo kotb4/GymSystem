@@ -11,6 +11,7 @@ import { Badge } from "@/components/ui/badge";
 import { DataTable, type Column } from "@/components/ui/table";
 import { EmptyState } from "@/components/ui/empty-state";
 import { ConfirmDialog } from "@/components/ui/confirm-dialog";
+import { DateRange } from "@/components/ui/date-range";
 import { Dropdown, DropdownDivider, DropdownItem } from "@/components/ui/dropdown";
 
 export function PlansTab() {
@@ -80,11 +81,7 @@ export function PlansTab() {
     {
       key: "range",
       header: t("trainers.planRange"),
-      render: (row) => (
-        <span dir="ltr" className="tabnum text-subtle">
-          {row.startDate} → {row.endDate}
-        </span>
-      ),
+      render: (row) => <DateRange start={row.startDate} end={row.endDate} />,
     },
     {
       key: "status",

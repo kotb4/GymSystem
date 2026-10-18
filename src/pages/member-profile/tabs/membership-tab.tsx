@@ -18,6 +18,7 @@ import { EmptyState } from "@/components/ui/empty-state";
 import { ConfirmDialog } from "@/components/ui/confirm-dialog";
 import { Modal } from "@/components/ui/modal";
 import { Select } from "@/components/ui/select";
+import { DateRange } from "@/components/ui/date-range";
 import { CardQrDeliveryModal } from "@/components/cards/card-qr-delivery-modal";
 import {
   CalendarPlus,
@@ -32,15 +33,12 @@ import {
   ShieldCheck,
   Smartphone,
   Snowflake,
-  Ticket,
   Trash2,
   Undo2,
 } from "lucide-react";
 import { FreezeSubscriptionModal } from "@/components/subscriptions/freeze-subscription-modal";
 import { RenewModal } from "../modals/renew-modal";
-import { SubscriptionContractActions } from "@/components/subscriptions/subscription-contract-actions";
 import { AssignCardModal } from "@/components/cards/assign-card-modal";
-import { GuestInvitationsModal } from "@/components/subscriptions/guest-invitations-modal";
 import type { TabProps } from "../types";
 import { permissionDeniedNode } from "../helpers";
 
@@ -292,6 +290,7 @@ function CardsCard({ ctx }: TabProps) {
           memberPhone={ctx.member.phone}
           barcodeValue={qrFor.barcodeValue}
           cardId={qrFor.id}
+          memberId={ctx.member.id}
           onClose={() => setQrFor(null)}
         />
       )}
@@ -335,8 +334,6 @@ function SubsCard({ ctx }: TabProps) {
   const [detailsTarget, setDetailsTarget] = useState<Subscription | null>(null);
   const [freezeTarget, setFreezeTarget] = useState<Subscription | null>(null);
   const [freezeHistory, setFreezeHistory] = useState<FreezeInfo[]>([]);
-  const [invitationsModalOpen, setInvitationsModalOpen] = useState(false);
-  const [invitationSubId, setInvitationSubId] = useState<string | undefined>(undefined);
   const [busy, setBusy] = useState(false);
   const [statusFilter, setStatusFilter] = useState("all");
   const [balances, setBalances] = useState<Record<string, { paidMinor: number; discountedMinor: number; remainingMinor: number }>>({});
@@ -452,6 +449,9 @@ function SubsCard({ ctx }: TabProps) {
     totalDays: number;
     remainingDays: number;
     frozenDays: number;
+    kind: "time" | "sessions" | "open";
+    sessionsTotal: number | null;
+    sessionsUsed: number;
     subscription: Subscription;
   }
   const today = todayKey();
@@ -478,47 +478,72 @@ function SubsCard({ ctx }: TabProps) {
       totalDays,
       remainingDays,
       frozenDays: s.frozenDays,
+      kind: s.kind ?? "time",
+      sessionsTotal: s.sessionsTotal,
+      sessionsUsed: s.sessionsUsed ?? 0,
       subscription: s,
     };
   });
   const filteredRows = statusFilter === "all" ? rows : rows.filter((r) => r.effective === statusFilter);
 
-  const columns: Column<Row>[] = [
+  const gymRows = filteredRows.filter((r) => (r.subscription.category ?? "gym") !== "academy");
+  const classRows = filteredRows.filter((r) => r.subscription.category === "academy" || r.kind === "sessions");
+
+  const buildColumns = (isClassTable: boolean): Column<Row>[] => [
     {
       key: "plan",
       header: t("common.plan"),
-      render: (row) => <span className="font-bold">{row.planName}</span>,
+      render: (row) => (
+        <div>
+          <span className="font-bold block">{row.planName}</span>
+          {isClassTable && row.sessionsTotal !== null && (
+            <span className="text-[11px] text-cyan-400 font-semibold tabnum">
+              {t("cls.sessionsProgress", { used: row.sessionsUsed, total: row.sessionsTotal })}
+            </span>
+          )}
+        </div>
+      ),
     },
     {
       key: "period",
       header: t("subs.period"),
-      render: (row) => (
-        <span dir="ltr" className="tabnum text-subtle">
-          {row.startDate} ← {row.endDate}
-        </span>
-      ),
+      render: (row) => <DateRange start={row.startDate} end={row.endDate} />,
     },
     {
       key: "price",
       header: t("subs.price"),
       render: (row) => <span className="font-bold tabnum">{row.price}</span>,
     },
-    {
-      key: "totalDays",
-      header: t("subs.totalDays"),
-      render: (row) => <span className="tabnum text-subtle">{row.totalDays} {t("subs.daysUnit")}</span>,
-    },
-    {
-      key: "remainingDays",
-      header: t("subs.remainingDays"),
-      render: (row) => {
-        if (row.effective === "expired" || row.effective === "cancelled") {
-          return <span className="text-faint tabnum">—</span>;
-        }
-        const color = row.remainingDays <= 7 ? "text-red" : row.remainingDays <= 14 ? "text-amber" : "text-neon";
-        return <span className={`font-bold tabnum ${color}`}>{row.remainingDays} {t("subs.daysUnit")}</span>;
-      },
-    },
+    ...(isClassTable
+      ? [
+          {
+            key: "sessionsRemaining" as const,
+            header: t("cls.sessionsLeftCol"),
+            render: (row: Row) => {
+              const rem = (row.sessionsTotal ?? 0) - row.sessionsUsed;
+              const color = rem <= 1 ? "text-amber-400" : "text-emerald-400";
+              return <span className={`font-bold tabnum ${color}`}>{rem} {t("cls.sessionUnit")}</span>;
+            },
+          },
+        ]
+      : [
+          {
+            key: "totalDays" as const,
+            header: t("subs.totalDays"),
+            render: (row: Row) => <span className="tabnum text-subtle">{row.totalDays} {t("subs.daysUnit")}</span>,
+          },
+          {
+            key: "remainingDays" as const,
+            header: t("subs.remainingDays"),
+            render: (row: Row) => {
+              if (row.effective === "expired" || row.effective === "cancelled") {
+                return <span className="text-faint tabnum">—</span>;
+              }
+              const color = row.remainingDays <= 7 ? "text-red" : row.remainingDays <= 14 ? "text-amber" : "text-neon";
+              return <span className={`font-bold tabnum ${color}`}>{row.remainingDays} {t("subs.daysUnit")}</span>;
+            },
+          },
+        ]),
     ...(hasPermission("payments.view")
       ? [
           {
@@ -667,22 +692,6 @@ function SubsCard({ ctx }: TabProps) {
                 {t("subs.renew")}
               </Button>
             )}
-            {hasPermission("invitations.manage") && row.effective === "active" && (
-              <Button
-                size="sm"
-                variant="secondary"
-                onClick={() => {
-                  setInvitationSubId(row.id);
-                  setInvitationsModalOpen(true);
-                }}
-                className="border-neon/40 text-neon hover:bg-neon/10"
-                title="دعوة ضيف"
-              >
-                <Ticket className="size-3.5" />
-                {t("members.inviteGuestBtn")}
-              </Button>
-            )}
-            <SubscriptionContractActions subscriptionId={row.id} size="sm" />
             {hasPermission("subscriptions.purge") && (
               <Button
                 size="sm"
@@ -702,55 +711,69 @@ function SubsCard({ ctx }: TabProps) {
     },
   ];
 
+  const gymColumns = buildColumns(false);
+  const classColumns = buildColumns(true);
+
   return (
-    <Card>
-      <CardHeader
-        title={t("members.tabSubs")}
-        action={
-          <div className="flex items-center gap-2">
-            <Select
-              value={statusFilter}
-              onChange={(e) => setStatusFilter(e.target.value)}
-              options={[
-                { value: "all", label: t("subs.filterAll") },
-                { value: "active", label: t("subs.filterActive") },
-                { value: "upcoming", label: t("subs.filterUpcoming") },
-                { value: "expired", label: t("subs.filterExpired") },
-                { value: "suspended", label: t("subs.filterSuspended") },
-                { value: "frozen", label: t("status.frozen") },
-                { value: "cancelled", label: t("subs.filterCancelled") },
-              ]}
-            />
-            {hasPermission("invitations.manage") && ctx.member.status !== "archived" && (
-              <Button
-                variant="secondary"
-                onClick={() => {
-                  setInvitationSubId(undefined);
-                  setInvitationsModalOpen(true);
-                }}
-                className="border-neon/40 text-neon hover:bg-neon/10 font-bold"
-              >
-                <Ticket className="size-4" />
-                {t("members.inviteGuestBtn")}
+    <div className="space-y-4">
+      {/* 1. اشتراكات الجيم والوقت */}
+      <Card>
+        <CardHeader
+          title={t("members.gymSubsTitle")}
+          action={
+            <div className="flex items-center gap-2">
+              <Select
+                value={statusFilter}
+                onChange={(e) => setStatusFilter(e.target.value)}
+                options={[
+                  { value: "all", label: t("subs.filterAll") },
+                  { value: "active", label: t("subs.filterActive") },
+                  { value: "upcoming", label: t("subs.filterUpcoming") },
+                  { value: "expired", label: t("subs.filterExpired") },
+                  { value: "suspended", label: t("subs.filterSuspended") },
+                  { value: "frozen", label: t("status.frozen") },
+                  { value: "cancelled", label: t("subs.filterCancelled") },
+                ]}
+              />
+              {hasPermission("subscriptions.create") && ctx.member.status !== "archived" && (
+                <Button onClick={() => ctx.onAddSubscription("gym")}>
+                  <CalendarPlus className="size-4" />
+                  {t("subs.addSubscription")}
+                </Button>
+              )}
+            </div>
+          }
+        />
+        {gymRows.length === 0 ? (
+          <EmptyState icon={<CalendarPlus />} title={t("members.noGymSubs")} />
+        ) : (
+          <DataTable columns={gymColumns} data={gymRows} rowKey={(r) => r.id} />
+        )}
+      </Card>
+
+      {/* 2. اشتراكات الأكاديمية والحصص الجماعية */}
+      <Card>
+        <CardHeader
+          title={t("members.academySubsTitle")}
+          action={
+            hasPermission("subscriptions.create") && ctx.member.status !== "archived" ? (
+              <Button variant="secondary" onClick={() => ctx.onAddSubscription("academy")}>
+                <Plus className="size-4" />
+                {t("members.addClassSubBtn")}
               </Button>
-            )}
-            {hasPermission("subscriptions.create") && ctx.member.status !== "archived" && (
-              <Button onClick={() => ctx.onAddSubscription()}>
-                <CalendarPlus className="size-4" />
-                {t("subs.addSubscription")}
-              </Button>
-            )}
-          </div>
-        }
-      />
-      {filteredRows.length === 0 ? (
-        <EmptyState icon={<CalendarPlus />} title={t("members.noSubs")} />
-      ) : (
-        <DataTable columns={columns} data={filteredRows} rowKey={(r) => r.id} />
-      )}
+            ) : undefined
+          }
+        />
+        {classRows.length === 0 ? (
+          <EmptyState icon={<CalendarPlus />} title={t("members.noClassSubs")} />
+        ) : (
+          <DataTable columns={classColumns} data={classRows} rowKey={(r) => r.id} />
+        )}
+      </Card>
       {renewSub && (
         <RenewModal
           sub={renewSub}
+          member={ctx.member}
           open
           onClose={() => setRenewSub(null)}
           onDone={() => {
@@ -766,7 +789,7 @@ function SubsCard({ ctx }: TabProps) {
         title={t("subs.purgeConfirmTitle")}
         message={
           purgeTarget
-            ? `${purgeTarget.planName} · ${purgeTarget.startDate} → ${purgeTarget.endDate} — ${t("subs.purgeConfirmMsg")}`
+            ? `${purgeTarget.planName} (${purgeTarget.startDate} إلى ${purgeTarget.endDate}) — ${t("subs.purgeConfirmMsg")}`
             : ""
         }
         confirmLabel={t("subs.purgeAction")}
@@ -809,7 +832,7 @@ function SubsCard({ ctx }: TabProps) {
               <div className="space-y-4">
                 <div className="rounded-lg bg-white/5 p-3 text-sm space-y-2">
                   <div className="flex justify-between"><span className="text-subtle">{t("common.plan")}</span><span className="font-bold">{sub.planName}</span></div>
-                  <div className="flex justify-between"><span className="text-subtle">{t("subs.period")}</span><span dir="ltr" className="tabnum">{sub.startDate} → {sub.endDate}</span></div>
+                  <div className="flex justify-between"><span className="text-subtle">{t("subs.period")}</span><DateRange start={sub.startDate} end={sub.endDate} /></div>
                   <div className="flex justify-between"><span className="text-subtle">{t("subs.totalDays")}</span><span className="tabnum">{totalDays} {t("subs.daysUnit")}</span></div>
                   {eff === "active" && (
                     <div className="flex justify-between">
@@ -851,13 +874,6 @@ function SubsCard({ ctx }: TabProps) {
             );
           })()}
       </Modal>
-      <GuestInvitationsModal
-        open={invitationsModalOpen}
-        onClose={() => setInvitationsModalOpen(false)}
-        memberId={ctx.member.id}
-        memberName={ctx.member.fullName}
-        subscriptionId={invitationSubId}
-      />
-    </Card>
+    </div>
   );
 }

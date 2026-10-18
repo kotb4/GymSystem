@@ -5,20 +5,26 @@ import { useToast } from "@/components/ui/toast";
 import { describeError } from "@/utils/app-error";
 import { api } from "@/api";
 import type { Subscription } from "@/core/services/subscriptions.service";
+import type { PublicMember } from "@/core/services/members.service";
 import { toMinor } from "@/core/money";
+import { todayKey } from "@/core/dates";
+import { Send } from "lucide-react";
+import { buildPaymentReceiptMessage, buildWhatsAppDirectUrl } from "@/core/whatsapp";
 import { Modal } from "@/components/ui/modal";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Select } from "@/components/ui/select";
+import { DateRange } from "@/components/ui/date-range";
 
 interface RenewModalProps {
   sub: Subscription;
+  member?: PublicMember | null;
   open: boolean;
   onClose: () => void;
   onDone: () => void;
 }
 
-export function RenewModal({ sub, open, onClose, onDone }: RenewModalProps) {
+export function RenewModal({ sub, member, open, onClose, onDone }: RenewModalProps) {
   const t = useT();
   const { actor } = useAuth();
   const { toast } = useToast();
@@ -28,7 +34,7 @@ export function RenewModal({ sub, open, onClose, onDone }: RenewModalProps) {
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
-  const onSubmit = async () => {
+  const onSubmit = async (sendWhatsApp = false) => {
     if (!actor) return;
     setSubmitting(true);
     setError(null);
@@ -50,6 +56,37 @@ export function RenewModal({ sub, open, onClose, onDone }: RenewModalProps) {
         });
       }
       toast("success", t("toast.saved"));
+      if (sendWhatsApp && member?.phone) {
+        const msg = buildPaymentReceiptMessage({
+          memberName: member.fullName,
+          memberCode: member.memberCode,
+          planName: sub.planName || undefined,
+          amountPaid: hasPrice ? numPrice : 0,
+          date: todayKey(),
+          notes: notes || undefined,
+        });
+        let sentDirectly = false;
+        try {
+          const res = await api.messages.send({
+            memberId: member.id,
+            segment: "payment",
+            body: msg,
+          });
+          if (res && res.status === "sent") {
+            sentDirectly = true;
+            toast("success", "تم إرسال إيصال وتفاصيل التجديد عبر الواتساب تلقائياً! ✅");
+          }
+        } catch {
+          // gateway offline or failed, fallback to manual direct url
+        }
+        if (!sentDirectly) {
+          const waUrl = buildWhatsAppDirectUrl(member.phone, msg);
+          if (waUrl) {
+            window.open(waUrl, "_blank");
+            toast("info", "تم فتح واتساب لإرسال الإيصال يدوياً لعدم اتصال البوابة");
+          }
+        }
+      }
       onDone();
     } catch (err) {
       setError(describeError(err, t));
@@ -70,7 +107,9 @@ export function RenewModal({ sub, open, onClose, onDone }: RenewModalProps) {
       >
         <div className="rounded-xl border border-line bg-surface px-3.5 py-2.5 text-[13px]">
           <p className="font-bold">{sub.planName}</p>
-          <p dir="ltr" className="mt-0.5 text-faint tabnum">{sub.startDate} ← {sub.endDate}</p>
+          <div className="mt-0.5">
+            <DateRange start={sub.startDate} end={sub.endDate} />
+          </div>
         </div>
         <Input
           label={`${t("subs.pricePaid")} (ج.م)`}
@@ -101,6 +140,20 @@ export function RenewModal({ sub, open, onClose, onDone }: RenewModalProps) {
           </p>
         )}
         <div className="flex items-center gap-2">
+          {member?.phone && (
+            <Button
+              type="button"
+              variant="secondary"
+              loading={submitting}
+              disabled={submitting}
+              onClick={() => void onSubmit(true)}
+              className="text-emerald-400 hover:text-emerald-300 border-emerald-500/30 gap-1.5"
+              title="تجديد الاشتراك وفتح إيصال الواتساب مباشرة"
+            >
+              <Send className="size-3.5" />
+              <span>تجديد وإرسال واتساب</span>
+            </Button>
+          )}
           <Button type="submit" loading={submitting} disabled={submitting}>
             {t("common.save")}
           </Button>

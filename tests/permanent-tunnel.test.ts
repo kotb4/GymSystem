@@ -10,6 +10,7 @@ import { createUser } from "@/core/services/users.service";
 import type { Db } from "@/db/engine";
 import type { ServiceActor } from "@/core/permissions";
 import { createTestDb } from "./helpers/test-db";
+import { getTunnelState, autostartTunnelIfConfigured } from "../server/tunnel";
 
 describe("extractTunnelToken", () => {
   it("extracts a raw token starting with eyJh", () => {
@@ -102,3 +103,43 @@ describe("Permanent Tunnel Settings Integration", () => {
     expect(readAllSettings(db, owner)[SETTING_KEYS.tunnelToken]).toBe("");
   });
 });
+
+describe("getTunnelState and autostartTunnelIfConfigured", () => {
+  let db: Db;
+  let owner: ServiceActor;
+
+  beforeEach(async () => {
+    db = createTestDb();
+    const ownerUser = await setup(db, {
+      gymName: "Yassen Gym",
+      ownerFullName: "Owner User",
+      username: "owner",
+      password: "Password123!",
+    });
+    owner = buildActor(ownerUser);
+  });
+
+  it("returns hasToken: false and token: null when no token is configured", () => {
+    const state = getTunnelState(db);
+    expect(state.hasToken).toBe(false);
+    expect(state.token).toBeNull();
+  });
+
+  it("returns hasToken: true, token, url and mode: permanent when configured", async () => {
+    const token = "eyJhGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.test_token";
+    const url = "https://gym.mybrand.com";
+    await updateSetting(db, owner, SETTING_KEYS.tunnelToken, token);
+    await updateSetting(db, owner, SETTING_KEYS.tunnelUrl, url);
+
+    const state = getTunnelState(db);
+    expect(state.hasToken).toBe(true);
+    expect(state.token).toBe(token);
+    expect(state.url).toBe(url);
+    expect(state.mode).toBe("permanent");
+  });
+
+  it("skips autostart gracefully without throwing when no token is configured", async () => {
+    await expect(autostartTunnelIfConfigured(db)).resolves.not.toThrow();
+  });
+});
+

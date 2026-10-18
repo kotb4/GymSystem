@@ -386,6 +386,8 @@ describe("messages: welcome, payment & smart placeholders", () => {
     expect(row?.segment).toBe("welcome");
     expect(row?.body).toContain("كابتن جديد");
     expect(row?.body).toContain(member.memberCode);
+    expect(row?.body).toContain("/#/portal?token=");
+    expect(row?.body).toContain("Powered by GymGate — KOTB Digital Solutions");
   });
 
   it("sends a payment receipt message with custom amounts", async () => {
@@ -482,5 +484,9 @@ describe("messages: direct wa.me & placeholder engine", () => {
     expect(res).toContain("365 يوم");
     expect(res).toContain("تم دفع 3000 والمتبقي 500");
     expect(res).toContain("10%");
+
+    const portalTmpl = "رابط الكارنيه: {رابط البوابة} أو {الرابط}";
+    const portalRes = fillMessagePlaceholders(portalTmpl, { portalUrl: "http://example.com/portal" });
+    expect(portalRes).toBe("رابط الكارنيه: http://example.com/portal أو http://example.com/portal");
   });
 });

@@ -22,4 +22,12 @@ export const classes = defineService({
   bookMember: a(classesService.bookMember as Fn),
   cancelBooking: a(classesService.cancelBooking as Fn),
   setBookingStatus: a(classesService.setBookingStatus as Fn),
+  createClassWithPackage: a(classesService.createClassWithPackage as Fn),
+  saveSessionAttendanceRoster: a(classesService.saveSessionAttendanceRoster as Fn),
+  payTrainerForSession: a(classesService.payTrainerForSession as Fn),
+  getClassProfitsReport: a(classesService.getClassProfitsReport as Fn),
+  getTrainerProfile: a(classesService.getTrainerProfile as Fn),
+  listClassEnrolledMembers: a(classesService.listClassEnrolledMembers as Fn),
+  recordDirectClassAttendance: a(classesService.recordDirectClassAttendance as Fn),
+  recordBatchClassAttendance: a(classesService.recordBatchClassAttendance as Fn),
 });

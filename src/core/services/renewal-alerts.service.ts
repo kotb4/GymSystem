@@ -52,9 +52,9 @@ function envFlag(name: string): boolean {
 function resolveTransport(db: Db): { transport: MessageTransport | null; provider: "mock" | "whatsapp" | "none" } {
   if (envFlag("GYM_CRM_MOCK")) return { transport: mockTransport, provider: "mock" };
   const enabled = readSetting(db, SETTING_KEYS.whatsappEnabled) === "1";
-  const apiUrl = readSetting(db, SETTING_KEYS.whatsappApiUrl) ?? "";
-  if (enabled && apiUrl.trim() !== "") {
-    return { transport: whatsappTransport(apiUrl.trim()), provider: "whatsapp" };
+  const apiUrl = (readSetting(db, SETTING_KEYS.whatsappApiUrl) || "").trim() || "http://127.0.0.1:8891";
+  if (enabled && apiUrl !== "") {
+    return { transport: whatsappTransport(apiUrl), provider: "whatsapp" };
   }
   return { transport: null, provider: "none" };
 }

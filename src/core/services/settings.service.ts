@@ -31,9 +31,11 @@ export const SETTING_KEYS = {
   backupPasswordSet: "backup_password_set",
   inactiveDays: "inactive_days",
   checkoutEnabled: "attendance_checkout_enabled",
+  occupancyDurationMinutes: "attendance_occupancy_duration_minutes",
   freezeExtendsExpiry: "freeze_extends_expiry",
   whatsappEnabled: "whatsapp_enabled",
   whatsappApiUrl: "whatsapp_api_url",
+  ownerAlertPhone: "owner_alert_phone",
   allowNegativeStock: "allow_negative_stock",
   messagesAbsentDays: "messages_absent_days",
   messagesBirthdayDays: "messages_birthday_days",
@@ -46,6 +48,13 @@ export const SETTING_KEYS = {
   messagesPacingMinSeconds: "messages_pacing_min_seconds",
   messagesPacingMaxSeconds: "messages_pacing_max_seconds",
   messagesCooldownDays: "messages_cooldown_days",
+  whatsappBotEnabled: "whatsapp_bot_enabled",
+  whatsappQuietHoursStart: "whatsapp_quiet_hours_start",
+  whatsappQuietHoursEnd: "whatsapp_quiet_hours_end",
+  whatsappHourlyLimit: "whatsapp_hourly_limit",
+  whatsappDailyLimit: "whatsapp_daily_limit",
+  messagesRenewalTodayTemplate: "messages_renewal_today_template",
+  messagesRenewalAfterTemplate: "messages_renewal_after_template",
   tunnelUrl: "tunnel_url",
   tunnelToken: "tunnel_token",
   systemReadOnly: "system_readonly",
@@ -66,6 +75,22 @@ export const SETTING_KEYS = {
   featureReferralsEnabled: "feature_referrals_enabled",
   featureEmployeesEnabled: "feature_employees_enabled",
   featureHrCheckinEnabled: "feature_hr_checkin_enabled",
+  receiptFooterText: "receipt_footer_text",
+  receiptTerms: "receipt_terms",
+  receiptShowQr: "receipt_show_qr",
+  receiptShowTax: "receipt_show_tax",
+  receiptTaxPercent: "receipt_tax_percent",
+  receiptShowLogo: "receipt_show_logo",
+  receiptLogoData: "receipt_logo_data",
+  receiptLogoWidth: "receipt_logo_width",
+  whatsappBotMenuTemplate: "whatsapp_bot_menu_template",
+  whatsappBotOption0Template: "whatsapp_bot_option0_template",
+  whatsappBotOption1Template: "whatsapp_bot_option1_template",
+  whatsappBotOption2Template: "whatsapp_bot_option2_template",
+  whatsappBotOption3Template: "whatsapp_bot_option3_template",
+  whatsappBotOption4Template: "whatsapp_bot_option4_template",
+  whatsappBotOption5Template: "whatsapp_bot_option5_template",
+  whatsappBotCustomOptionsJson: "whatsapp_bot_custom_options_json",
 } as const;
 
 export type SettingKey = (string & {}) | (typeof SETTING_KEYS)[keyof typeof SETTING_KEYS];
@@ -90,12 +115,37 @@ function intInRange(value: string, min: number, max: number): number {
 const SPECS: Record<string, KeySpec> = {
   [SETTING_KEYS.gymName]: { validate: (v) => v, allowEmpty: true },
   [SETTING_KEYS.receiptTitle]: { validate: (v) => v, allowEmpty: true },
-  [SETTING_KEYS.currencySymbol]: { validate: (v) => v },
+  [SETTING_KEYS.currencySymbol]: { validate: (v) => v || "ج.م", allowEmpty: true },
   [SETTING_KEYS.duplicateWindowSeconds]: {
     validate: (v) => String(intInRange(v, 0, 3600)),
   },
   [SETTING_KEYS.gymPhone]: { validate: (v) => v, allowEmpty: true },
   [SETTING_KEYS.gymAddress]: { validate: (v) => v, allowEmpty: true },
+  [SETTING_KEYS.receiptFooterText]: { validate: (v) => v.slice(0, 500), allowEmpty: true },
+  [SETTING_KEYS.receiptTerms]: { validate: (v) => v.slice(0, 3000), allowEmpty: true },
+  [SETTING_KEYS.receiptShowQr]: {
+    validate: (v) => {
+      if (v !== "1" && v !== "0") throw errValidation("errors.settingBoolInvalid");
+      return v;
+    },
+  },
+  [SETTING_KEYS.receiptShowTax]: {
+    validate: (v) => {
+      if (v !== "1" && v !== "0") throw errValidation("errors.settingBoolInvalid");
+      return v;
+    },
+  },
+  [SETTING_KEYS.receiptTaxPercent]: {
+    validate: (v) => String(intInRange(v, 0, 100)),
+  },
+  [SETTING_KEYS.receiptShowLogo]: {
+    validate: (v) => {
+      if (v !== "1" && v !== "0") throw errValidation("errors.settingBoolInvalid");
+      return v;
+    },
+  },
+  [SETTING_KEYS.receiptLogoData]: { validate: (v) => v, allowEmpty: true },
+  [SETTING_KEYS.receiptLogoWidth]: { validate: (v) => String(intInRange(v, 40, 240)), allowEmpty: true },
   [SETTING_KEYS.workingHours]: { validate: (v) => v.slice(0, 120), allowEmpty: true },
   [SETTING_KEYS.workingDays]: {
     validate: (v) => {
@@ -212,6 +262,7 @@ const SPECS: Record<string, KeySpec> = {
       return v;
     },
   },
+  [SETTING_KEYS.occupancyDurationMinutes]: { validate: (v) => String(intInRange(v, 15, 720)) },
   [SETTING_KEYS.freezeExtendsExpiry]: {
     validate: (v) => {
       if (v !== "1" && v !== "0") throw errValidation("errors.settingBoolInvalid");
@@ -230,6 +281,18 @@ const SPECS: Record<string, KeySpec> = {
       return v;
     },
   },
+  [SETTING_KEYS.ownerAlertPhone]: {
+    allowEmpty: true,
+    validate: (v) => {
+      const trimmed = v.trim();
+      if (!trimmed) return "";
+      const cleaned = trimmed.replace(/[\s\-()]/g, "");
+      if (!/^\+?[0-9]{8,16}$/.test(cleaned)) {
+        throw errValidation("errors.phoneInvalid");
+      }
+      return trimmed;
+    },
+  },
   [SETTING_KEYS.messagesAbsentDays]: { validate: (v) => String(intInRange(v, 1, 365)) },
   [SETTING_KEYS.messagesBirthdayDays]: { validate: (v) => String(intInRange(v, 1, 365)) },
   [SETTING_KEYS.messagesBirthdayTemplate]: { validate: (v) => String(v).slice(0, 3000) },
@@ -238,9 +301,42 @@ const SPECS: Record<string, KeySpec> = {
   [SETTING_KEYS.messagesExpiryDays]: { validate: (v) => String(intInRange(v, 1, 365)) },
   [SETTING_KEYS.messagesWelcomeTemplate]: { validate: (v) => String(v).slice(0, 3000) },
   [SETTING_KEYS.messagesPaymentTemplate]: { validate: (v) => String(v).slice(0, 3000) },
-  [SETTING_KEYS.messagesPacingMinSeconds]: { validate: (v) => String(intInRange(v, 2, 60)) },
-  [SETTING_KEYS.messagesPacingMaxSeconds]: { validate: (v) => String(intInRange(v, 3, 120)) },
+  [SETTING_KEYS.messagesPacingMinSeconds]: { validate: (v) => String(intInRange(v, 2, 120)) },
+  [SETTING_KEYS.messagesPacingMaxSeconds]: { validate: (v) => String(intInRange(v, 3, 300)) },
   [SETTING_KEYS.messagesCooldownDays]: { validate: (v) => String(intInRange(v, 0, 90)) },
+  [SETTING_KEYS.whatsappBotEnabled]: {
+    validate: (v) => {
+      if (v !== "1" && v !== "0") throw errValidation("errors.settingBoolInvalid");
+      return v;
+    },
+  },
+  [SETTING_KEYS.whatsappQuietHoursStart]: { validate: (v) => String(intInRange(v, 0, 23)) },
+  [SETTING_KEYS.whatsappQuietHoursEnd]: { validate: (v) => String(intInRange(v, 0, 23)) },
+  [SETTING_KEYS.whatsappHourlyLimit]: { validate: (v) => String(intInRange(v, 5, 200)) },
+  [SETTING_KEYS.whatsappDailyLimit]: { validate: (v) => String(intInRange(v, 10, 1000)) },
+  [SETTING_KEYS.messagesRenewalTodayTemplate]: { validate: (v) => String(v).slice(0, 3000), allowEmpty: true },
+  [SETTING_KEYS.messagesRenewalAfterTemplate]: { validate: (v) => String(v).slice(0, 3000), allowEmpty: true },
+  [SETTING_KEYS.whatsappBotMenuTemplate]: { validate: (v) => String(v).slice(0, 4000), allowEmpty: true },
+  [SETTING_KEYS.whatsappBotOption0Template]: { validate: (v) => String(v).slice(0, 4000), allowEmpty: true },
+  [SETTING_KEYS.whatsappBotOption1Template]: { validate: (v) => String(v).slice(0, 4000), allowEmpty: true },
+  [SETTING_KEYS.whatsappBotOption2Template]: { validate: (v) => String(v).slice(0, 4000), allowEmpty: true },
+  [SETTING_KEYS.whatsappBotOption3Template]: { validate: (v) => String(v).slice(0, 4000), allowEmpty: true },
+  [SETTING_KEYS.whatsappBotOption4Template]: { validate: (v) => String(v).slice(0, 4000), allowEmpty: true },
+  [SETTING_KEYS.whatsappBotOption5Template]: { validate: (v) => String(v).slice(0, 4000), allowEmpty: true },
+  [SETTING_KEYS.whatsappBotCustomOptionsJson]: {
+    allowEmpty: true,
+    validate: (v) => {
+      const trimmed = v.trim();
+      if (!trimmed) return "";
+      try {
+        const parsed = JSON.parse(trimmed);
+        if (!Array.isArray(parsed)) throw new Error();
+      } catch {
+        throw errValidation("errors.settingValueInvalid", { min: "JSON", max: "Array" });
+      }
+      return trimmed;
+    },
+  },
   [SETTING_KEYS.tunnelUrl]: {
     allowEmpty: true,
     validate: (v) => {
@@ -540,6 +636,10 @@ export function isCheckoutEnabled(db: Db): boolean {
   return toBool(readSetting(db, SETTING_KEYS.checkoutEnabled), false);
 }
 
+export function getOccupancyDurationMinutes(db: Db): number {
+  return toInt(readSetting(db, SETTING_KEYS.occupancyDurationMinutes), 120, 15, 720);
+}
+
 export function freezeExtendsExpiry(db: Db): boolean {
   return toBool(readSetting(db, SETTING_KEYS.freezeExtendsExpiry), true);
 }
@@ -576,9 +676,33 @@ export const DEFAULT_BIRTHDAY_TEMPLATE =
 export const DEFAULT_ABSENT_TEMPLATE =
   "وحشتنا يا {اسم العميل}، من فترة ماشفناكش في النادي. عايزينك ترجع تكمل معانا وبنقدملك خصم {الخصم} على اشتراكك الجديد. رقم عضويتك: {رقم العضوية}";
 
-/** Customizable free-text template used to compose `expiry` outreach messages. */
+/** Customizable free-text template used to compose `expiry` outreach messages (stage 1: upcoming expiry). */
 export const DEFAULT_EXPIRY_TEMPLATE =
   "يا {اسم العميل}، اشتراكك قرب يخلص. عشان متقطعش التدريب بنقدملك تجديد بخصم {الخصم} على اشتراكك الجديد. رقم عضويتك: {رقم العضوية}";
+
+/** Stage 2 renewal reminder: sent on expiry day. */
+export const DEFAULT_RENEWAL_TODAY_TEMPLATE =
+  "تنبيه هام يا {اسم العميل} ⚠️: اليوم هو موعد نهاية اشتراكك بـ {اسم الجيم}. جدد اليوم للحفاظ على استمرارية لياقتك وعروضك! رقم عضويتك: {رقم العضوية}";
+
+/** Stage 3 renewal reminder: sent 3 days after expiry. */
+export const DEFAULT_RENEWAL_AFTER_TEMPLATE =
+  "وحشتنا يا {اسم العميل}! اشتراكك منتهي منذ 3 أيام بـ {اسم الجيم}. بوابتك للتجديد بانتظارك، يسعدنا عودتك وتجديد باقتك في أي وقت! رقم عضويتك: {رقم العضوية}";
+
+export function getMessagesRenewalTodayTemplate(db: Db): string {
+  return readSetting(db, SETTING_KEYS.messagesRenewalTodayTemplate) ?? DEFAULT_RENEWAL_TODAY_TEMPLATE;
+}
+
+export function saveMessagesRenewalTodayTemplate(db: Db, actor: ServiceActor, template: string): void {
+  updateSetting(db, actor, SETTING_KEYS.messagesRenewalTodayTemplate, String(template).slice(0, 3000));
+}
+
+export function getMessagesRenewalAfterTemplate(db: Db): string {
+  return readSetting(db, SETTING_KEYS.messagesRenewalAfterTemplate) ?? DEFAULT_RENEWAL_AFTER_TEMPLATE;
+}
+
+export function saveMessagesRenewalAfterTemplate(db: Db, actor: ServiceActor, template: string): void {
+  updateSetting(db, actor, SETTING_KEYS.messagesRenewalAfterTemplate, String(template).slice(0, 3000));
+}
 
 export function getMessagesBirthdayTemplate(db: Db): string {
   return readSetting(db, SETTING_KEYS.messagesBirthdayTemplate) ?? DEFAULT_BIRTHDAY_TEMPLATE;
@@ -628,7 +752,10 @@ export function getMessagesExpiryDays(db: Db): number {
 
 /** Customizable free-text template used for new member welcome messages. */
 export const DEFAULT_WELCOME_TEMPLATE =
-  "أهلاً بك يا {اسم العميل} في {اسم الجيم}! يسعدنا انضمامك إلينا. رقم عضويتك هو: {رقم العضوية}. نتمنى لك رحلة رياضية موفقة.";
+  "👋 أهلاً بك يا {اسم العميل} في {اسم الجيم}!\n" +
+  "يسعدنا انضمامك لأسرتنا الرياضية.\n\n" +
+  "🆔 كود عضويتك: {رقم العضوية}\n" +
+  "نتمنى لك رحلة تدريبية موفقة ومليئة بالنشاط والبطولات! 💪✨";
 
 /** Customizable free-text template used for payment confirmation receipts. */
 export const DEFAULT_PAYMENT_TEMPLATE =
@@ -659,15 +786,103 @@ export function saveMessagesPaymentTemplate(
 }
 
 export function getMessagesPacingMinSeconds(db: Db): number {
-  return toInt(readSetting(db, SETTING_KEYS.messagesPacingMinSeconds), 8, 2, 60);
+  return toInt(readSetting(db, SETTING_KEYS.messagesPacingMinSeconds), 15, 2, 120);
 }
 
 export function getMessagesPacingMaxSeconds(db: Db): number {
-  return toInt(readSetting(db, SETTING_KEYS.messagesPacingMaxSeconds), 15, 3, 120);
+  return toInt(readSetting(db, SETTING_KEYS.messagesPacingMaxSeconds), 35, 3, 300);
 }
 
 export function getMessagesCooldownDays(db: Db): number {
   return toInt(readSetting(db, SETTING_KEYS.messagesCooldownDays), 7, 0, 90);
+}
+
+export function isWhatsappBotEnabled(db: Db): boolean {
+  return (readSetting(db, SETTING_KEYS.whatsappBotEnabled) ?? "1") === "1";
+}
+
+export const DEFAULT_BOT_MENU_TEMPLATE =
+  `أهلاً بك في *{اسم الجيم}* 🏋️‍♂️✨\n` +
+  `{تحية العضو}` +
+  `يسعدنا خدمتك، يرجى إرسال رقم الخدمة المطلوبة:\n\n` +
+  `1️⃣ تفاصيل اشتراكي وموعد الانتهاء ورابط البوابة\n` +
+  `2️⃣ نسبة إشغال الجيم حالياً\n` +
+  `3️⃣ مواعيد العمل وفترات الشباب والسيدات\n` +
+  `4️⃣ خطط وأسعار الاشتراكات\n` +
+  `5️⃣ كارنيه العضوية والباركود الرقمي للدخول\n` +
+  `0️⃣ التحدث مع موظف الاستقبال\n\n` +
+  `💡 لإظهار هذه القائمة في أي وقت، أرسل كلمة «قائمة».`;
+
+export const DEFAULT_BOT_OPTION_0_TEMPLATE =
+  `تم تحويل محادثتك لموظف الاستقبال في *{اسم الجيم}*. 👤\n` +
+  `سيقوم أحد مسؤولينا بالرد عليك في أقرب وقت ممكن. 🙏✨\n\n` +
+  `💡 (لإعادة فتح القائمة الآلية في أي وقت، أرسل كلمة «قائمة»).`;
+
+export const DEFAULT_BOT_OPTION_1_TEMPLATE =
+  `📋 *بيانات اشتراكك الحالي — {اسم الجيم}:*\n` +
+  `━━━━━━━━━━━━━━━━\n` +
+  `👤 *العضو:* {اسم العضو}\n` +
+  `🆔 *كود العضوية:* {كود العضوية}\n` +
+  `📦 *الباقة:* {اسم الباقة}\n` +
+  `📅 *تاريخ البداية:* {تاريخ البدء}\n` +
+  `📅 *تاريخ الانتهاء:* {تاريخ الانتهاء}\n` +
+  `⏳ *الأيام المتبقية:* {الأيام المتبقية} يوم\n` +
+  `{تفاصيل الحصص}` +
+  `━━━━━━━━━━━━━━━━\n` +
+  `{رابط البوابة}\n` +
+  `لإظهار القائمة الرئيسية، أرسل كلمة «قائمة».`;
+
+export const DEFAULT_BOT_OPTION_2_TEMPLATE =
+  `🏋️‍♂️ *نسبة إشغال {اسم الجيم} الآن:*\n` +
+  `━━━━━━━━━━━━━━━━\n` +
+  `يوجد حالياً *{عدد المتواجدين}* بطلاً يتمرنون في الصالة الرياضية.\n` +
+  `نتمنى لك وقتاً ممتعاً وتدريباً قوياً! 💪🔥\n\n` +
+  `لإظهار القائمة الرئيسية، أرسل كلمة «قائمة».`;
+
+export const DEFAULT_BOT_OPTION_3_TEMPLATE =
+  `⏰ *مواعيد عمل {اسم الجيم}:*\n` +
+  `━━━━━━━━━━━━━━━━\n` +
+  `🕒 *ساعات العمل:* {مواعيد العمل}\n\n` +
+  `📌 *فترات التدريب:*\n` +
+  `• *فترة الرجال:* متاحة طوال أوقات العمل الرسمية.\n` +
+  `• *فترة السيدات:* متاحة وفق جدول الفترات المخصصة بالصالة.\n\n` +
+  `يسعدنا حضوركم وتشريفكم دائماً! ✨💪\n` +
+  `لإظهار القائمة الرئيسية، أرسل كلمة «قائمة».`;
+
+export const DEFAULT_BOT_OPTION_4_TEMPLATE =
+  `🏷️ *خطط وباقات الاشتراكات — {اسم الجيم}:*\n` +
+  `━━━━━━━━━━━━━━━━\n` +
+  `{قائمة الباقات}\n` +
+  `━━━━━━━━━━━━━━━━\n` +
+  `للاشتراك أو الاستفسار عن تفاصيل الباقات، تواصل مع موظف الاستقبال (أرسل 0). ✨`;
+
+export const DEFAULT_BOT_OPTION_5_TEMPLATE =
+  `📲 *كارنيه عضويتك الرقمي للدخول السريع:*\n` +
+  `━━━━━━━━━━━━━━━━\n` +
+  `👤 *العضو:* {اسم العضو}\n` +
+  `🆔 *كود العضوية:* {كود العضوية}\n` +
+  `🔢 *رمز الباركود:* {رمز الباركود}\n` +
+  `━━━━━━━━━━━━━━━━\n` +
+  `يمكنك استخدام هذا الرمز للدخول عند مسح الباركود في الاستقبال! ✨💪`;
+
+
+export function isQuietHours(db: Db): boolean {
+  const start = toInt(readSetting(db, SETTING_KEYS.whatsappQuietHoursStart), 22, 0, 23);
+  const end = toInt(readSetting(db, SETTING_KEYS.whatsappQuietHoursEnd), 9, 0, 23);
+  const currentHour = new Date().getHours();
+  if (start > end) {
+    // Night window crossing midnight e.g. 22:00 to 09:00
+    return currentHour >= start || currentHour < end;
+  }
+  return currentHour >= start && currentHour < end;
+}
+
+export function getWhatsappHourlyLimit(db: Db): number {
+  return toInt(readSetting(db, SETTING_KEYS.whatsappHourlyLimit), 30, 5, 200);
+}
+
+export function getWhatsappDailyLimit(db: Db): number {
+  return toInt(readSetting(db, SETTING_KEYS.whatsappDailyLimit), 150, 10, 1000);
 }
 
 export interface PublicFeatureFlags {

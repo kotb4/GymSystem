@@ -608,7 +608,7 @@ export async function createSale(db: Db, actor: ServiceActor, input: CreateSaleI
   await db.transaction(async () => {
     // Allocated through the shared allocator so the branch prefix matches every
     // other document number (sale_no is NOT NULL, so it must exist at INSERT).
-    const saleNo = nextDocNo(db, "store_sale", ts);
+    const saleNo = nextDocNo(db, "store_sale", ts, actor);
 
     db.run(
       "INSERT INTO store_sales (id, sale_no, items_total_minor, discount_minor, total_minor, cost_total_minor, method_code, member_id, is_credit, status, seller_id, sold_at, notes, created_at, branch_id)\nVALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 'completed', ?, ?, ?, ?, ?)",
@@ -909,7 +909,8 @@ export interface ReturnLineInput {
 
 export interface CreateReturnInput {
   saleId: string;
-  lines: ReturnLineInput[];
+  lines?: ReturnLineInput[];
+  items?: ReturnLineInput[];
   discountMinor?: number;
   reason?: string | null;
 }
@@ -933,7 +934,8 @@ export async function returnStoreSale(db: Db, actor: ServiceActor, input: Create
   }
   assertDepartmentAccess(actor, sale.member_id == null ? actor.department! : memberDepartmentById(db, String(sale.member_id)));
 
-  const lines = input.lines.filter((l) => Number(l.qty) > 0);
+  const rawLines = input.lines ?? input.items ?? [];
+  const lines = rawLines.filter((l) => Number(l.qty) > 0);
   if (lines.length === 0) throw errValidation("errors.store.emptyReturn");
 
   const ts = stamp();
@@ -972,7 +974,7 @@ export async function returnStoreSale(db: Db, actor: ServiceActor, input: Create
 
   await db.transaction(async () => {
     // Shared allocator keeps the branch prefix consistent (see createSale).
-    const returnNo = nextDocNo(db, "store_return", ts);
+    const returnNo = nextDocNo(db, "store_return", ts, actor);
 
     db.run(
       "INSERT INTO store_returns (id, sale_id, return_no, amount_minor, items_total_minor, discount_minor, total_minor, reason, created_by, created_at, box)\nVALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'store')",
@@ -1026,6 +1028,8 @@ export async function returnStoreSale(db: Db, actor: ServiceActor, input: Create
 
   return getStoreReturn(db, actor, returnId);
 }
+
+export const createReturn = returnStoreSale;
 
 // --------------------- store debts (separate from gym debts) --------------
 
@@ -1136,7 +1140,7 @@ export async function repayStoreDebt(
       "INSERT INTO store_debt_payments (id, debt_id, amount_minor, method_code, created_by, created_at)\nVALUES (?, ?, ?, ?, ?, ?)",
       [repaymentId, input.debtId, amount, input.methodCode, actor.userId, ts],
     );
-    assignDocNo(db, "store_debt_payment", repaymentId, ts);
+    assignDocNo(db, "store_debt_payment", repaymentId, ts, actor);
     db.run("UPDATE store_debts SET paid_minor = ?, status = ?, updated_at = ? WHERE id = ?",
       [paidAfter, paidAfter >= num(debt.original_minor) ? "settled" : "open", ts, input.debtId]);
     insertLedgerEntry(db, {

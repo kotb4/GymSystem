@@ -1,20 +1,22 @@
 import { useEffect, useMemo, useState } from "react";
+import { useLocation } from "react-router-dom";
 import { Banknote, RotateCcw, Undo2 } from "lucide-react";
 import { useAuth } from "@/contexts/auth-context";
 import { useT } from "@/i18n";
 import { useToast } from "@/components/ui/toast";
 import { describeError } from "@/utils/app-error";
-import { api, type Payment } from "@/api";
+import { api, type Payment, type PublicUser } from "@/api";
 import type { PaymentStatus } from "@/core/services/payments.service";
 import { formatMinor, minorToMajor } from "@/core/money";
 import { appConfig } from "@/config/app.config";
-import { formatDateShort, formatNumber } from "@/services/format";
+import { formatDateShort, formatNumber, formatTime } from "@/services/format";
 import { Card, CardHeader } from "@/components/ui/card";
 import { StatCard } from "@/components/ui/stat-card";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Select } from "@/components/ui/select";
 import { Badge, type BadgeVariant } from "@/components/ui/badge";
+import { BranchBadge } from "@/components/ui/branch-badge";
 import { DataTable, type Column } from "@/components/ui/table";
 import { EmptyState } from "@/components/ui/empty-state";
 import { Pagination } from "@/components/ui/pagination";
@@ -23,6 +25,7 @@ import { PaymentFormModal } from "@/components/finance/payment-form-modal";
 import { PaymentRefundModal, PaymentVoidModal } from "@/components/finance/payment-actions";
 import { ReceiptActions } from "@/components/finance/receipt-actions";
 import { useFocusRow } from "@/hooks/use-focus-row";
+import { FinanceHubHeader } from "@/components/finance/finance-hub-header";
 
 const STATUS_OPTIONS: Array<{ value: string; key: string }> = [
   { value: "all", key: "common.all" },
@@ -41,14 +44,24 @@ function statusVariant(status: PaymentStatus): BadgeVariant {
 export function PaymentsPage() {
   const t = useT();
   const { actor, hasPermission } = useAuth();
+  const location = useLocation();
+  const locState = location.state as { focusDocNo?: string; focusRowId?: string; autoOpen?: boolean } | null;
   const focusRowId = useFocusRow();
 
-  const [search, setSearch] = useState("");
+  const [search, setSearch] = useState(() => locState?.focusDocNo || "");
+
+  useEffect(() => {
+    if (locState?.focusDocNo) {
+      setSearch(locState.focusDocNo);
+    }
+  }, [locState]);
   const [debounced, setDebounced] = useState("");
   const [fromKey, setFromKey] = useState("");
   const [toKey, setToKey] = useState("");
   const [status, setStatus] = useState("all");
   const [methodCode, setMethodCode] = useState("all");
+  const [createdBy, setCreatedBy] = useState("all");
+  const [users, setUsers] = useState<PublicUser[]>([]);
   const [page, setPage] = useState(1);
   const [items, setItems] = useState<Payment[]>([]);
   const [total, setTotal] = useState(0);
@@ -78,6 +91,12 @@ export function PaymentsPage() {
         if (alive) setMethods(m);
       })
       .catch((err) => console.error(err));
+    api.users
+      .list()
+      .then((u) => {
+        if (alive) setUsers(u);
+      })
+      .catch((err) => console.error(err));
     return () => {
       alive = false;
     };
@@ -95,6 +114,7 @@ export function PaymentsPage() {
         toKey: toKey || undefined,
         status: status as PaymentStatus | "all",
         methodCode,
+        createdBy: createdBy !== "all" ? createdBy : undefined,
       })
       .then((result) => {
         if (alive) {
@@ -106,7 +126,7 @@ export function PaymentsPage() {
     return () => {
       alive = false;
     };
-  }, [actor, debounced, fromKey, toKey, status, methodCode, page, reloadTick]);
+  }, [actor, debounced, fromKey, toKey, status, methodCode, createdBy, page, reloadTick]);
 
   const stats = useMemo(() => {
     let collectedMinor = 0;
@@ -134,6 +154,7 @@ export function PaymentsPage() {
     createdByName: string;
     reason: string | null;
     receiptNo: string | null;
+    referenceNo: string | null;
     payment: Payment;
   }
 
@@ -151,6 +172,7 @@ export function PaymentsPage() {
     createdByName: p.createdByName,
     reason: p.voidReason ?? p.refundReason ?? null,
     receiptNo: p.receiptNo,
+    referenceNo: p.referenceNo,
     payment: p,
   }));
 
@@ -173,8 +195,8 @@ export function PaymentsPage() {
       render: (row) => (
         <span className="tabnum text-subtle">
           {formatDateShort(new Date(row.paidAt.replace(" ", "T")))}
-          <span dir="ltr" className="ms-1 text-[11px] text-faint">
-            {row.paidAt.slice(11, 16)}
+          <span className="ms-1.5 text-[11px] text-faint">
+            {formatTime(row.paidAt)}
           </span>
         </span>
       ),
@@ -224,7 +246,24 @@ export function PaymentsPage() {
           <span className="text-faint">0.00</span>
         ),
     },
-    { key: "method", header: t("pay.colMethod"), render: (row) => <span className="text-subtle">{row.methodLabel}</span> },
+    {
+      key: "method",
+      header: t("pay.colMethod"),
+      render: (row) => (
+        <div>
+          <span className="text-subtle font-medium block">{row.methodLabel}</span>
+          {row.referenceNo && (
+            <span
+              dir="ltr"
+              className="inline-block mt-0.5 rounded bg-muted/20 px-1.5 py-0.5 text-[11px] font-mono font-bold text-cyan tabnum border border-line/50"
+              title={`الرقم المرجعي: ${row.referenceNo}`}
+            >
+              #{row.referenceNo}
+            </span>
+          )}
+        </div>
+      ),
+    },
     {
       key: "status",
       header: t("pay.colStatus"),
@@ -236,6 +275,11 @@ export function PaymentsPage() {
             {t(`payStatus.${row.status}`)}
           </Badge>
         ),
+    },
+    {
+      key: "branch",
+      header: t("common.branch"),
+      render: (row) => <BranchBadge branchId={row.payment.branchId} />,
     },
     { key: "by", header: t("pay.colBy"), render: (row) => <span className="text-faint">{row.createdByName}</span> },
     {
@@ -294,18 +338,22 @@ export function PaymentsPage() {
   const canCreate = hasPermission("payments.create");
 
   return (
-    <div className="space-y-5">
+    <div className="space-y-6">
       <section className="flex flex-wrap items-center justify-between gap-3">
         <div>
           <h2 className="text-2xl font-extrabold tracking-tight">{t("pay.title")}</h2>
+          <p className="text-[13px] text-subtle mt-1">سجل تحصيل الاشتراكات والمدفوعات، وإصدار إيصالات الاستلام، وإدارة المرتجعات</p>
         </div>
         {canCreate && (
-          <Button onClick={() => setFormOpen(true)}>
+          <Button onClick={() => setFormOpen(true)} className="gap-2">
             <Banknote className="size-4" />
             {t("pay.addPayment")}
           </Button>
         )}
       </section>
+
+      {/* Finance Hub Navigation & Live Telemetry Strip */}
+      <FinanceHubHeader currentSection="payments" />
 
       <section className="grid gap-4 sm:grid-cols-2">
         <StatCard
@@ -326,7 +374,7 @@ export function PaymentsPage() {
 
       <Card>
         <CardHeader title={t("common.search")} />
-        <div className="grid gap-3 px-5 pb-4 sm:grid-cols-2 xl:grid-cols-5">
+        <div className="grid gap-3 px-5 pb-4 sm:grid-cols-2 xl:grid-cols-6">
           <Input
             placeholder={t("pay.searchPh")}
             value={search}
@@ -371,6 +419,34 @@ export function PaymentsPage() {
             options={[
               { value: "all", label: t("common.all") },
               ...methods.map((m) => ({ value: m.code, label: m.labelAr })),
+            ]}
+          />
+          <Select
+            label="الموظف / الكاشير"
+            value={createdBy}
+            onChange={(e) => {
+              setCreatedBy(e.target.value);
+              setPage(1);
+            }}
+            options={[
+              { value: "all", label: "جميع الموظفين والمسؤولين" },
+              ...users.map((u) => {
+                const roleLabel =
+                  u.roleId === "owner"
+                    ? " (المالك)"
+                    : u.roleId === "manager"
+                      ? " (المدير)"
+                      : u.roleId === "reception"
+                        ? " (استقبال)"
+                        : u.roleId === "trainer"
+                          ? " (مدرب)"
+                          : "";
+                const codePrefix = u.userCode ? `[${u.userCode}] ` : "";
+                return {
+                  value: u.id,
+                  label: `${codePrefix}${u.fullName || u.username}${roleLabel}`,
+                };
+              }),
             ]}
           />
         </div>

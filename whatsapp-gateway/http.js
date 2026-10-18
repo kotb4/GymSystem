@@ -73,6 +73,10 @@ async function handle(req, res) {
     }
 
     if (req.method === 'POST' && path === '/pair') {
+      if (await wa.isPaired()) {
+        wa.ensureBrowser().catch(() => {});
+        return json(res, 200, { ok: true, paired: true });
+      }
       const launched = await wa.ensureBrowser();
       if (!launched.ok) {
         const msg = launched.error && /engine not installed/i.test(launched.error)
@@ -107,8 +111,17 @@ async function handle(req, res) {
     }
 
     if (req.method === 'GET' && path === '/pair') {
+      if (await wa.isPaired()) {
+        wa.ensureBrowser().catch(() => {});
+        res.writeHead(200, { 'Content-Type': 'text/html; charset=utf-8' });
+        return res.end('<!doctype html><html dir="rtl"><meta charset="utf-8"><body style="font-family:sans-serif"><h2>الجهاز مرتبط بنجاح ✅</h2></body></html>');
+      }
       const { ok } = await wa.ensureBrowser();
-      if (ok && !(await wa.isPaired())) {
+      if (ok && (await wa.isPaired())) {
+        res.writeHead(200, { 'Content-Type': 'text/html; charset=utf-8' });
+        return res.end('<!doctype html><html dir="rtl"><meta charset="utf-8"><body style="font-family:sans-serif"><h2>الجهاز مرتبط بنجاح ✅</h2></body></html>');
+      }
+      if (ok) {
         const qr = await wa.readQr();
         const html = qr
           ? `<img src="data:image/png;base64,${qr.pngBase64}" alt="pairing qr" style="width:256px;height:256px;image-rendering:pixelated"/>
@@ -117,16 +130,26 @@ async function handle(req, res) {
         res.writeHead(200, { 'Content-Type': 'text/html; charset=utf-8' });
         return res.end(`<!doctype html><html dir="rtl"><meta charset="utf-8"><body style="font-family:sans-serif">${html}</body></html>`);
       }
-      if (ok) {
-        res.writeHead(200, { 'Content-Type': 'text/html; charset=utf-8' });
-        return res.end('<!doctype html><html dir="rtl"><meta charset="utf-8"><body style="font-family:sans-serif"><h2>الجهاز مرتبط بنجاح ✅</h2></body></html>');
-      }
       return json(res, 503, { ok: false, error: 'browser unavailable' });
     }
 
     if (req.method === 'GET' && path === '/') {
       res.writeHead(200, { 'Content-Type': 'text/html; charset=utf-8' });
       return res.end('<!doctype html><html dir="rtl"><meta charset="utf-8"><body style="font-family:sans-serif"><h2>واتساب جيت وي</h2><p>بوابة محلية على 127.0.0.1:8891 للطبقة الخلفية فقط.</p></body></html>');
+    }
+
+    if (req.method === 'POST' && (path === '/disconnect' || path === '/logout' || path === '/unpair')) {
+      const result = await wa.disconnect();
+      return json(res, 200, { ok: true, disconnected: true });
+    }
+
+    if (req.method === 'POST' && path === '/shutdown') {
+      json(res, 200, { ok: true, shuttingDown: true });
+      setTimeout(async () => {
+        try { await wa.close(); } catch {}
+        process.exit(0);
+      }, 100);
+      return;
     }
 
     return json(res, 404, { ok: false, error: 'not found' });

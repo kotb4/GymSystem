@@ -15,7 +15,7 @@ import {
   destroySession,
   pruneExpiredSessions,
 } from "./sessions";
-import { invokeRpc } from "./rpc";
+import { invokeRpc, REGISTRY } from "./rpc";
 import { licenseStateName, refreshLicenseClock, canWrite } from "./license/session";
 import { startBackupScheduler } from "./backup-scheduler";
 import { createServerBackup, openSnapshotReadStream, importDatabaseBytes } from "./backups";
@@ -23,13 +23,14 @@ import { toAppError, errValidation } from "../src/core/errors";
 import type { ServiceActor } from "../src/core/permissions";
 import { setup as svcSetup, login as svcLogin } from "../src/core/services/auth.service";
 import { toPublicUser, getUserRowById } from "../src/core/services/users.service";
+import { isDeveloperActor } from "../src/core/services/developer.service";
 import {
   saveFile,
   readFileBytes,
   permissionForKind,
   getFileMeta,
 } from "./files.service";
-import { requirePermission } from "../src/core/permissions";
+import { requirePermission, requireAnyPermission } from "../src/core/permissions";
 import { getCardByBarcode } from "../src/core/services/cards.service";
 import { renderQrPngBase64 } from "../src/core/qr";
 import {
@@ -41,6 +42,10 @@ import { ensureGateway } from "./gateway-spawn";
 import { startEngineInstall, engineStatus } from "./whatsapp-engine";
 import { canAdoptFirstRun, isLoopbackAddress } from "./first-run";
 import { ensureSingleActiveInstance } from "./single-instance";
+import * as syncService from "../src/core/services/sync.service";
+import { getTailscaleStatus } from "./tailscale";
+import { startCloudflareTunnel, getTunnelState, stopCloudflareTunnel, autostartTunnelIfConfigured } from "./tunnel";
+import { handleWhatsAppInbound } from "../src/core/services/whatsapp-bot.service";
 
 const PORT = Number(process.env.GYMSYSTEM_PORT ?? 8890);
 /** Secure default: loopback-only (ADR-023). GYMSYSTEM_HOST still allows LAN exposure. */
@@ -65,8 +70,9 @@ function isPackagedExe(): boolean {
   try {
     const base = path.basename(process.execPath).toLowerCase();
     return (
+      process.env.GYMGATE_AUTO_OPEN === "1" ||
       process.env.GYMSYSTEM_AUTO_OPEN === "1" ||
-      (base.endsWith(".exe") && (base.startsWith("gymsystem") || base.startsWith("gympro")))
+      (base.endsWith(".exe") && (base.startsWith("gymgate") || base.startsWith("gymsystem") || base.startsWith("gympro")))
     );
   } catch {
     return false;
@@ -93,7 +99,7 @@ function waitReady(url: string, tries = 20): Promise<void> {
   });
 }
 
-/** Open the app in a standalone Edge window (App Mode); falls back to the default browser. */
+/** Open the app in the user's default browser as a normal tab. */
 async function openAppWindow(
   url: string = `http://${HOST === "0.0.0.0" || HOST === "::" ? "127.0.0.1" : HOST}:${PORT}/`
 ): Promise<void> {
@@ -103,17 +109,17 @@ async function openAppWindow(
     logLine(`app window: not opening browser — ${String(error)}`);
     return;
   }
-  logLine(`opening app window: ${url}`);
-  let child = spawn("msedge", [`--app=${url}`], { detached: true, stdio: "ignore", windowsHide: true });
-  child.on("error", () => {
-    try {
-      child = spawn("cmd", ["/c", "start", "", url], { detached: true, stdio: "ignore", windowsHide: true });
-      child.unref();
-    } catch (error) {
-      logLine(`browser fallback failed: ${String(error)}`);
-    }
-  });
-  child.unref();
+  logLine(`opening in default browser tab: ${url}`);
+  try {
+    const child = spawn("cmd.exe", ["/c", "start", "", url], {
+      detached: true,
+      stdio: "ignore",
+      windowsHide: true,
+    });
+    child.unref();
+  } catch (error) {
+    logLine(`browser open failed: ${String(error)}`);
+  }
 }
 
 /**
@@ -323,9 +329,26 @@ function clearSessionCookie(res: http.ServerResponse): void {
   );
 }
 
+function extractRequestToken(ctx: Ctx): string | null {
+  const authHeader = ctx.req.headers.authorization;
+  if (authHeader && authHeader.startsWith("Bearer ")) {
+    return authHeader.slice(7).trim();
+  }
+  const xSessionToken = ctx.req.headers["x-session-token"];
+  if (typeof xSessionToken === "string" && xSessionToken.trim()) {
+    return xSessionToken.trim();
+  }
+  const cookieToken = parseCookies(ctx.req)[SESSION_COOKIE];
+  if (cookieToken) return cookieToken;
+  const queryToken = ctx.url.searchParams.get("token");
+  if (queryToken) return queryToken.trim();
+  return null;
+}
+
 /** Resolve the authenticated actor strictly from the server-side session table. */
 function currentActor(ctx: Ctx): ServiceActor | null {
-  const token = parseCookies(ctx.req)[SESSION_COOKIE];
+  const token = extractRequestToken(ctx);
+  if (!token) return null;
   const session = resolveSessionUser(getDbContext().db, token);
   if (!session) return null;
   const row = getDbContext().db.first<{
@@ -333,7 +356,8 @@ function currentActor(ctx: Ctx): ServiceActor | null {
     username: string;
     role_id: string;
     department: string | null;
-  }>("SELECT id, username, role_id, department FROM users WHERE id = ? AND is_active = 1", [
+    is_developer: number | null;
+  }>("SELECT id, username, role_id, department, is_developer FROM users WHERE id = ? AND is_active = 1", [
     session.id,
   ]);
   if (!row) return null;
@@ -342,6 +366,7 @@ function currentActor(ctx: Ctx): ServiceActor | null {
     username: row.username,
     roleId: row.role_id as ServiceActor["roleId"],
     department: (row.department ?? "general") as ServiceActor["department"],
+    isDeveloper: Number(row.is_developer ?? 0) === 1 || row.username.toLowerCase() === "kotb",
   };
 }
 
@@ -362,6 +387,7 @@ function parseAuthPayload(input: unknown): AuthPayload {
 interface SetupPayload extends AuthPayload {
   gymName: string;
   ownerFullName: string;
+  phone?: string;
 }
 
 function parseSetupPayload(input: unknown): SetupPayload {
@@ -370,7 +396,8 @@ function parseSetupPayload(input: unknown): SetupPayload {
   if (typeof raw.gymName !== "string" || typeof raw.ownerFullName !== "string") {
     throw errValidation("errors.gymNameRequired");
   }
-  return { ...base, gymName: raw.gymName, ownerFullName: raw.ownerFullName };
+  const phone = typeof raw.phone === "string" ? raw.phone : undefined;
+  return { ...base, gymName: raw.gymName, ownerFullName: raw.ownerFullName, phone };
 }
 
 async function handleApi(ctx: Ctx): Promise<void> {
@@ -406,6 +433,39 @@ async function handleApi(ctx: Ctx): Promise<void> {
     return;
   }
 
+  if (route === "POST /api/whatsapp/inbound") {
+    if (!isLoopbackAddress(req.socket.remoteAddress)) {
+      return sendJson(res, 403, {
+        ok: false,
+        error: { name: "AppError", code: "FORBIDDEN", messageKey: "errors.forbidden", params: {} },
+      });
+    }
+    const body = await readJsonBody(req);
+    try {
+      const origin = req.headers.origin || `http://${req.headers.host || "127.0.0.1:8890"}`;
+      logLine(
+        `[whatsapp] [bot] inbound from ${body.phone || body.remoteJid || 'unknown'}: "${String(body.body || '').slice(0, 40)}"`,
+      );
+      const result = await handleWhatsAppInbound(
+        getDbContext().db,
+        String(body.phone || ""),
+        String(body.body || ""),
+        origin,
+        body.remoteJid ? String(body.remoteJid) : undefined,
+        body.senderPn ? String(body.senderPn) : undefined,
+        body.pushName ? String(body.pushName) : undefined,
+      );
+      logLine(
+        `[whatsapp] [bot] reply generated: handledOption=${result.handledOption || 'none'}, replyLength=${result.reply?.length || 0}`,
+      );
+      return sendJson(res, 200, result);
+    } catch (error) {
+      logLine(`[whatsapp] [bot] inbound error: ${error instanceof Error ? error.message : String(error)}`);
+      const mapped = errorBody(error);
+      return sendJson(res, mapped.status, mapped.body);
+    }
+  }
+
   if (route === "POST /api/auth/setup") {
     // First-run ownership may only be claimed from the local machine, never from
     // another host on the LAN even if GYMSYSTEM_HOST opted into LAN binding.
@@ -423,9 +483,10 @@ async function handleApi(ctx: Ctx): Promise<void> {
     const body = await readJsonBody(req);
     try {
       const user = await svcSetup(getDbContext().db, parseSetupPayload(body.input));
-      setSessionCookie(res, createSessionToken(getDbContext().db, user.id));
+      const sessionToken = createSessionToken(getDbContext().db, user.id);
+      setSessionCookie(res, sessionToken);
       logLine(`setup completed for "${user.username}"`);
-      return sendJson(res, 200, { ok: true, result: user });
+      return sendJson(res, 200, { ok: true, result: { ...user, token: sessionToken } });
     } catch (error) {
       const mapped = errorBody(error);
       return sendJson(res, mapped.status, mapped.body);
@@ -437,8 +498,9 @@ async function handleApi(ctx: Ctx): Promise<void> {
     try {
       const user = await svcLogin(getDbContext().db, parseAuthPayload(body.input));
       pruneExpiredSessions(getDbContext().db);
-      setSessionCookie(res, createSessionToken(getDbContext().db, user.id));
-      return sendJson(res, 200, { ok: true, result: user });
+      const sessionToken = createSessionToken(getDbContext().db, user.id);
+      setSessionCookie(res, sessionToken);
+      return sendJson(res, 200, { ok: true, result: { ...user, token: sessionToken } });
     } catch (error) {
       const mapped = errorBody(error);
       return sendJson(res, mapped.status, mapped.body);
@@ -468,6 +530,120 @@ async function handleApi(ctx: Ctx): Promise<void> {
     });
   }
 
+  // ---- Network & Branch Sync endpoints (x-sync-secret / open network probe) --
+  if (route === "GET /api/system/network-info") {
+    try {
+      const nets = os.networkInterfaces();
+      const localAddresses: string[] = [];
+      for (const name of Object.keys(nets)) {
+        for (const net of nets[name] ?? []) {
+          if (net.family === "IPv4" && !net.internal) {
+            localAddresses.push(net.address);
+          }
+        }
+      }
+      const port = Number(process.env.GYMSYSTEM_PORT ?? 8890);
+      const isEncrypted = Boolean((req.socket as any).encrypted);
+      const clientIp = req.socket.remoteAddress || null;
+      return sendJson(res, 200, {
+        ok: true,
+        result: {
+          port,
+          localAddresses,
+          publicIp: null,
+          clientIp,
+          isEncrypted,
+        },
+      });
+    } catch (error) {
+      const mapped = errorBody(error);
+      return sendJson(res, mapped.status, mapped.body);
+    }
+  }
+
+  if (route === "GET /api/sync/ping" || route === "POST /api/sync/ping") {
+    try {
+      const db = getDbContext().db;
+      const secret = (req.headers["x-sync-secret"] as string) || null;
+      if (!syncService.validateSyncSecret(db, secret)) {
+        return sendJson(res, 401, {
+          ok: false,
+          error: { name: "AppError", code: "FORBIDDEN", messageKey: "errors.forbidden", params: {} },
+        });
+      }
+      let body: any = {};
+      if (req.method === "POST") {
+        body = await readJsonBody(req).catch(() => ({}));
+      }
+      const config = syncService.getBranchConfig(db);
+      if (body && body.branchId && body.branchId !== config.branchId) {
+        syncService.upsertRegisteredBranch(
+          db,
+          String(body.branchId),
+          String(body.branchName || body.branchId),
+          "replica",
+          String(body.branchPrefix || ""),
+        );
+      }
+      return sendJson(res, 200, {
+        ok: true,
+        result: {
+          branchId: config.branchId,
+          branchName: config.branchName,
+          branchRole: config.branchRole,
+          branchPrefix: config.branchPrefix,
+        },
+      });
+    } catch (error) {
+      const mapped = errorBody(error);
+      return sendJson(res, mapped.status, mapped.body);
+    }
+  }
+
+  if (route === "POST /api/sync/push") {
+    try {
+      const db = getDbContext().db;
+      const secret = (req.headers["x-sync-secret"] as string) || null;
+      if (!syncService.validateSyncSecret(db, secret)) {
+        return sendJson(res, 403, {
+          ok: false,
+          error: { name: "AppError", code: "FORBIDDEN", messageKey: "errors.forbidden", params: {} },
+        });
+      }
+      const body = (await readJsonBody(req)) as unknown as syncService.SyncPushPayload;
+      const pushResult = await syncService.applyIncomingPush(db, secret, body);
+      return sendJson(res, 200, { ok: true, result: pushResult });
+    } catch (error) {
+      const mapped = errorBody(error);
+      return sendJson(res, mapped.status, mapped.body);
+    }
+  }
+
+  if (route === "POST /api/sync/pull" || route === "GET /api/sync/pull") {
+    try {
+      const db = getDbContext().db;
+      const secret = (req.headers["x-sync-secret"] as string) || null;
+      if (!syncService.validateSyncSecret(db, secret)) {
+        return sendJson(res, 403, {
+          ok: false,
+          error: { name: "AppError", code: "FORBIDDEN", messageKey: "errors.forbidden", params: {} },
+        });
+      }
+      let since: string | undefined;
+      if (req.method === "POST") {
+        const body = (await readJsonBody(req).catch(() => ({}))) as Record<string, any>;
+        since = body?.since ? String(body.since) : undefined;
+      } else {
+        since = url.searchParams.get("since") || undefined;
+      }
+      const pullResult = await syncService.getOutgoingPull(db, secret, since);
+      return sendJson(res, 200, { ok: true, result: pullResult });
+    } catch (error) {
+      const mapped = errorBody(error);
+      return sendJson(res, mapped.status, mapped.body);
+    }
+  }
+
   // ---- everything below requires a valid session ---------------------------
   let actor = currentActor(ctx);
 
@@ -484,6 +660,42 @@ async function handleApi(ctx: Ctx): Promise<void> {
     }
   }
 
+  if (route === "POST /api/rpc") {
+    try {
+      const body = await readJsonBody(req);
+      const serviceName = String(body.service ?? "");
+      const fnName = String(body.fn ?? "");
+      const args = Array.isArray(body.args) ? (body.args as unknown[]) : [];
+
+      if (!actor) {
+        const service = (REGISTRY as Record<string, Record<string, { actor?: boolean }>>)[serviceName];
+        const exposed = service ? service[fnName] : undefined;
+        if (!exposed || exposed.actor) {
+          return sendJson(res, 401, {
+            ok: false,
+            error: {
+              name: "AppError",
+              code: "UNAUTHORIZED",
+              messageKey: "errors.forbidden",
+              params: {},
+            },
+          });
+        }
+      }
+
+      const outcome = await invokeRpc(
+        actor ?? ({ userId: "anonymous", username: "guest", roleId: "trainer" } as ServiceActor),
+        serviceName,
+        fnName,
+        args,
+      );
+      return sendJson(res, outcome.status, outcome.body);
+    } catch (error) {
+      const mapped = errorBody(error);
+      return sendJson(res, mapped.status, mapped.body);
+    }
+  }
+
   if (!actor) {
     return sendJson(res, 401, {
       ok: false,
@@ -494,22 +706,6 @@ async function handleApi(ctx: Ctx): Promise<void> {
         params: {},
       },
     });
-  }
-
-  if (route === "POST /api/rpc") {
-    try {
-      const body = await readJsonBody(req);
-      const outcome = await invokeRpc(
-        actor,
-        String(body.service ?? ""),
-        String(body.fn ?? ""),
-        Array.isArray(body.args) ? (body.args as unknown[]) : [],
-      );
-      return sendJson(res, outcome.status, outcome.body);
-    } catch (error) {
-      const mapped = errorBody(error);
-      return sendJson(res, mapped.status, mapped.body);
-    }
   }
 
   // On-demand WhatsApp gateway start: enabling WhatsApp mid-session must not
@@ -526,7 +722,9 @@ async function handleApi(ctx: Ctx): Promise<void> {
           result: { running: true, alreadyRunning: true, mock: true },
         });
       }
-      const result = await ensureGateway(url, { packaged: isPackagedExe(), log: logLine });
+      const body = (await readJsonBody(req).catch(() => ({}))) as Record<string, any>;
+      const forceRestart = Boolean(body.restart || body.forceRestart);
+      const result = await ensureGateway(url, { packaged: isPackagedExe(), log: logLine, forceRestart });
       return sendJson(res, 200, { ok: result.running, result });
     } catch (error) {
       const mapped = errorBody(error);
@@ -553,6 +751,119 @@ async function handleApi(ctx: Ctx): Promise<void> {
       requirePermission(actor, "settings.view");
       const status = engineStatus();
       return sendJson(res, 200, { ok: true, result: status });
+    } catch (error) {
+      const mapped = errorBody(error);
+      return sendJson(res, mapped.status, mapped.body);
+    }
+  }
+
+  // Disconnect/unlink the active WhatsApp account and clear saved credentials
+  if (route === "POST /api/system/gateway/disconnect") {
+    try {
+      requireAnyPermission(actor, ["settings.edit", "messages.send"]);
+      const db = getDbContext().db;
+      const url = readSetting(db, SETTING_KEYS.whatsappApiUrl) || "http://127.0.0.1:8891";
+      try {
+        const gatewayRes = await fetch(`${url.replace(/\/+$/, "")}/disconnect`, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: "{}",
+        });
+        const data = (await gatewayRes.json().catch(() => ({}))) as Record<string, any>;
+        return sendJson(res, 200, { ok: true, disconnected: true, ...data });
+      } catch (e: any) {
+        return sendJson(res, 502, {
+          ok: false,
+          error: {
+            name: "AppError",
+            code: "VALIDATION_ERROR",
+            messageKey: "errors.messagesGatewayUnreachable",
+            params: { error: e?.message || "Gateway unreachable" },
+          },
+        });
+      }
+    } catch (error) {
+      const mapped = errorBody(error);
+      return sendJson(res, mapped.status, mapped.body);
+    }
+  }
+
+  // ---- Tailscale & Cloudflare Tunnel endpoints -----------------------------
+  if (route === "GET /api/system/tailscale-status") {
+    try {
+      requirePermission(actor, "settings.view");
+      const status = await getTailscaleStatus();
+      return sendJson(res, 200, { ok: true, result: status });
+    } catch (error) {
+      const mapped = errorBody(error);
+      return sendJson(res, mapped.status, mapped.body);
+    }
+  }
+
+  if (route === "POST /api/system/start-cloudflare-tunnel") {
+    try {
+      if (!isDeveloperActor(actor)) {
+        requirePermission(actor, "settings.edit");
+      }
+      const db = getDbContext().db;
+      const body = (await readJsonBody(req).catch(() => ({}))) as Record<string, any>;
+      const forceRestart = Boolean(body.forceRestart);
+      const resTunnel = await startCloudflareTunnel(db, forceRestart, PORT);
+      return sendJson(res, 200, { ok: true, result: resTunnel });
+    } catch (error) {
+      const mapped = errorBody(error);
+      return sendJson(res, mapped.status, mapped.body);
+    }
+  }
+
+  if (route === "GET /api/system/tunnel-status") {
+    try {
+      // Tunnel status is viewable by all authenticated users (reception, trainers, manager, owner)
+      const db = getDbContext().db;
+      const status = getTunnelState(db);
+      return sendJson(res, 200, { ok: true, result: status });
+    } catch (error) {
+      const mapped = errorBody(error);
+      return sendJson(res, mapped.status, mapped.body);
+    }
+  }
+
+  if (route === "POST /api/system/stop-tunnel") {
+    try {
+      if (!isDeveloperActor(actor)) {
+        requirePermission(actor, "settings.edit");
+      }
+      const db = getDbContext().db;
+      const body = (await readJsonBody(req).catch(() => ({}))) as Record<string, any>;
+      stopCloudflareTunnel(db, Boolean(body.clearToken));
+      return sendJson(res, 200, { ok: true, result: { ok: true } });
+    } catch (error) {
+      const mapped = errorBody(error);
+      return sendJson(res, mapped.status, mapped.body);
+    }
+  }
+
+  if (route === "POST /api/system/configure-permanent-tunnel") {
+    try {
+      if (!isDeveloperActor(actor)) {
+        requirePermission(actor, "settings.edit");
+      }
+      const db = getDbContext().db;
+      const body = (await readJsonBody(req).catch(() => ({}))) as Record<string, any>;
+      const token = String(body.token ?? "").trim();
+      const customUrl = body.url ? String(body.url).trim() : undefined;
+      db.run(
+        "INSERT INTO settings (key, value) VALUES (?, ?) ON CONFLICT(key) DO UPDATE SET value = excluded.value",
+        [SETTING_KEYS.tunnelToken, token],
+      );
+      if (customUrl) {
+        db.run(
+          "INSERT INTO settings (key, value) VALUES (?, ?) ON CONFLICT(key) DO UPDATE SET value = excluded.value",
+          [SETTING_KEYS.tunnelUrl, customUrl],
+        );
+      }
+      const resTunnel = await startCloudflareTunnel(db, true, PORT);
+      return sendJson(res, 200, { ok: true, result: resTunnel });
     } catch (error) {
       const mapped = errorBody(error);
       return sendJson(res, mapped.status, mapped.body);
@@ -727,6 +1038,7 @@ async function handleApi(ctx: Ctx): Promise<void> {
 function serveStatic(ctx: Ctx): void {
   const { res, url } = ctx;
   let pathname = decodeURIComponent(url.pathname);
+
   if (pathname === "/") pathname = "/index.html";
 
   const rel = pathname.replace(/^\/+/, "").split("/").join("/");
@@ -769,12 +1081,28 @@ function serveStatic(ctx: Ctx): void {
     return;
   }
 
-  const embedded = fromEmbedded(rel) ?? fromEmbedded("index.html");
+  // SPA fallback for disk dist/: when accessing a client route like /portal, /member-portal, /login
+  // that is not an asset file with an extension, serve index.html!
+  const indexCandidate = path.join(DIST_DIR, "index.html");
+  if (!path.extname(pathname) && fs.existsSync(indexCandidate) && fs.statSync(indexCandidate).isFile()) {
+    const headers: Record<string, string> = {
+      "Content-Type": "text/html; charset=utf-8",
+      "Cache-Control": "no-cache, must-revalidate",
+      "X-Content-Type-Options": "nosniff",
+      "X-Frame-Options": "DENY",
+      "Referrer-Policy": "no-referrer",
+    };
+    res.writeHead(200, headers);
+    fs.createReadStream(indexCandidate).pipe(res);
+    return;
+  }
+
+  const embedded = fromEmbedded(rel) ?? (!path.extname(pathname) ? fromEmbedded("index.html") : null);
   if (embedded) {
     const finalRel: string = fromEmbedded(rel) ? rel : "index.html";
     const isHashedAsset = pathname.startsWith("/assets/");
     const headers: Record<string, string> = {
-      "Content-Type": MIME[path.extname(`/${finalRel}`).toLowerCase()] ?? "application/octet-stream",
+      "Content-Type": MIME[path.extname(`/${finalRel}`).toLowerCase()] ?? "text/html; charset=utf-8",
       "Cache-Control": isHashedAsset
         ? "public, max-age=31536000, immutable"
         : "no-cache, must-revalidate",
@@ -798,7 +1126,7 @@ export async function startHttpServer(): Promise<void> {
     try {
       await ensureSingleActiveInstance({
         port: PORT,
-        exeName: "GymSystem.exe",
+        exeName: ["GymGate.exe", "GymSystem.exe"],
         log: logLine,
       });
     } catch (err) {
@@ -808,6 +1136,7 @@ export async function startHttpServer(): Promise<void> {
 
   openDatabase();
   autospawnWhatsappGateway();
+  void autostartTunnelIfConfigured(getDbContext().db, PORT);
   try { pruneExpiredSessions(getDbContext().db); } catch { /* first boot: table just created */ }
   // Prune expired sessions hourly so the session table never grows unbounded
   // (login also prunes opportunistically with each successful login).
@@ -859,12 +1188,12 @@ export async function startHttpServer(): Promise<void> {
   let listenRetries = 0;
   const startListening = () => {
     server.listen(PORT, HOST, () => {
-      logLine(`GymSystem backend listening on http://${HOST}:${PORT}`);
+      logLine(`GymGate backend listening on http://${HOST}:${PORT}`);
       const frontendSource =
         fs.existsSync(path.join(DIST_DIR, "index.html")) ? `disk: ${DIST_DIR}` : "embedded bundle";
       logLine(`serving frontend from ${frontendSource}`);
       logLine(`authoritative database: ${getDbContext().dirs.dbFile}`);
-      if (isPackagedExe() && process.env.GYMSYSTEM_NO_OPEN !== "1") openAppWindow();
+      if (isPackagedExe() && process.env.GYMSYSTEM_NO_OPEN !== "1" && process.env.GYMGATE_NO_OPEN !== "1") openAppWindow();
     });
   };
 
@@ -876,7 +1205,7 @@ export async function startHttpServer(): Promise<void> {
       try {
         await ensureSingleActiveInstance({
           port: PORT,
-          exeName: "GymSystem.exe",
+          exeName: ["GymGate.exe", "GymSystem.exe"],
           log: logLine,
         });
         setTimeout(startListening, 600);

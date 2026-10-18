@@ -10,6 +10,7 @@ import { assignCardByBarcode } from "@/core/services/cards.service";
 import { openCashSession, closeCashSession } from "@/core/services/cash-session.service";
 import { generateOperationVoucher } from "@/core/services/vouchers.service";
 import { searchByDocNo } from "@/core/services/document-numbers.service";
+import { createExpense, createCategory, expenseStats } from "@/core/services/expenses.service";
 import { errForbidden } from "@/core/errors";
 import { createTestDb } from "./helpers/test-db";
 import type { Db } from "@/db/engine";
@@ -62,7 +63,7 @@ describe("operation vouchers", () => {
     const refundId = String(db.scalar("SELECT id FROM payment_refunds LIMIT 1"));
 
     const v = await generateOperationVoucher(db, owner, "refund", refundId);
-    expect(v.docNo).toMatch(/^(?:[A-Z0-9]{1,6}-)?RFD-\d{4}-\d{6}$/);
+    expect(v.docNo).toMatch(/^(?:[A-Z0-9]{1,6}-)+RFD-\d{4}-\d{6}$/);
     expect(v.fileName).toBe(`voucher-${v.docNo}.pdf`);
     const bytes = asPdf(v.base64);
     expect(bytes.subarray(0, 5).toString()).toBe("%PDF-");
@@ -78,7 +79,7 @@ describe("operation vouchers", () => {
 
     await generateOperationVoucher(db, owner, "refund", refundId);
     const receiptNo = String(db.scalar("SELECT receipt_no FROM payments WHERE id = ?", [payment.id]));
-    expect(receiptNo).toMatch(/^(?:[A-Z0-9]{1,6}-)?RCP-\d{4}-\d{6}$/);
+    expect(receiptNo).toMatch(/^(?:[A-Z0-9]{1,6}-)+RCP-\d{4}-\d{6}$/);
     // ...and it is now findable in the lookup.
     expect(searchByDocNo(db, owner, receiptNo)).toHaveLength(1);
   });
@@ -104,7 +105,7 @@ describe("operation vouchers", () => {
     await closeCashSession(db, owner, session.id, 48000, "فرق نقدي");
 
     const v = await generateOperationVoucher(db, owner, "cash_closing", session.id);
-    expect(v.docNo).toMatch(/^(?:[A-Z0-9]{1,6}-)?CS-\d{4}-\d{6}$/);
+    expect(v.docNo).toMatch(/^(?:[A-Z0-9]{1,6}-)+CS-\d{4}-\d{6}$/);
     expect(asPdf(v.base64).subarray(0, 5).toString()).toBe("%PDF-");
   });
 
@@ -117,7 +118,7 @@ describe("operation vouchers", () => {
     const attendanceId = String(db.scalar("SELECT id FROM attendance LIMIT 1"));
 
     const v = await generateOperationVoucher(db, owner, "attendance", attendanceId);
-    expect(v.docNo).toMatch(/^(?:[A-Z0-9]{1,6}-)?ATT-\d{4}-\d{6}$/);
+    expect(v.docNo).toMatch(/^(?:[A-Z0-9]{1,6}-)+ATT-\d{4}-\d{6}$/);
     expect(asPdf(v.base64).subarray(0, 5).toString()).toBe("%PDF-");
   });
 
@@ -136,6 +137,31 @@ describe("operation vouchers", () => {
     );
     // The owner can.
     await expect(generateOperationVoucher(db, owner, "attendance", attendanceId)).resolves.toBeTruthy();
+  });
+
+  it("prints a voucher for an expense and resolves its reference number", async () => {
+    const cat = await createCategory(db, owner, "مرافق وصيانة");
+    const exp = await createExpense(db, owner, {
+      categoryId: cat.id,
+      amountMinor: 75000,
+      description: "صيانة أجهزة المشي",
+      methodCode: "cash",
+    });
+
+    const v = await generateOperationVoucher(db, owner, "expense", exp.id);
+    expect(v.docNo).toMatch(/^(?:[A-Z0-9]{1,6}-)+EXP-\d{4}-\d{6}$/);
+    expect(asPdf(v.base64).subarray(0, 5).toString()).toBe("%PDF-");
+
+    const found = searchByDocNo(db, owner, v.docNo);
+    expect(found[0]?.kind).toBe("expense");
+    expect(found[0]?.rowId).toBe(exp.id);
+
+    const stats = expenseStats(db, owner);
+    expect(stats.todayTotalMinor).toBe(75000);
+    expect(stats.todayCount).toBe(1);
+    expect(stats.monthCashMinor).toBe(75000);
+    expect(stats.topCategoryName).toBe("مرافق وصيانة");
+    expect(stats.topCategoryMinor).toBe(75000);
   });
 
   it("refuses to print a closing that never happened", async () => {

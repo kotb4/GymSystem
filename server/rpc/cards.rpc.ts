@@ -3,6 +3,8 @@ import * as cardDeliveryService from "../../src/core/services/card-delivery.serv
 import { a, p, defineService, type Fn } from "./helpers";
 
 export const cards = defineService({
+  getCardStats: a(cardsService.getCardStats as Fn),
+  autoGenerateCards: a(cardsService.autoGenerateCards as Fn),
   nextBarcodePreview: p(cardsService.nextBarcodePreview as Fn),
   registerCard: a(cardsService.registerCard as Fn),
   assignCardByBarcode: a(cardsService.assignCardByBarcode as Fn),

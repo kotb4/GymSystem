@@ -6,9 +6,10 @@ import { formatDateShort, formatTime } from "@/services/format";
 import { formatMinor } from "@/core/money";
 import { Card, CardHeader } from "@/components/ui/card";
 import { EmptyState } from "@/components/ui/empty-state";
-import { ScanLine, QrCode, Scale, Dumbbell, Activity as ActivityIcon } from "lucide-react";
+import { ScanLine, QrCode, Dumbbell, Activity as ActivityIcon } from "lucide-react";
 import { subStatusMeta } from "@/utils/status-meta";
 import { Badge } from "@/components/ui/badge";
+import { DateRange } from "@/components/ui/date-range";
 import type { TabProps } from "../types";
 import type { PublicCardDelivery } from "@/core/services/card-delivery.service";
 import { permissionDeniedNode } from "../helpers";
@@ -59,7 +60,7 @@ export function OverviewTab({ ctx }: TabProps) {
             {active ? (
               <div className="space-y-1.5">
                 <div className="flex justify-between"><span className="text-subtle">{t("common.plan")}</span><span className="font-bold">{active.planName ?? "—"}</span></div>
-                <div className="flex justify-between"><span className="text-subtle">{t("subs.period")}</span><span dir="ltr" className="tabnum">{active.startDate} ← {active.endDate}</span></div>
+                <div className="flex justify-between"><span className="text-subtle">{t("subs.period")}</span><DateRange start={active.startDate} end={active.endDate} /></div>
                 <div className="flex justify-between"><span className="text-subtle">{t("members.statDaysLeft")}</span><span className="font-bold tabnum">{ctx.overview?.nextSubDaysLeft ?? "—"} {t("subs.daysUnit")}</span></div>
                 {sessionsLeft != null && (
                   <div className="flex justify-between"><span className="text-subtle">{t("members.statVisitsLeft")}</span><span className="font-bold tabnum">{sessionsLeft}</span></div>
@@ -80,7 +81,6 @@ export function OverviewTab({ ctx }: TabProps) {
           </div>
         </Card>
         <RecentAttendanceCard memberId={ctx.member.id} reloadTick={ctx.reloadTick} />
-        <RecentInbodyCard memberId={ctx.member.id} reloadTick={ctx.reloadTick} />
       </div>
       <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
         <RecentDeliveriesCard memberId={ctx.member.id} reloadTick={ctx.reloadTick} />
@@ -132,46 +132,6 @@ function RecentAttendanceCard({ memberId, reloadTick }: { memberId: string; relo
               <li key={i.id} className="flex justify-between">
                 <span className="text-subtle">{t("common.date")}</span>
                 <span dir="ltr" className="tabnum font-semibold">{i.label}</span>
-              </li>
-            ))}
-          </ul>
-        )}
-      </div>
-    </Card>
-  );
-}
-
-function RecentInbodyCard({ memberId, reloadTick }: { memberId: string; reloadTick: number }) {
-  const t = useT();
-  const { hasPermission } = useAuth();
-  const [items, setItems] = useState<Array<{ id: string; assessmentDate: string; weightKg: number | null }>>([]);
-  useEffect(() => {
-    if (!hasPermission("assessments.view")) return;
-    let alive = true;
-    api.inbody
-      .list(memberId, 3)
-      .then((rows) => {
-        if (!alive) return;
-        setItems(rows as Array<{ id: string; assessmentDate: string; weightKg: number | null }>);
-      })
-      .catch(() => undefined);
-    return () => {
-      alive = false;
-    };
-  }, [hasPermission, memberId, reloadTick]);
-  if (!hasPermission("assessments.view")) return null;
-  return (
-    <Card>
-      <CardHeader title={t("inbody.tabTitle")} />
-      <div className="px-5 pb-4 text-sm">
-        {items.length === 0 ? (
-          <EmptyState icon={<Scale />} title={t("inbody.empty")} />
-        ) : (
-          <ul className="space-y-1.5">
-            {items.map((i) => (
-              <li key={i.id} className="flex justify-between">
-                <span dir="ltr" className="tabnum text-subtle">{i.assessmentDate}</span>
-                <span className="font-bold tabnum">{i.weightKg ?? "—"} {t("members.formWeight")}</span>
               </li>
             ))}
           </ul>
@@ -250,7 +210,7 @@ function RecentTrainingCard({ memberId, reloadTick }: { memberId: string; reload
           <ul className="space-y-1.5">
             {items.map((i) => (
               <li key={i.id} className="flex justify-between">
-                <span dir="ltr" className="tabnum text-subtle">{i.startDate} → {i.endDate}</span>
+                <DateRange start={i.startDate} end={i.endDate} />
                 <span className="font-semibold">{i.status}</span>
               </li>
             ))}

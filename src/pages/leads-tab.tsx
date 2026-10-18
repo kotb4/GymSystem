@@ -4,6 +4,7 @@ import {
   CalendarClock,
   Check,
   Columns3,
+  Download,
   MessageCircle,
   Pencil,
   Plus,
@@ -23,6 +24,7 @@ import {
   type LeadSource,
   type LeadStatus,
   type LeadStats,
+  type QuickSessionRow,
 } from "@/api";
 import type { PublicMember } from "@/api";
 import { formatDateShort } from "@/services/format";
@@ -34,7 +36,11 @@ import { Select } from "@/components/ui/select";
 import { Modal } from "@/components/ui/modal";
 import { DataTable, type Column } from "@/components/ui/table";
 import { EmptyState } from "@/components/ui/empty-state";
+import { Pagination } from "@/components/ui/pagination";
 import { MemberPickerModal } from "@/components/members/member-picker-modal";
+import { downloadCsvWithBom } from "@/utils/csv-helper";
+import { buildWhatsAppDirectUrl } from "@/core/whatsapp";
+import { todayKey } from "@/core/dates";
 
 const STATUSES: LeadStatus[] = ["new", "contacted", "interested", "trial", "joined", "lost"];
 const SOURCES: LeadSource[] = [
@@ -212,8 +218,11 @@ function KanbanCard({ lead, onOpen }: { lead: Lead; onOpen: () => void }) {
     <div className="group rounded-lg border border-line bg-raised p-2.5 shadow-sm">
       <button type="button" onClick={onOpen} className="w-full text-start">
         <p className="truncate text-sm font-bold">{lead.fullName}</p>
-        <p className="mt-0.5 flex items-center gap-1 text-[11px] text-faint">
+        <p className="mt-0.5 flex items-center flex-wrap gap-1 text-[11px] text-faint">
           <Badge variant="neutral">{t(`leadsTab.source_${lead.source}`)}</Badge>
+          {(lead.notes?.includes("Day Pass") || lead.notes?.includes("تذكرة")) && (
+            <Badge variant="warning">⚡ تذكرة يومية</Badge>
+          )}
           {lead.assignedEmployeeName && (
             <span className="truncate">{t("leadsTab.assignedTo")}: {lead.assignedEmployeeName}</span>
           )}
@@ -242,6 +251,7 @@ function KanbanCard({ lead, onOpen }: { lead: Lead; onOpen: () => void }) {
 
 function TableView({ refreshKey, onOpen }: { refreshKey: number; onOpen: (l: Lead) => void }) {
   const t = useT();
+  const { toast } = useToast();
   const [rows, setRows] = useState<Lead[]>([]);
   const [total, setTotal] = useState(0);
   const [status, setStatus] = useState("all");
@@ -266,51 +276,110 @@ function TableView({ refreshKey, onOpen }: { refreshKey: number; onOpen: (l: Lea
   }, [status, source, dept, search, page, refreshKey]);
   useEffect(() => { load(); }, [load, refreshKey]);
 
+  const onExportLeads = () => {
+    if (rows.length === 0) {
+      toast("info", t("leadsTab.empty"));
+      return;
+    }
+    const headers = [
+      t("leadsTab.fieldName"),
+      t("leadsTab.fieldPhone"),
+      t("leadsTab.source"),
+      t("leadsTab.status"),
+      t("leadsTab.assignedTo"),
+      t("common.date"),
+      t("leadsTab.fieldNotes"),
+    ];
+    const dataRows = rows.map((r) => [
+      r.fullName,
+      r.phone ?? "—",
+      t(`leadsTab.source_${r.source}`),
+      t(`leadsTab.status_${r.status}`),
+      r.assignedEmployeeName ?? "—",
+      r.createdAt.slice(0, 10),
+      r.notes ?? "",
+    ]);
+    downloadCsvWithBom(`العملاء_المحتملين_${todayKey()}`, headers, dataRows);
+    toast("success", t("leadsTab.exportSuccess"));
+  };
+
   const columns: Column<Lead>[] = [
     { key: "name", header: t("leadsTab.fieldName"), render: (r) => (
       <button type="button" onClick={() => onOpen(r)} className="font-bold hover:text-neon">{r.fullName}</button>
     ) },
     { key: "phone", header: t("leadsTab.fieldPhone"), render: (r) => <span dir="ltr" className="tabnum text-subtle">{r.phone ?? "—"}</span> },
-    { key: "source", header: t("leadsTab.source"), render: (r) => <Badge variant="neutral">{t(`leadsTab.source_${r.source}`)}</Badge> },
+    { key: "source", header: t("leadsTab.source"), render: (r) => (
+      <div className="flex items-center gap-1">
+        <Badge variant="neutral">{t(`leadsTab.source_${r.source}`)}</Badge>
+        {(r.notes?.includes("Day Pass") || r.notes?.includes("تذكرة")) && (
+          <Badge variant="warning">⚡ تذكرة</Badge>
+        )}
+      </div>
+    ) },
     { key: "status", header: t("leadsTab.status"), render: (r) => <Badge variant={statusVariant(r.status)} dot>{t(`leadsTab.status_${r.status}`)}</Badge> },
     { key: "assigned", header: t("leadsTab.assignedTo"), render: (r) => r.assignedEmployeeName ?? "—" },
     { key: "created", header: t("common.date"), render: (r) => (
       <span dir="ltr" className="tabnum text-subtle">{formatDateShort(new Date(r.createdAt.slice(0, 10) + "T00:00:00"))}</span>
     ) },
+    {
+      key: "actions",
+      header: t("common.actions"),
+      render: (r) => {
+        const waUrl = r.phone ? buildWhatsAppDirectUrl(r.phone, `مرحباً ${r.fullName}، يسعدنا تواصلك مع نادينا! كيف يمكننا مساعدتك اليوم؟`) : null;
+        return (
+          <div className="flex items-center gap-1.5">
+            {waUrl ? (
+              <a
+                href={waUrl}
+                target="_blank"
+                rel="noreferrer"
+                className="inline-flex size-7 items-center justify-center rounded-lg border border-line bg-panel text-emerald-400 hover:bg-emerald-500/10 transition-colors"
+                title={t("leadsTab.waChat")}
+              >
+                <MessageCircle className="size-3.5" />
+              </a>
+            ) : null}
+            <Button size="sm" variant="ghost" onClick={() => onOpen(r)}>
+              <Pencil className="size-3.5" />
+            </Button>
+          </div>
+        );
+      },
+    },
   ];
 
   const totalPages = Math.max(1, Math.ceil(total / pageSize));
 
   return (
     <div className="space-y-3">
-      <div className="flex flex-wrap items-end gap-3">
-        <div className="w-56">
-          <Input label="" placeholder={t("leadsTab.searchPh")} value={search} onChange={(e) => { setSearch(e.target.value); setPage(1); }} />
+      <div className="flex flex-wrap items-end justify-between gap-3">
+        <div className="flex flex-wrap items-end gap-3">
+          <div className="w-56">
+            <Input label="" placeholder={t("leadsTab.searchPh")} value={search} onChange={(e) => { setSearch(e.target.value); setPage(1); }} />
+          </div>
+          <div className="w-40">
+            <Select label="" value={status} onChange={(e) => { setStatus(e.target.value); setPage(1); }}
+              options={[{ value: "all", label: t("leadsTab.statusAll") }, ...STATUSES.map((s) => ({ value: s, label: t(`leadsTab.status_${s}`) }))]} />
+          </div>
+          <div className="w-40">
+            <Select label="" value={source} onChange={(e) => { setSource(e.target.value); setPage(1); }}
+              options={[{ value: "all", label: t("leadsTab.sourceAll") }, ...SOURCES.map((s) => ({ value: s, label: t(`leadsTab.source_${s}`) }))]} />
+          </div>
+          <div className="w-40">
+            <Select label="" value={dept} onChange={(e) => { setDept(e.target.value); setPage(1); }}
+              options={[{ value: "all", label: t("leadsTab.departmentAll") }, ...DEPTS.map((d) => ({ value: d, label: t(`leadsTab.department_${d}`) }))]} />
+          </div>
         </div>
-        <div className="w-40">
-          <Select label="" value={status} onChange={(e) => { setStatus(e.target.value); setPage(1); }}
-            options={[{ value: "all", label: t("leadsTab.statusAll") }, ...STATUSES.map((s) => ({ value: s, label: t(`leadsTab.status_${s}`) }))]} />
-        </div>
-        <div className="w-40">
-          <Select label="" value={source} onChange={(e) => { setSource(e.target.value); setPage(1); }}
-            options={[{ value: "all", label: t("leadsTab.sourceAll") }, ...SOURCES.map((s) => ({ value: s, label: t(`leadsTab.source_${s}`) }))]} />
-        </div>
-        <div className="w-40">
-          <Select label="" value={dept} onChange={(e) => { setDept(e.target.value); setPage(1); }}
-            options={[{ value: "all", label: t("leadsTab.departmentAll") }, ...DEPTS.map((d) => ({ value: d, label: t(`leadsTab.department_${d}`) }))]} />
-        </div>
+        <Button variant="secondary" size="sm" onClick={onExportLeads}>
+          <Download className="size-3.5" />
+          {t("leadsTab.exportLeads")}
+        </Button>
       </div>
       {rows.length === 0
         ? <EmptyState icon={<UserPlus />} title={t("leadsTab.empty")} />
         : <DataTable columns={columns} data={rows} rowKey={(r) => r.id} />}
       {totalPages > 1 && (
-        <div className="flex items-center justify-between text-xs text-subtle">
-          <span>{t("leadsTab.pageCount", { page, total: totalPages })}</span>
-          <div className="flex gap-2">
-            <Button size="sm" variant="secondary" disabled={page <= 1} onClick={() => setPage((p) => p - 1)}>←</Button>
-            <Button size="sm" variant="secondary" disabled={page >= totalPages} onClick={() => setPage((p) => p + 1)}>→</Button>
-          </div>
-        </div>
+        <Pagination page={page} pageSize={pageSize} total={total} onPageChange={setPage} />
       )}
     </div>
   );
@@ -445,6 +514,7 @@ function LeadDetailModal({ leadId, onClose, onChanged }: { leadId: string | null
   const [lead, setLead] = useState<Lead | null>(null);
   const [followups, setFollowups] = useState<LeadFollowup[]>([]);
   const [activity, setActivity] = useState<LeadActivity[]>([]);
+  const [dayPasses, setDayPasses] = useState<QuickSessionRow[]>([]);
   const [editOpen, setEditOpen] = useState(false);
   const [convertPicker, setConvertPicker] = useState(false);
   const [addFollowupOpen, setAddFollowupOpen] = useState(false);
@@ -454,9 +524,19 @@ function LeadDetailModal({ leadId, onClose, onChanged }: { leadId: string | null
     api.lead.get(leadId).then(setLead).catch(console.error);
     api.lead.listFollowups(leadId).then(setFollowups).catch(console.error);
     api.lead.listActivity(leadId).then(setActivity).catch(console.error);
+    api.quickSessions
+      .list({ leadId, limit: 10 })
+      .then((res) => setDayPasses(res.items))
+      .catch(() => {});
   }, [leadId]);
   useEffect(() => {
-    if (!leadId) { setLead(null); setFollowups([]); setActivity([]); return; }
+    if (!leadId) {
+      setLead(null);
+      setFollowups([]);
+      setActivity([]);
+      setDayPasses([]);
+      return;
+    }
     load();
   }, [leadId, load]);
 
@@ -574,6 +654,42 @@ function LeadDetailModal({ leadId, onClose, onChanged }: { leadId: string | null
                 <Button size="sm" variant="danger" onClick={() => { if (confirm(t("leadsTab.deleteConfirm"))) void remove(); }}>
                   <Trash2 className="size-3.5" />{t("leadsTab.delete")}
                 </Button>
+              </div>
+            </div>
+          )}
+
+          {/* Day Pass & Quick Sessions History */}
+          {dayPasses.length > 0 && (
+            <div className="border-t border-line pt-3">
+              <div className="mb-2 flex items-center justify-between">
+                <p className="text-sm font-bold flex items-center gap-2 text-amber-300">
+                  <span>⚡ تذاكر التمرين والزيارات السريعة (Day Passes)</span>
+                  <Badge variant="warning">{dayPasses.length}</Badge>
+                </p>
+              </div>
+              <div className="space-y-1.5">
+                {dayPasses.map((dp) => (
+                  <div
+                    key={dp.id}
+                    className="flex items-center justify-between rounded-xl border border-amber-500/20 bg-amber-500/5 px-3 py-2 text-xs"
+                  >
+                    <div>
+                      <p className="font-bold text-amber-100">{dp.session_name}</p>
+                      <p className="text-subtle text-[11px] mt-0.5">
+                        <span dir="ltr">{dp.session_date} {dp.session_time}</span>
+                        {dp.trainer_name && <span> · كابتن: {dp.trainer_name}</span>}
+                      </p>
+                    </div>
+                    <div className="text-end">
+                      <span className="font-extrabold text-amber-300 tabnum">
+                        {(dp.paid_amount_minor / 100).toFixed(0)} ج.م
+                      </span>
+                      <Badge variant="neutral" className="block text-[10px] mt-0.5">
+                        {dp.method_code}
+                      </Badge>
+                    </div>
+                  </div>
+                ))}
               </div>
             </div>
           )}

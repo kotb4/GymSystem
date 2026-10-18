@@ -1,6 +1,5 @@
 import { useEffect, useState, useCallback } from "react";
 import {
-  ShieldAlert,
   KeyRound,
   RefreshCw,
   PowerOff,
@@ -13,7 +12,6 @@ import {
   AlertTriangle,
   RotateCcw,
   Trash2,
-  Sparkles,
   Database,
   CalendarDays,
   X,
@@ -376,22 +374,6 @@ export function DeveloperPage() {
     }
   };
 
-  const handleSeedDemoData = async () => {
-    if (!window.confirm(t("developer.confirmSeedDemo"))) return;
-    try {
-      setActionLoading(true);
-      const result = await api.dev.seedDemoData();
-      if (result.success) {
-        toast("success", t("developer.seedDemoSuccess"));
-        await loadData();
-      }
-    } catch (err) {
-      toast("error", describeError(err, t));
-    } finally {
-      setActionLoading(false);
-    }
-  };
-
   const handlePurgeDataDirectory = async () => {
     if (!window.confirm(t("developer.confirmPurgeDataDir1"))) return;
     if (!window.confirm(t("developer.confirmPurgeDataDir2"))) return;
@@ -420,23 +402,28 @@ export function DeveloperPage() {
 
   return (
     <div className="space-y-6">
-      {/* Top Banner & Title */}
-      <div className="relative overflow-hidden rounded-2xl border border-neon/30 bg-gradient-to-r from-neon/10 via-surface to-cyan/10 p-6 shadow-glow-sm">
+      {/* Top Banner & Title with KOTB Identity */}
+      <div className="relative overflow-hidden rounded-2xl border border-[#0055FF]/40 bg-gradient-to-r from-[#0055FF]/15 via-surface to-[#00D2FF]/10 p-6 shadow-glow-sm">
         <div className="flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
-          <div className="flex items-center gap-3.5">
-            <div className="grid size-12 place-items-center rounded-xl border border-neon/40 bg-neon/15 text-neon shadow-glow-sm">
-              <ShieldAlert className="size-6" />
-            </div>
+          <div className="flex items-center gap-4">
+            <img
+              src="/branding/kotb-logo.png"
+              alt="KOTB Digital Solutions"
+              className="h-10 object-contain drop-shadow-sm select-none"
+            />
+            <div className="h-9 w-px bg-white/10 hidden sm:block" />
             <div>
               <div className="flex items-center gap-2">
-                <h1 className="text-xl font-extrabold tracking-tight text-ink">
+                <h1 className="text-xl font-extrabold tracking-tight text-ink font-sans">
                   {t("developer.title")}
                 </h1>
                 <Badge variant="success">
                   {t("developer.badge")}
                 </Badge>
               </div>
-              <p className="mt-1 text-xs text-subtle">{t("developer.subtitle")}</p>
+              <p className="mt-0.5 text-xs text-[#00D2FF] font-semibold">
+                GymGate — Powered by KOTB Digital Solutions  •  Enterprise Developer Console
+              </p>
             </div>
           </div>
           <div className="flex items-center gap-2">
@@ -448,16 +435,6 @@ export function DeveloperPage() {
             >
               <RefreshCw className="size-3.5" />
               <span>{t("common.reload")}</span>
-            </Button>
-            <Button
-              variant="secondary"
-              size="sm"
-              loading={actionLoading}
-              onClick={() => void handleSeedDemoData()}
-              className="border-neon/30 text-neon hover:bg-neon/10"
-            >
-              <Sparkles className="size-3.5" />
-              <span>{t("developer.btnSeedDemo")}</span>
             </Button>
             <Button
               variant="primary"
@@ -1077,16 +1054,6 @@ export function DeveloperPage() {
                     onCheckedChange={(val) => void handleToggleFeatureFlag("featureClassesEnabled", val)}
                   />
                 </div>
-                <div className="flex items-center justify-between">
-                  <div className="space-y-0.5">
-                    <p className="text-sm font-bold text-ink">{t("developer.flagInbodyTitle")}</p>
-                    <p className="text-xs text-subtle">{t("developer.flagInbodyDesc")}</p>
-                  </div>
-                  <Checkbox
-                    checked={featureFlags?.featureInbodyEnabled ?? true}
-                    onCheckedChange={(val) => void handleToggleFeatureFlag("featureInbodyEnabled", val)}
-                  />
-                </div>
               </div>
 
               {/* Marketing & CRM */}
@@ -1427,6 +1394,21 @@ export function DeveloperPage() {
           />
         </div>
       </Modal>
+      {/* Executive Attribution Footer */}
+      <div className="mt-8 rounded-2xl border border-[#0055FF]/25 bg-[#06080D] p-4 text-center shadow-card space-y-1">
+        <div className="flex items-center justify-center gap-2">
+          <img src="/branding/kotb-k-icon.png" alt="K" className="size-4 object-contain" />
+          <span className="text-xs font-black tracking-wider text-white uppercase font-sans">
+            KOTB Digital Solutions
+          </span>
+        </div>
+        <p className="text-xs text-[#94A3B8]">
+          GymGate — Powered by KOTB Digital Solutions
+        </p>
+        <p className="text-xs text-[#64748B] font-sans">
+          قُطب للحلول الرقمية • Enterprise System Architecture © 2026
+        </p>
+      </div>
     </div>
   );
 }

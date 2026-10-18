@@ -31,7 +31,7 @@ beforeEach(async () => {
     username: "owner",
     password: "Owner@2026",
   });
-  owner = buildActor(ownerUser);
+  owner = { ...buildActor(ownerUser), isDeveloper: true };
 
   const recUser = await createUser(db, owner, {
     username: "receptionist",
@@ -71,6 +71,15 @@ describe("Offline-First Multi-Branch Sync Service", () => {
   it("rejects branch configuration updates without permission", async () => {
     await expect(
       updateBranchConfig(db, reception, {
+        branchName: "فرع محظور",
+      }),
+    ).rejects.toThrow();
+  });
+
+  it("rejects branch configuration updates for non-developer account", async () => {
+    const nonDevUser = { ...owner, isDeveloper: false };
+    await expect(
+      updateBranchConfig(db, nonDevUser, {
         branchName: "فرع محظور",
       }),
     ).rejects.toThrow();

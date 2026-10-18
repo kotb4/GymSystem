@@ -96,7 +96,8 @@ export function SubscriptionContractActions({
     setConfirmSend(false);
     setBusy("send");
     try {
-      const { delivery } = await api.pdf.sendSubscriptionContract(subscriptionId);
+      const res = await api.pdf.sendSubscriptionContract(subscriptionId);
+      const delivery = res.delivery;
       if (delivery.status === "sent") {
         toast("success", t("pdf.sentToast"));
       } else if (delivery.status === "not_configured") {
@@ -124,8 +125,8 @@ export function SubscriptionContractActions({
           <Printer className="size-3.5" />
           {t("subs.contractPrint")}
         </Button>
-        <Button variant="ghost" size={size} onClick={() => setConfirmSend(true)} disabled={busy !== null}>
-          {busy === "send" ? <FileText className="size-3.5" /> : <Send className="size-3.5" />}
+        <Button variant="ghost" size={size} onClick={() => setConfirmSend(true)} disabled={busy !== null} title={t("subs.contractSend")}>
+          {busy === "send" ? <FileText className="size-3.5" /> : <Send className="size-3.5 text-neon" />}
           {busy === "send" ? t("pdf.receiptSending") : t("subs.contractSend")}
         </Button>
       </div>

@@ -327,16 +327,29 @@ export function insertLedgerEntry(db: Db, input: LedgerInput): number {
   );
 }
 
+export type RefundPaymentInput = {
+  paymentId: string;
+  amountMinor: number;
+  reason: string;
+  methodCode?: string;
+};
+
 export async function refundPayment(
   db: Db,
   actor: ServiceActor,
-  paymentId: string,
-  amountMinor: number,
-  reason: string,
+  paymentIdOrInput: string | RefundPaymentInput,
+  amountMinor?: number,
+  reason?: string,
   methodCode?: string,
 ): Promise<Payment> {
   requirePermission(actor, "payments.refund");
-  const trimmedReason = reason.trim();
+  const isObj = typeof paymentIdOrInput === "object" && paymentIdOrInput !== null;
+  const paymentId = isObj ? paymentIdOrInput.paymentId : paymentIdOrInput;
+  const actualAmountMinor = isObj ? paymentIdOrInput.amountMinor : amountMinor!;
+  const rawReason = isObj ? paymentIdOrInput.reason : reason!;
+  const actualMethodCode = isObj ? paymentIdOrInput.methodCode : methodCode;
+
+  const trimmedReason = (rawReason ?? "").trim();
   if (trimmedReason.length < 3) throw errValidation("errors.finance.refundReasonRequired");
 
   const row = getPaymentRow(db, paymentId);
@@ -344,12 +357,12 @@ export async function refundPayment(
   if (row.status === "voided") throw errConflict("errors.finance.paymentVoided");
   assertDepartmentAccess(actor, memberDepartmentById(db, String(row.member_id)));
 
-  const refundMinor = Math.round(amountMinor);
+  const refundMinor = Math.round(actualAmountMinor);
   if (!Number.isFinite(refundMinor) || refundMinor <= 0) {
     throw errValidation("errors.finance.invalidRefundAmount");
   }
 
-  const method = methodCode ?? row.method_code;
+  const method = actualMethodCode ?? row.method_code;
   resolveMethod(db, method);
 
   const refundId = crypto.randomUUID();
@@ -372,7 +385,7 @@ export async function refundPayment(
     "INSERT INTO payment_refunds (id, payment_id, amount_minor, reason, method_code, created_by, created_at)\nVALUES (?, ?, ?, ?, ?, ?, ?)",
     [refundId, paymentId, refundMinor, trimmedReason, method, actor.userId, stamp],
   );
-  assignDocNo(db, "refund", refundId, stamp);
+    assignDocNo(db, "refund", refundId, stamp, actor);
     const newRefunded = Number(freshRow.refunded_amount_minor) + refundMinor;
     const nextStatus: PaymentStatus = newRefunded >= Number(freshRow.paid_amount_minor) ? "refunded" : (row.status as PaymentStatus);
     db.run("UPDATE payments SET refunded_amount_minor = ?, status = ?, updated_at = ? WHERE id = ?", [

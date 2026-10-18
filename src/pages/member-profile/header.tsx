@@ -13,6 +13,15 @@ import {
   Undo2,
   UserPlus,
   X,
+  Globe,
+  Phone,
+  Mail,
+  Calendar,
+  Layers,
+  MapPin,
+  Ruler,
+  Weight,
+  UserCheck,
 } from "lucide-react";
 import { useAuth } from "@/contexts/auth-context";
 import { useT } from "@/i18n";
@@ -32,6 +41,7 @@ import { Card } from "@/components/ui/card";
 import { ConfirmDialog } from "@/components/ui/confirm-dialog";
 import { CameraCapture } from "@/components/ui/camera-capture";
 import { QuickWhatsAppModal } from "@/components/messages/quick-whatsapp-modal";
+import { MemberPortalLinkModal } from "@/components/members/member-portal-link-modal";
 
 interface MemberHeaderProps {
   member: PublicMember;
@@ -42,27 +52,32 @@ interface MemberHeaderProps {
   onInviteGuest?: () => void;
 }
 
-function InfoRow({
+function AttributeChip({
+  icon,
   label,
   value,
   ltr,
   className,
 }: {
+  icon?: React.ReactNode;
   label: string;
-  value: string;
+  value: string | React.ReactNode;
   ltr?: boolean;
   className?: string;
 }) {
   return (
-    <div className={`flex min-w-0 flex-wrap items-baseline gap-1.5 sm:gap-2 ${className ?? ""}`}>
-      <dt className="shrink-0 text-xs font-semibold text-faint">{label}:</dt>
-      <dd
+    <div className={`rounded-xl border border-line bg-surface/50 p-2.5 flex flex-col justify-between min-w-0 transition-colors hover:border-line-strong ${className ?? ""}`}>
+      <div className="flex items-center gap-1.5 text-faint mb-1">
+        {icon && <span className="shrink-0 size-3.5 text-faint flex items-center justify-center">{icon}</span>}
+        <span className="text-[11px] font-semibold text-subtle truncate">{label}</span>
+      </div>
+      <div
         dir={ltr ? "ltr" : undefined}
-        title={value}
-        className="min-w-0 font-bold tabnum text-foreground"
+        title={typeof value === "string" ? value : undefined}
+        className="text-xs font-bold text-ink truncate tabnum"
       >
         {value}
-      </dd>
+      </div>
     </div>
   );
 }
@@ -85,6 +100,7 @@ export function MemberHeader({
   const [photoBusy, setPhotoBusy] = useState(false);
   const [cameraOpen, setCameraOpen] = useState(false);
   const [whatsAppOpen, setWhatsAppOpen] = useState(false);
+  const [portalModalOpen, setPortalModalOpen] = useState(false);
   const fileInputRef = useRef<HTMLInputElement>(null);
 
   const statusMeta = memberStatusMeta(t, member.status);
@@ -163,158 +179,143 @@ export function MemberHeader({
   };
 
   return (
-    <Card>
-      <div className="flex flex-wrap items-start gap-4 p-5">
-        <div className="relative shrink-0">
-          {member.photoFileId ? (
-            <img
-              src={api.files.url(member.photoFileId)}
-              alt={member.fullName}
-              className="size-20 rounded-xl object-cover"
-            />
-          ) : (
-            <Avatar name={member.fullName} size="lg" />
-          )}
-          {hasPermission("members.edit") && (
-            <div className="absolute -bottom-1 -left-1 flex gap-1">
-              <button
-                type="button"
-                disabled={photoBusy}
-                onClick={() => setCameraOpen(true)}
-                className="grid size-7 place-items-center rounded-lg border border-line bg-card text-subtle transition-colors hover:text-ink disabled:opacity-50"
-                title={t("members.formPhotoCamera")}
-              >
-                <Camera className="size-3.5" />
-              </button>
-              <input
-                ref={fileInputRef}
-                type="file"
-                accept="image/jpeg,image/png,image/webp"
-                className="hidden"
-                onChange={onPhotoUpload}
+    <Card className="overflow-hidden">
+      {/* 1. Hero / Main Info & Action Bar */}
+      <div className="flex flex-col lg:flex-row lg:items-center justify-between gap-4 p-5 bg-panel/40 border-b border-line">
+        {/* Right side (RTL): Avatar + Member Header Essentials */}
+        <div className="flex items-center gap-4 min-w-0">
+          <div className="relative shrink-0">
+            {member.photoFileId ? (
+              <img
+                src={api.files.url(member.photoFileId)}
+                alt={member.fullName}
+                className="size-20 rounded-2xl object-cover border border-line shadow-card"
               />
-              <button
-                type="button"
-                disabled={photoBusy}
-                onClick={() => fileInputRef.current?.click()}
-                className="grid size-7 place-items-center rounded-lg border border-line bg-card text-subtle transition-colors hover:text-ink disabled:opacity-50"
-                title={t("members.formPhoto")}
-              >
-                <ImageIcon className="size-3.5" />
-              </button>
-              {member.photoFileId && (
+            ) : (
+              <Avatar name={member.fullName} size="lg" className="size-20 text-2xl font-black rounded-2xl border border-line shadow-card" />
+            )}
+            {hasPermission("members.edit") && (
+              <div className="absolute -bottom-1.5 -left-1.5 flex gap-1">
                 <button
                   type="button"
                   disabled={photoBusy}
-                  onClick={onPhotoRemove}
-                  className="grid size-7 place-items-center rounded-lg border border-line bg-card text-subtle transition-colors hover:text-red disabled:opacity-50"
-                  title={t("common.delete")}
+                  onClick={() => setCameraOpen(true)}
+                  className="grid size-7 place-items-center rounded-lg border border-line bg-raised text-subtle transition-colors hover:text-ink hover:border-primary disabled:opacity-50 shadow-sm"
+                  title={t("members.formPhotoCamera")}
                 >
-                  <X className="size-3.5" />
+                  <Camera className="size-3.5" />
                 </button>
+                <input
+                  ref={fileInputRef}
+                  type="file"
+                  accept="image/jpeg,image/png,image/webp"
+                  className="hidden"
+                  onChange={onPhotoUpload}
+                />
+                <button
+                  type="button"
+                  disabled={photoBusy}
+                  onClick={() => fileInputRef.current?.click()}
+                  className="grid size-7 place-items-center rounded-lg border border-line bg-raised text-subtle transition-colors hover:text-ink hover:border-primary disabled:opacity-50 shadow-sm"
+                  title={t("members.formPhoto")}
+                >
+                  <ImageIcon className="size-3.5" />
+                </button>
+                {member.photoFileId && (
+                  <button
+                    type="button"
+                    disabled={photoBusy}
+                    onClick={onPhotoRemove}
+                    className="grid size-7 place-items-center rounded-lg border border-line bg-raised text-subtle transition-colors hover:text-red hover:border-red/40 disabled:opacity-50 shadow-sm"
+                    title={t("common.delete")}
+                  >
+                    <X className="size-3.5" />
+                  </button>
+                )}
+              </div>
+            )}
+          </div>
+
+          <div className="min-w-0 space-y-1.5">
+            <div className="flex flex-wrap items-center gap-2">
+              <h1 className="text-xl font-black text-white tracking-tight">{member.fullName}</h1>
+              <Badge variant={statusMeta.variant} dot>
+                {statusMeta.label}
+              </Badge>
+              <BranchBadge branchId={member.branchId} />
+              {member.homeBranchOnly && (
+                <Badge variant="warning">
+                  {t("members.homeBranchOnly")}
+                </Badge>
               )}
             </div>
-          )}
-        </div>
-        <div className="min-w-0 flex-1">
-          <div className="flex flex-wrap items-center gap-2.5">
-            <h2 className="text-lg font-extrabold">{member.fullName}</h2>
-            <Badge variant={statusMeta.variant} dot>
-              {statusMeta.label}
-            </Badge>
-            <BranchBadge branchId={member.branchId} />
-          </div>
-          <p dir="ltr" className="mt-1 text-xs text-faint tabnum">
-            {member.memberCode}
-          </p>
-          <dl className="mt-4 grid gap-x-6 gap-y-3 text-[13px] sm:grid-cols-2 lg:grid-cols-3">
-            <div className="flex min-w-0 flex-wrap items-baseline gap-1.5 sm:gap-2">
-              <dt className="shrink-0 text-xs font-semibold text-faint">{t("common.phone")}:</dt>
-              <dd dir="ltr" className="min-w-0 font-bold tabnum flex items-center gap-1.5 text-foreground">
-                <span>{member.phone ?? "—"}</span>
-                {member.phone && (
+
+            <div className="flex flex-wrap items-center gap-2 text-xs">
+              <span dir="ltr" className="font-mono font-bold text-[#00D2FF] bg-[#0055FF]/10 border border-[#0055FF]/30 px-2.5 py-0.5 rounded-lg">
+                {member.memberCode}
+              </span>
+
+              {member.phone && (
+                <div className="inline-flex items-center gap-1.5 bg-surface px-2.5 py-0.5 rounded-lg border border-line text-subtle font-mono font-bold" dir="ltr">
+                  <span>{member.phone}</span>
                   <button
                     type="button"
                     onClick={() => setWhatsAppOpen(true)}
-                    className="inline-flex size-5 items-center justify-center rounded bg-emerald-500/10 text-emerald-500 hover:bg-emerald-500/20 transition-colors"
+                    className="size-5 rounded flex items-center justify-center bg-[#0055FF]/10 text-[#0055FF] hover:bg-[#0055FF]/25 transition"
                     title={t("messages.quickWhatsAppTitle")}
                   >
                     <MessageSquare className="size-3" />
                   </button>
-                )}
-              </dd>
+                </div>
+              )}
             </div>
-            <InfoRow label={t("common.email")} value={member.email ?? "—"} ltr />
-            <InfoRow
-              label={t("members.gender")}
-              value={member.gender ? t(`members.${member.gender}`) : "—"}
-            />
-            <InfoRow
-              label={t("members.dob")}
-              value={member.dateOfBirth ? formatDate(parseDateKey(member.dateOfBirth)) : "—"}
-            />
-            <InfoRow label={t("members.address")} value={member.address ?? "—"} />
-            <InfoRow
-              label={t("members.registeredAt")}
-              value={member.registrationDate ? formatDate(parseDateKey(member.registrationDate)) : "—"}
-            />
-            <InfoRow
-              label={t("members.department")}
-              value={
-                member.department === "men"
-                  ? t("members.deptMen")
-                  : member.department === "women"
-                    ? t("members.deptWomen")
-                    : t("members.deptGeneral")
-              }
-            />
-            <InfoRow
-              label={t("members.formHeight")}
-              value={member.heightCm == null ? "—" : `${member.heightCm} سم`}
-              ltr
-            />
-            <InfoRow
-              label={t("members.formWeight")}
-              value={member.weightKg == null ? "—" : `${member.weightKg} كجم`}
-              ltr
-            />
-            <InfoRow
-              label={t("members.formEmergencyName")}
-              value={member.emergencyContactName ?? "—"}
-            />
-            <InfoRow
-              label={t("members.formEmergencyPhone")}
-              value={member.emergencyContactPhone ?? "—"}
-              ltr
-            />
-          </dl>
-          {member.notes && member.notes.trim() !== "" && (
-            <div className="mt-4 flex items-start gap-2.5 rounded-xl border border-amber/30 bg-amber/10 px-3.5 py-2.5 text-xs text-amber">
-              <span className="font-bold shrink-0">{t("members.notes")}:</span>
-              <p className="whitespace-pre-line leading-relaxed font-medium text-amber-200">{member.notes}</p>
-            </div>
-          )}
+          </div>
         </div>
-        <div className="flex flex-wrap items-center gap-2">
+
+        {/* Left side (RTL): Actions Toolbar */}
+        <div className="flex flex-wrap items-center gap-2 shrink-0">
           <Link
             to="/members"
-            className="grid size-9 place-items-center rounded-xl border border-line text-subtle transition-colors hover:border-line-strong hover:text-ink"
+            className="grid size-9 place-items-center rounded-xl border border-line text-subtle transition-colors hover:border-line-strong hover:text-ink bg-surface"
             aria-label={t("nav.members")}
+            title={t("nav.members")}
           >
             <ArrowRight className="size-4" />
           </Link>
+
           {!archived && isFeatureEnabled("featureSubscriptionsEnabled") && hasPermission("subscriptions.create") && onNewSubscription && (
-            <Button variant="primary" onClick={onNewSubscription}>
+            <Button variant="primary" onClick={onNewSubscription} className="shadow-glow-sm">
               <Plus className="size-4" />
-              {t("subs.addSubscription")}
+              <span>{t("subs.addSubscription")}</span>
             </Button>
           )}
+
           {!archived && isFeatureEnabled("featureTreasuryEnabled") && hasPermission("payments.create") && onRecordPayment && (
             <Button variant="secondary" onClick={onRecordPayment}>
               <Banknote className="size-4" />
-              {t("pay.addPayment")}
+              <span>{t("pay.addPayment")}</span>
             </Button>
           )}
+
+          {!archived && (
+            <Button
+              variant="secondary"
+              onClick={() => setPortalModalOpen(true)}
+              className="border-[#0055FF]/35 text-[#0055FF] bg-[#0055FF]/10 hover:bg-[#0055FF]/20 font-bold"
+              title="عرض كود الـ QR ورابط بروفايل العميل وإرساله عبر الواتساب"
+            >
+              <Globe className="size-4" />
+              <span>رابط العضو</span>
+            </Button>
+          )}
+
+          {!archived && hasPermission("members.edit") && (
+            <Button variant="secondary" onClick={onEdit}>
+              <Pencil className="size-4" />
+              <span>{t("common.edit")}</span>
+            </Button>
+          )}
+
           {!archived && isFeatureEnabled("featureSubscriptionsEnabled") && hasPermission("invitations.manage") && onInviteGuest && (
             <Button
               variant="secondary"
@@ -322,29 +323,90 @@ export function MemberHeader({
               className="border-neon/40 bg-neon/10 text-neon hover:bg-neon/20 font-bold"
             >
               <UserPlus className="size-4" />
-              {t("members.inviteGuestBtn")}
+              <span>{t("members.inviteGuestBtn")}</span>
             </Button>
           )}
-          {!archived && hasPermission("members.edit") && (
-            <Button variant="secondary" onClick={onEdit}>
-              <Pencil className="size-4" />
-              {t("common.edit")}
-            </Button>
-          )}
+
           {hasPermission("members.change_status") && (
             <Button variant={archived ? "primary" : "secondary"} onClick={() => setArchiveOpen(true)}>
               {archived ? <Undo2 className="size-4" /> : <Archive className="size-4" />}
-              {archived ? t("members.restoreMember") : t("members.archiveMember")}
+              <span>{archived ? t("members.restoreMember") : t("members.archiveMember")}</span>
             </Button>
           )}
+
           {!archived && hasPermission("members.delete") && (
             <Button variant="danger" onClick={() => setTrashOpen(true)}>
               <Trash2 className="size-4" />
-              {t("members.trashAction")}
+              <span>{t("members.trashAction")}</span>
             </Button>
           )}
         </div>
       </div>
+
+      {/* 2. Full-Width Attributes Grid */}
+      <div className="p-5 space-y-3">
+        <dl className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-6 gap-2.5">
+          <AttributeChip icon={<Mail className="size-3.5" />} label={t("common.email")} value={member.email ?? "—"} ltr />
+          <AttributeChip
+            icon={<UserCheck className="size-3.5" />}
+            label={t("members.gender")}
+            value={member.gender ? t(`members.${member.gender}`) : "—"}
+          />
+          <AttributeChip
+            icon={<Calendar className="size-3.5" />}
+            label={t("members.dob")}
+            value={member.dateOfBirth ? formatDate(parseDateKey(member.dateOfBirth)) : "—"}
+          />
+          <AttributeChip
+            icon={<Calendar className="size-3.5" />}
+            label={t("members.registeredAt")}
+            value={member.registrationDate ? formatDate(parseDateKey(member.registrationDate)) : "—"}
+          />
+          <AttributeChip
+            icon={<Layers className="size-3.5" />}
+            label={t("members.department")}
+            value={
+              member.department === "men"
+                ? t("members.deptMen")
+                : member.department === "women"
+                  ? t("members.deptWomen")
+                  : t("members.deptGeneral")
+            }
+          />
+          <AttributeChip icon={<MapPin className="size-3.5" />} label={t("members.address")} value={member.address ?? "—"} />
+          <AttributeChip
+            icon={<Ruler className="size-3.5" />}
+            label={t("members.formHeight")}
+            value={member.heightCm == null ? "—" : `${member.heightCm} سم`}
+            ltr
+          />
+          <AttributeChip
+            icon={<Weight className="size-3.5" />}
+            label={t("members.formWeight")}
+            value={member.weightKg == null ? "—" : `${member.weightKg} كجم`}
+            ltr
+          />
+          <AttributeChip
+            icon={<UserCheck className="size-3.5" />}
+            label={t("members.formEmergencyName")}
+            value={member.emergencyContactName ?? "—"}
+          />
+          <AttributeChip
+            icon={<Phone className="size-3.5" />}
+            label={t("members.formEmergencyPhone")}
+            value={member.emergencyContactPhone ?? "—"}
+            ltr
+          />
+        </dl>
+
+        {member.notes && member.notes.trim() !== "" && (
+          <div className="flex items-start gap-2.5 rounded-xl border border-amber/30 bg-amber/10 px-3.5 py-2.5 text-xs text-amber">
+            <span className="font-bold shrink-0">{t("members.notes")}:</span>
+            <p className="whitespace-pre-line leading-relaxed font-medium text-amber-200">{member.notes}</p>
+          </div>
+        )}
+      </div>
+
       <ConfirmDialog
         open={archiveOpen}
         onClose={() => setArchiveOpen(false)}
@@ -374,13 +436,13 @@ export function MemberHeader({
         onClose={() => setWhatsAppOpen(false)}
         memberId={member.id}
       />
-      <button
-        type="button"
-        onClick={() => navigate("/members")}
-        className="hidden"
-        aria-hidden
-        tabIndex={-1}
+      <MemberPortalLinkModal
+        open={portalModalOpen}
+        onClose={() => setPortalModalOpen(false)}
+        member={member}
       />
     </Card>
   );
 }
+
+export default MemberHeader;

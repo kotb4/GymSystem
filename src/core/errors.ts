@@ -35,8 +35,8 @@ export function errConflict(messageKey: string, params?: AppErrorParams): AppErr
   return new AppError("CONFLICT", messageKey, params);
 }
 
-export function errForbidden(): AppError {
-  return new AppError("FORBIDDEN", "errors.forbidden");
+export function errForbidden(messageKey = "errors.forbidden"): AppError {
+  return new AppError("FORBIDDEN", messageKey);
 }
 
 export function errUnauthorized(): AppError {

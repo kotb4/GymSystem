@@ -59,7 +59,7 @@ function fontPath(file: string): string {
   // Dev: repo root. Packaged: assets/fonts sits next to the exe, and the
   // process cwd can be anything (e.g. launched from a shortcut), so also try
   // the directory holding the running executable and the source-tree location.
-  const exeDir = process.env.GYMSYSTEM_EXE_DIR ?? "";
+  const exeDir = process.env.GYMGATE_EXE_DIR ?? process.env.GYMSYSTEM_EXE_DIR ?? "";
   const candidates = [
     join(process.cwd(), rel),
     exeDir ? join(exeDir, rel) : "",

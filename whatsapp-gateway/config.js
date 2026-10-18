@@ -24,6 +24,7 @@ function config() {
     // Headless browsers cannot be scanned by the phone normally; default to a
     // visible browser window so the gym PC shows the QR for pairing.
     headless: process.env.GW_HEADLESS === '1',
+    backendUrl: process.env.BACKEND_URL || 'http://127.0.0.1:8890',
     logFile: join(baseDataDir(), 'Logs', 'whatsapp-gateway.log'),
   };
 }

@@ -1,3 +1,5 @@
+import { existsSync, readFileSync } from "node:fs";
+import { join } from "node:path";
 import { createHash, randomUUID } from "node:crypto";
 import { nowStamp } from "@/core/dates";
 import { errNotFound, errValidation } from "@/core/errors";
@@ -17,6 +19,8 @@ import { getPlanRow } from "./plans.service";
 import { assertDepartmentAccess } from "./department";
 import { readSetting, SETTING_KEYS } from "./settings.service";
 import { whatsappTransport, type MessageTransport } from "./card-delivery.service";
+import { formatMinor } from "@/core/money";
+import { buildPaymentReceiptMessage, buildWhatsAppDirectUrl } from "@/core/whatsapp";
 
 export type PdfDocType = "payment_receipt" | "store_sale_receipt" | "subscription_contract";
 
@@ -98,10 +102,6 @@ function sha256(buf: Buffer): string {
   return createHash("sha256").update(buf).digest("hex");
 }
 
-function gymName(db: Db): string {
-  return readSetting(db, SETTING_KEYS.gymName) ?? "الجيم";
-}
-
 /**
  * Heading for a document. The Settings value wins so the owner can word it as
  * they like; otherwise it falls back to the per-type default. A blank setting is
@@ -111,6 +111,90 @@ function docTitle(db: Db, docType: PdfDocType): string {
   const override = readSetting(db, SETTING_KEYS.receiptTitle)?.trim();
   if (override && override !== "") return override;
   return DOC_TYPE_TITLES[docType] ?? "إيصال";
+}
+
+interface ReceiptTemplateSettings {
+  gymName: string;
+  gymPhone: string | null;
+  gymAddress: string | null;
+  receiptTitle: string | null;
+  showLogo: boolean;
+  logoBuffer: Buffer | null;
+  logoWidth: number;
+  showTax: boolean;
+  taxPercent: number;
+  showQr: boolean;
+  footerText: string | null;
+  terms: string[];
+}
+
+let cachedBrandLogo: Buffer | null | undefined;
+function getDefaultBrandLogo(): Buffer | null {
+  if (cachedBrandLogo !== undefined) return cachedBrandLogo;
+  const rel = join("public", "branding", "kotb-logo-light.png");
+  const exeDir = process.env.GYMGATE_EXE_DIR ?? process.env.GYMSYSTEM_EXE_DIR ?? "";
+  const candidates = [
+    join(process.cwd(), rel),
+    exeDir ? join(exeDir, rel) : "",
+    typeof __dirname !== "undefined" ? join(__dirname, "..", "..", "..", rel) : "",
+  ].filter(Boolean);
+  for (const p of candidates) {
+    if (existsSync(p)) {
+      try {
+        cachedBrandLogo = readFileSync(p);
+        return cachedBrandLogo;
+      } catch {
+        // ignore
+      }
+    }
+  }
+  cachedBrandLogo = null;
+  return null;
+}
+
+function getReceiptSettings(db: Db): ReceiptTemplateSettings {
+  const gName = readSetting(db, SETTING_KEYS.gymName) ?? "الجيم";
+  const gPhone = readSetting(db, SETTING_KEYS.gymPhone)?.trim() || null;
+  const gAddress = readSetting(db, SETTING_KEYS.gymAddress)?.trim() || null;
+  const rTitle = readSetting(db, SETTING_KEYS.receiptTitle)?.trim() || null;
+  const showLogo = (readSetting(db, SETTING_KEYS.receiptShowLogo) ?? "1") === "1";
+  const rawLogo = readSetting(db, SETTING_KEYS.receiptLogoData) || "";
+  const logoWidth = Math.max(40, Math.min(240, parseInt(readSetting(db, SETTING_KEYS.receiptLogoWidth) ?? "100", 10) || 100));
+  let logoBuffer: Buffer | null = null;
+  if (showLogo && rawLogo) {
+    const match = rawLogo.match(/^data:image\/[a-zA-Z0-9+.-]+;base64,(.+)$/);
+    if (match && match[1]) {
+      try {
+        logoBuffer = Buffer.from(match[1], "base64");
+      } catch {
+        logoBuffer = null;
+      }
+    }
+  }
+  if (showLogo && !logoBuffer) {
+    logoBuffer = getDefaultBrandLogo();
+  }
+  const showTax = readSetting(db, SETTING_KEYS.receiptShowTax) === "1";
+  const taxPercent = Math.max(0, Math.min(100, parseInt(readSetting(db, SETTING_KEYS.receiptTaxPercent) ?? "0", 10) || 0));
+  const showQr = (readSetting(db, SETTING_KEYS.receiptShowQr) ?? "1") === "1";
+  const footerText = readSetting(db, SETTING_KEYS.receiptFooterText)?.trim() || null;
+  const rawTerms = readSetting(db, SETTING_KEYS.receiptTerms)?.trim() || "";
+  const terms = rawTerms ? rawTerms.split("\n").map((l) => l.trim()).filter(Boolean) : [];
+
+  return {
+    gymName: gName,
+    gymPhone: gPhone,
+    gymAddress: gAddress,
+    receiptTitle: rTitle,
+    showLogo,
+    logoBuffer,
+    logoWidth,
+    showTax,
+    taxPercent,
+    showQr,
+    footerText,
+    terms,
+  };
 }
 
 function branchName(db: Db): string | null {
@@ -129,8 +213,8 @@ function receiptFileName(receiptNo: string): string {
  * Delegates to the shared document-number allocator so the branch prefix and the
  * counter stay consistent with every other operation type.
  */
-function receiptNumber(db: Db, paymentId: string, paidAt: string): string {
-  return assignDocNo(db, "payment", paymentId, paidAt);
+function receiptNumber(db: Db, paymentId: string, paidAt: string, actorOrUserId?: ServiceActor | string): string {
+  return assignDocNo(db, "payment", paymentId, paidAt, actorOrUserId);
 }
 
 async function buildReceipt(db: Db, actor: ServiceActor, paymentId: string): Promise<{
@@ -143,10 +227,23 @@ async function buildReceipt(db: Db, actor: ServiceActor, paymentId: string): Pro
   if (!member) throw errNotFound("errors.memberNotFound");
   assertDepartmentAccess(actor, member.department);
 
-  const receiptNo = receiptNumber(db, payment.id, payment.paidAt);
+  const receiptNo = receiptNumber(db, payment.id, payment.paidAt, actor);
+  const settings = getReceiptSettings(db);
   const data: ReceiptData = {
-    gymName: gymName(db),
-    title: docTitle(db, "payment_receipt"),
+    gymName: settings.gymName,
+    gymPhone: settings.gymPhone,
+    gymAddress: settings.gymAddress,
+    title: settings.receiptTitle ?? docTitle(db, "payment_receipt"),
+    logoBuffer: settings.logoBuffer,
+    logoWidth: settings.logoWidth,
+    showQr: settings.showQr,
+    showTax: settings.showTax,
+    taxPercent: settings.taxPercent,
+    taxAmountMinor: settings.showTax && settings.taxPercent > 0
+      ? Math.round((payment.netAmountMinor * settings.taxPercent) / 100)
+      : 0,
+    footerText: settings.footerText,
+    terms: settings.terms,
     receiptNo,
     issuedAt: formatStamp(payment.paidAt),
     memberCode: payment.memberCode,
@@ -202,9 +299,9 @@ function resolveTransport(db: Db): { transport: MessageTransport | null; provide
     };
   }
   const enabled = readSetting(db, SETTING_KEYS.whatsappEnabled) === "1";
-  const apiUrl = readSetting(db, SETTING_KEYS.whatsappApiUrl) ?? "";
-  if (enabled && apiUrl.trim() !== "") {
-    return { transport: whatsappTransport(apiUrl.trim()), provider: "whatsapp" };
+  const apiUrl = (readSetting(db, SETTING_KEYS.whatsappApiUrl) || "").trim() || "http://127.0.0.1:8891";
+  if (enabled && apiUrl !== "") {
+    return { transport: whatsappTransport(apiUrl), provider: "whatsapp" };
   }
   return { transport: null, provider: "none" };
 }
@@ -219,13 +316,26 @@ export async function sendPaymentReceipt(
   db: Db,
   actor: ServiceActor,
   paymentId: string,
-): Promise<{ delivery: PublicPdfDelivery }> {
+): Promise<{ delivery: PublicPdfDelivery; directUrl?: string | null }> {
   requirePermission(actor, "pdf.receipt");
 
   const { data, fileName, bytes } = await buildReceipt(db, actor, paymentId);
   const hash = sha256(bytes);
   const { transport, provider } = resolveTransport(db);
   const phone = data.memberPhone?.trim() ?? "";
+
+  const directText = buildPaymentReceiptMessage({
+    gymName: data.gymName,
+    memberName: data.memberName,
+    memberCode: data.memberCode,
+    receiptNo: data.receiptNo,
+    planName: data.planName ?? undefined,
+    amountPaid: formatMinor(data.paidAmountMinor),
+    amountRemaining: data.remainingAmountMinor > 0 ? formatMinor(data.remainingAmountMinor) : undefined,
+    date: data.issuedAt?.slice(0, 10),
+    notes: data.notes || undefined,
+  });
+  const directUrl = phone ? buildWhatsAppDirectUrl(phone, directText) : null;
 
   const insert = (status: PdfDeliveryStatus, error: string | null, sentAt: string | null) => {
     const id = `pdfd_${randomUUID()}`;
@@ -258,8 +368,8 @@ export async function sendPaymentReceipt(
   // Check the member data before the transport: a missing phone is actionable
   // on its own, and reporting it as "WhatsApp is off" would send the owner
   // chasing the wrong setting.
-  if (phone === "") return { delivery: insert("no_phone", null, null)! };
-  if (!transport) return { delivery: insert("not_configured", null, null)! };
+  if (phone === "") return { delivery: insert("no_phone", null, null)!, directUrl: null };
+  if (!transport) return { delivery: insert("not_configured", null, null)!, directUrl };
 
   const caption = `إيصال قبض - ${data.gymName} - ${data.receiptNo}`;
   const result = await transport(phone, caption, {
@@ -277,7 +387,7 @@ export async function sendPaymentReceipt(
       fileName,
       size: bytes.length,
     });
-    return { delivery };
+    return { delivery, directUrl };
   }
 
   const error = result.error ?? "unknown error";
@@ -288,7 +398,7 @@ export async function sendPaymentReceipt(
     provider,
     error,
   });
-  return { delivery };
+  return { delivery, directUrl };
 }
 
 function memberIdOf(db: Db, paymentId: string): string | null {
@@ -379,8 +489,11 @@ async function buildStoreReceipt(db: Db, actor: ServiceActor, saleId: string): P
     }
   }
 
+  const settings = getReceiptSettings(db);
   const data: StoreReceiptData = {
-    gymName: gymName(db),
+    gymName: settings.gymName,
+    gymPhone: settings.gymPhone,
+    gymAddress: settings.gymAddress,
     saleNo: sale.saleNo,
     soldAt: formatStamp(sale.soldAt),
     branchName: branchName(db),
@@ -396,13 +509,19 @@ async function buildStoreReceipt(db: Db, actor: ServiceActor, saleId: string): P
     itemsTotalMinor: sale.itemsTotalMinor,
     discountMinor: sale.discountMinor,
     totalMinor: sale.totalMinor,
-    methodLabel: sale.methodCode === "cash" ? "نقدي" : sale.methodCode === "visa" ? "فيزا / بطاقة" : sale.methodCode === "wallet" ? "محفظة إلكترونية" : sale.methodCode,
+    methodLabel:
+      db.first<{ label_ar: string }>("SELECT label_ar FROM payment_methods WHERE code = ?", [sale.methodCode])?.label_ar ??
+      (sale.methodCode === "cash" ? "نقدي" : sale.methodCode === "bank_card" ? "بطاقة بنكية" : sale.methodCode === "instapay" ? "انستاباي" : sale.methodCode === "wallet" ? "محفظة إلكترونية" : sale.methodCode),
     isCredit,
     isPaid,
     paymentStatusText,
     debtRemainingMinor,
     status: sale.status,
-    title: docTitle(db, "store_sale_receipt"),
+    title: settings.receiptTitle ?? docTitle(db, "store_sale_receipt"),
+    logoBuffer: settings.logoBuffer,
+    logoWidth: settings.logoWidth,
+    showQr: settings.showQr,
+    footerText: settings.footerText,
   };
   const bytes = await renderStoreReceiptPdf(data);
   return { data, fileName: `sale-${sale.saleNo}.pdf`, bytes };
@@ -427,12 +546,32 @@ export async function sendStoreSaleReceipt(
   db: Db,
   actor: ServiceActor,
   saleId: string,
-): Promise<{ delivery: PublicPdfDelivery }> {
+): Promise<{ delivery: PublicPdfDelivery; directUrl?: string | null }> {
   requirePermission(actor, "store.view");
   const { data, fileName, bytes } = await buildStoreReceipt(db, actor, saleId);
   const hash = sha256(bytes);
   const { transport, provider } = resolveTransport(db);
   const phone = data.customerPhone?.trim() ?? "";
+
+  const itemsSummary = data.items.map((it) => `• ${it.productName} (×${it.qty})`).join("\n");
+  const paidMinor = data.isCredit ? Math.max(0, data.totalMinor - (data.debtRemainingMinor ?? 0)) : data.totalMinor;
+  const directText = [
+    `🧾 *فاتورة مبيعات متجر — ${data.gymName}*`,
+    `━━━━━━━━━━━━━━━━`,
+    `👤 *العميل:* ${data.customerName}`,
+    `🔢 *رقم الفاتورة:* ${data.saleNo}`,
+    `📦 *الأصناف:*`,
+    itemsSummary,
+    `━━━━━━━━━━━━━━━━`,
+    `💵 *الإجمالي:* ${formatMinor(data.totalMinor)} ج.م`,
+    data.discountMinor > 0 ? `🎁 *الخصم:* ${formatMinor(data.discountMinor)} ج.م` : null,
+    `💰 *المدفوع:* ${formatMinor(paidMinor)} ج.م`,
+    data.debtRemainingMinor && data.debtRemainingMinor > 0 ? `⚠️ *المتبقي بالآجل:* ${formatMinor(data.debtRemainingMinor)} ج.م` : null,
+    `📅 *التاريخ:* ${data.soldAt.slice(0, 10)}`,
+    `━━━━━━━━━━━━━━━━`,
+    `شكراً لتسوقكم معنا! ✨`,
+  ].filter(Boolean).join("\n");
+  const directUrl = phone ? buildWhatsAppDirectUrl(phone, directText) : null;
 
   const insert = (status: PdfDeliveryStatus, error: string | null, sentAt: string | null) => {
     const id = `pdfd_${randomUUID()}`;
@@ -462,8 +601,8 @@ export async function sendStoreSaleReceipt(
     return row ? toDelivery(row) : null;
   };
 
-  if (phone === "") return { delivery: insert("no_phone", null, null)! };
-  if (!transport) return { delivery: insert("not_configured", null, null)! };
+  if (phone === "") return { delivery: insert("no_phone", null, null)!, directUrl: null };
+  if (!transport) return { delivery: insert("not_configured", null, null)!, directUrl };
 
   const caption = `فاتورة مبيعات - ${data.gymName} - ${data.saleNo}`;
   const result = await transport(phone, caption, {
@@ -481,7 +620,7 @@ export async function sendStoreSaleReceipt(
       fileName,
       size: bytes.length,
     });
-    return { delivery };
+    return { delivery, directUrl };
   }
 
   const error = result.error ?? "unknown error";
@@ -492,7 +631,7 @@ export async function sendStoreSaleReceipt(
     provider,
     error,
   });
-  return { delivery };
+  return { delivery, directUrl };
 }
 
 async function buildSubscriptionContract(
@@ -530,8 +669,11 @@ async function buildSubscriptionContract(
     open: "مفتوح",
   };
 
+  const settings = getReceiptSettings(db);
   const data: SubscriptionContractData = {
-    gymName: gymName(db),
+    gymName: settings.gymName,
+    gymPhone: settings.gymPhone,
+    gymAddress: settings.gymAddress,
     contractNo,
     issuedAt: formatStamp(sub.created_at),
     branchName: branchName(db),
@@ -550,8 +692,11 @@ async function buildSubscriptionContract(
     netMinor,
     paidMinor,
     remainingMinor,
-    terms: [],
-    title: docTitle(db, "subscription_contract"),
+    terms: settings.terms,
+    title: settings.receiptTitle ?? docTitle(db, "subscription_contract"),
+    logoBuffer: settings.logoBuffer,
+    showQr: settings.showQr,
+    footerText: settings.footerText,
   };
 
   const bytes = await renderSubscriptionContractPdf(data);
@@ -577,12 +722,26 @@ export async function sendSubscriptionContract(
   db: Db,
   actor: ServiceActor,
   subscriptionId: string,
-): Promise<{ delivery: PublicPdfDelivery }> {
+): Promise<{ delivery: PublicPdfDelivery; directUrl?: string | null }> {
   requirePermission(actor, "subscriptions.view");
   const { data, fileName, bytes } = await buildSubscriptionContract(db, actor, subscriptionId);
   const hash = sha256(bytes);
   const { transport, provider } = resolveTransport(db);
   const phone = data.memberPhone?.trim() ?? "";
+
+  const directText = [
+    `📋 *عقد اشتراك عضوية — ${data.gymName}*`,
+    `━━━━━━━━━━━━━━━━`,
+    `👤 *العضو:* ${data.memberName}`,
+    `🆔 *كود العضوية:* ${data.memberCode}`,
+    `🏋️ *الباقة:* ${data.planName}`,
+    `📅 *الفترة:* من ${data.startDate} إلى ${data.endDate}`,
+    `💵 *قيمة الاشتراك:* ${formatMinor(data.netMinor)} ج.م`,
+    data.remainingMinor > 0 ? `⚠️ *المتبقي:* ${formatMinor(data.remainingMinor)} ج.م` : null,
+    `━━━━━━━━━━━━━━━━`,
+    `نتمنى لكم تجربة رياضية مميزة ومليئة بالنشاط! 💪✨`,
+  ].filter(Boolean).join("\n");
+  const directUrl = phone ? buildWhatsAppDirectUrl(phone, directText) : null;
 
   const insert = (status: PdfDeliveryStatus, error: string | null, sentAt: string | null) => {
     const id = `pdfd_${randomUUID()}`;
@@ -612,8 +771,8 @@ export async function sendSubscriptionContract(
     return row ? toDelivery(row) : null;
   };
 
-  if (phone === "") return { delivery: insert("no_phone", null, null)! };
-  if (!transport) return { delivery: insert("not_configured", null, null)! };
+  if (phone === "") return { delivery: insert("no_phone", null, null)!, directUrl: null };
+  if (!transport) return { delivery: insert("not_configured", null, null)!, directUrl };
 
   const caption = `عقد اشتراك العضوية - ${data.gymName} - ${data.memberName}`;
   const result = await transport(phone, caption, {
@@ -631,7 +790,7 @@ export async function sendSubscriptionContract(
       fileName,
       size: bytes.length,
     });
-    return { delivery };
+    return { delivery, directUrl };
   }
 
   const error = result.error ?? "unknown error";
@@ -642,7 +801,7 @@ export async function sendSubscriptionContract(
     provider,
     error,
   });
-  return { delivery };
+  return { delivery, directUrl };
 }
 
 export async function generatePayslipPdf(
@@ -717,5 +876,160 @@ export async function generatePayslipPdf(
     base64: bytes.toString("base64"),
     fileName,
     slipNo,
+  };
+}
+
+export interface ReceiptPreviewInput {
+  gymName?: string;
+  gymPhone?: string;
+  gymAddress?: string;
+  receiptTitle?: string;
+  showLogo?: boolean;
+  logoData?: string;
+  logoWidth?: number;
+  showTax?: boolean;
+  taxPercent?: number;
+  showQr?: boolean;
+  footerText?: string;
+  terms?: string;
+  docKind?: "subscription" | "store";
+}
+
+/**
+ * Generates an exact live sample PDF using the official backend PDF engine,
+ * taking the current on-screen unsaved/saved settings into account.
+ */
+export async function previewReceiptTemplate(
+  db: Db,
+  actor: ServiceActor,
+  input: ReceiptPreviewInput = {},
+): Promise<GeneratedPdf> {
+  requirePermission(actor, "settings.view");
+
+  const gymName = input.gymName?.trim() || readSetting(db, SETTING_KEYS.gymName) || "صالة اللياقة الرياضية";
+  const gymPhone = input.gymPhone !== undefined ? (input.gymPhone.trim() || null) : (readSetting(db, SETTING_KEYS.gymPhone)?.trim() || null);
+  const gymAddress = input.gymAddress !== undefined ? (input.gymAddress.trim() || null) : (readSetting(db, SETTING_KEYS.gymAddress)?.trim() || null);
+  const title = input.receiptTitle?.trim() || readSetting(db, SETTING_KEYS.receiptTitle)?.trim() || "إيصال سداد واشتراك";
+
+  const showLogo = input.showLogo !== undefined ? input.showLogo : ((readSetting(db, SETTING_KEYS.receiptShowLogo) ?? "1") === "1");
+  const rawLogo = input.logoData !== undefined ? input.logoData : (readSetting(db, SETTING_KEYS.receiptLogoData) || "");
+  const logoWidth = Math.max(40, Math.min(240, input.logoWidth ?? (parseInt(readSetting(db, SETTING_KEYS.receiptLogoWidth) ?? "100", 10) || 100)));
+
+  let logoBuffer: Buffer | null = null;
+  if (showLogo && rawLogo) {
+    const match = rawLogo.match(/^data:image\/[a-zA-Z0-9+.-]+;base64,(.+)$/);
+    if (match && match[1]) {
+      try {
+        logoBuffer = Buffer.from(match[1], "base64");
+      } catch {
+        logoBuffer = null;
+      }
+    }
+  }
+  if (showLogo && !logoBuffer) {
+    logoBuffer = getDefaultBrandLogo();
+  }
+
+  const showTax = input.showTax !== undefined ? input.showTax : (readSetting(db, SETTING_KEYS.receiptShowTax) === "1");
+  const taxPercent = Math.max(0, Math.min(100, input.taxPercent ?? (parseInt(readSetting(db, SETTING_KEYS.receiptTaxPercent) ?? "0", 10) || 0)));
+  const showQr = input.showQr !== undefined ? input.showQr : ((readSetting(db, SETTING_KEYS.receiptShowQr) ?? "1") === "1");
+
+  const footerText = input.footerText !== undefined ? (input.footerText.trim() || null) : (readSetting(db, SETTING_KEYS.receiptFooterText)?.trim() || null);
+  const rawTerms = input.terms !== undefined ? input.terms : (readSetting(db, SETTING_KEYS.receiptTerms)?.trim() || "");
+  const terms = rawTerms ? rawTerms.split("\n").map((l) => l.trim()).filter(Boolean) : [];
+
+  const bName = branchName(db) ?? "الفرع الرئيسي (B1)";
+  const now = formatStamp(nowStamp());
+
+  if (input.docKind === "store") {
+    const sampleItems = [
+      { productName: "مشروب بروتين جولد ستاندرد 500 مل", qty: 2, unitPriceMinor: 6500, lineTotalMinor: 13000 },
+      { productName: "لوح شوكولاتة كيتو بروتين 60 جم", qty: 3, unitPriceMinor: 4000, lineTotalMinor: 12000 },
+    ];
+    const itemsTotalMinor = 25000;
+    const discountMinor = 2000;
+    const totalMinor = itemsTotalMinor - discountMinor;
+
+    const storeData: StoreReceiptData = {
+      gymName,
+      gymPhone,
+      gymAddress,
+      saleNo: "B1-U1-SLE-2026-000088",
+      soldAt: now,
+      branchName: bName,
+      customerName: "كابتن / محمد أحمد محمود",
+      customerPhone: "01098765432",
+      cashierName: actor.username || "أحمد محمود (كاشير)",
+      items: sampleItems,
+      itemsTotalMinor,
+      discountMinor,
+      totalMinor,
+      methodLabel: "نقداً (خزينة الجيم)",
+      isCredit: false,
+      isPaid: true,
+      paymentStatusText: "مسدد بالكامل",
+      status: "completed",
+      title,
+      logoBuffer,
+      logoWidth,
+      showQr,
+      footerText,
+    };
+
+    const bytes = await renderStoreReceiptPdf(storeData);
+    return {
+      fileName: `preview-store-receipt.pdf`,
+      base64: bytes.toString("base64"),
+      size: bytes.length,
+      hash: sha256(bytes),
+    };
+  }
+
+  // Subscription receipt preview
+  const baseAmountMinor = 75000;
+  const discountAmountMinor = 5000;
+  const netAmountMinor = baseAmountMinor - discountAmountMinor;
+  const taxAmountMinor = showTax && taxPercent > 0 ? Math.round((netAmountMinor * taxPercent) / 100) : 0;
+  const paidAmountMinor = netAmountMinor + taxAmountMinor;
+
+  const data: ReceiptData = {
+    gymName,
+    gymPhone,
+    gymAddress,
+    title,
+    logoBuffer,
+    logoWidth,
+    showQr,
+    showTax,
+    taxPercent,
+    taxAmountMinor,
+    footerText,
+    terms,
+    receiptNo: "B1-U1-RCP-2026-000124",
+    issuedAt: now,
+    memberCode: "B1-MEM-000124",
+    memberName: "كابتن / محمد أحمد محمود",
+    memberPhone: "01098765432",
+    planName: "اشتراك لياقة وبناء أجسام شامل",
+    baseAmountMinor,
+    discountAmountMinor,
+    netAmountMinor,
+    paidAmountMinor,
+    remainingAmountMinor: 0,
+    refundedAmountMinor: 0,
+    methodLabel: "نقداً (الخزينة الرئيسية)",
+    status: "paid",
+    referenceNo: null,
+    notes: "معاينة تجريبية لشكل وتنسيق الفاتورة الرسمية",
+    createdByName: actor.username || "أحمد محمود (كاشير)",
+    branchName: bName,
+  };
+
+  const bytes = await renderReceiptPdf(data);
+  return {
+    fileName: `preview-receipt.pdf`,
+    base64: bytes.toString("base64"),
+    size: bytes.length,
+    hash: sha256(bytes),
   };
 }

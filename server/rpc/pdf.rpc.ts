@@ -10,4 +10,5 @@ export const pdf = defineService({
   sendSubscriptionContract: a(pdfService.sendSubscriptionContract as Fn),
   generatePayslipPdf: a(pdfService.generatePayslipPdf as Fn),
   listPdfDeliveries: a(pdfService.listPdfDeliveries as Fn),
+  previewReceiptTemplate: a(pdfService.previewReceiptTemplate as Fn),
 });

@@ -11,4 +11,5 @@ export const expenses = defineService({
   listCategories: p(expensesService.listCategories as Fn),
   createCategory: a(expensesService.createCategory as Fn),
   setCategoryActive: a(expensesService.setCategoryActive as Fn),
+  expenseStats: a(expensesService.expenseStats as Fn),
 });

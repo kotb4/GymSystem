@@ -7,6 +7,7 @@ import { api, type FreezeInfo, type Subscription } from "@/api";
 import { Modal } from "@/components/ui/modal";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
+import { DateRange } from "@/components/ui/date-range";
 import { useAuth } from "@/contexts/auth-context";
 
 interface FreezeSubscriptionModalProps {
@@ -215,9 +216,7 @@ export function FreezeSubscriptionModal({
                   key={h.id}
                   className="flex items-center justify-between rounded-lg border border-line bg-white/[0.02] px-2.5 py-1.5 text-[11px]"
                 >
-                  <span dir="ltr" className="tabnum text-subtle">
-                    {h.startDate} → {h.endDate}
-                  </span>
+                  <DateRange start={h.startDate} end={h.endDate} />
                   <span className="font-bold text-ink">
                     {h.durationDays} {t("common.days")}
                   </span>

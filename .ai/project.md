@@ -1,5 +1,7 @@
 # Yassen Mohamed Kotb | 01288536381 — Project Profile
 
+> **Commercial Showcase & Marketing Guide:** See [PROJECT_OVERVIEW.md](../PROJECT_OVERVIEW.md) for full marketing descriptions, feature catalogs, and AI onboarding prompts.
+
 Verified against the repository on 2026-08-25. If code changes, run `/docs` to re-sync.
 
 ## Identity

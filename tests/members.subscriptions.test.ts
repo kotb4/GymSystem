@@ -19,6 +19,7 @@ import {
   listMemberSubscriptions,
   listSubscriptions,
   updateSubscription,
+  getSubscriptionStats,
 } from "@/core/services/subscriptions.service";
 import { addDaysKey, todayKey } from "@/core/dates";
 import type { Db } from "@/db/engine";
@@ -511,5 +512,63 @@ describe("listSubscriptions — frozen vs suspended", () => {
     expect(frozen.items.map((s) => s.id)).toEqual([frozenSub.id]);
     const suspended = listSubscriptions(db, owner, { pageSize: 100, effective: "suspended" });
     expect(suspended.items.map((s) => s.id)).toEqual([suspendedSub.id]);
+  });
+
+  it("calculates subscription stats and handles financial totals and filters in listSubscriptions", async () => {
+    const m1 = await member({ fullName: "مشترك إحصائيات 1" });
+    const p1 = await createPlan(db, owner, {
+      name: "باقة سنوية 1000",
+      durationDays: 365,
+      price: 1000,
+    });
+    const sub1 = await createSubscription(db, owner, {
+      memberId: m1.id,
+      planId: p1.id,
+      startDate: todayKey(),
+    });
+
+    // Record partial payment
+    const { recordPayment } = await import("@/core/services/payments.service");
+    await recordPayment(db, owner, {
+      memberId: m1.id,
+      subscriptionId: sub1.id,
+      baseAmountMinor: 100000,
+      paidAmountMinor: 40000,
+      methodCode: "cash",
+    });
+
+    // Sub 2: expiring soon (within 3 days)
+    const m2 = await member({ fullName: "مشترك إحصائيات 2" });
+    const p2 = await createPlan(db, owner, {
+      name: "باقة أسبوعية",
+      durationDays: 3,
+      price: 200,
+    });
+    const sub2 = await createSubscription(db, owner, {
+      memberId: m2.id,
+      planId: p2.id,
+      startDate: todayKey(),
+    });
+
+    // Check listSubscriptions has populated financial columns
+    const listRes = listSubscriptions(db, owner, { search: "مشترك إحصائيات 1" });
+    expect(listRes.items.length).toBe(1);
+    expect(listRes.items[0].paidMinor).toBe(40000);
+    expect(listRes.items[0].remainingMinor).toBe(60000);
+
+    // Test effective: "unpaid"
+    const unpaidList = listSubscriptions(db, owner, { effective: "unpaid" });
+    expect(unpaidList.items.some((s) => s.id === sub1.id)).toBe(true);
+
+    // Test effective: "expiring"
+    const expiringList = listSubscriptions(db, owner, { effective: "expiring" });
+    expect(expiringList.items.some((s) => s.id === sub2.id)).toBe(true);
+
+    // Test getSubscriptionStats
+    const stats = getSubscriptionStats(db, owner);
+    expect(stats.activeCount).toBeGreaterThanOrEqual(2);
+    expect(stats.expiringCount).toBeGreaterThanOrEqual(1);
+    expect(stats.unpaidCount).toBeGreaterThanOrEqual(1);
+    expect(stats.unpaidDuesMinor).toBeGreaterThanOrEqual(60000);
   });
 });

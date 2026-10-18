@@ -3,6 +3,13 @@ import { requirePermission, type ServiceActor } from "@/core/permissions";
 import { nowStamp } from "@/core/dates";
 import type { Db, Row } from "@/db/engine";
 import { recordAudit } from "./audit.service";
+import {
+  type ClassScheduleSlot,
+  parseScheduleSlots,
+  syncAcademyClassForPlan,
+} from "./classes.service";
+
+export type PlanCategory = "gym" | "academy";
 
 export interface PlanRow extends Row {
   id: string;
@@ -12,8 +19,10 @@ export interface PlanRow extends Row {
   description: string | null;
   color: string | null;
   kind: PlanKind;
+  category: string | null;
   sessions_count: number | null;
   invitations_count: number | null;
+  allowed_days: string | null;
   is_active: number;
   created_at: string;
   updated_at: string;
@@ -29,11 +38,18 @@ export interface Plan {
   description: string | null;
   color: string | null;
   kind: PlanKind;
+  category: PlanCategory;
   sessionsCount: number | null;
   invitationsCount: number;
+  allowedDays?: number[] | null;
   isActive: boolean;
   createdAt: string;
   updatedAt: string;
+  trainerId?: string | null;
+  trainerName?: string | null;
+  capacity?: number;
+  scheduleSlots?: ClassScheduleSlot[];
+  classId?: string | null;
 }
 
 export interface PlanInput {
@@ -43,15 +59,20 @@ export interface PlanInput {
   description?: string | null;
   color?: string | null;
   kind?: PlanKind;
+  category?: PlanCategory;
   sessionsCount?: number | null;
   invitationsCount?: number;
+  allowedDays?: number[] | null;
+  trainerId?: string | null;
+  capacity?: number;
+  scheduleSlots?: ClassScheduleSlot[];
 }
 
 function normalizeKind(kind: PlanKind | undefined): PlanKind {
   return kind ?? "time";
 }
 
-function toPlan(row: PlanRow): Plan {
+function toPlan(row: PlanRow & Record<string, unknown>): Plan {
   return {
     id: row.id,
     name: row.name,
@@ -60,28 +81,65 @@ function toPlan(row: PlanRow): Plan {
     description: row.description,
     color: row.color,
     kind: (row.kind ?? "time") as PlanKind,
+    category: (row.category === "academy" ? "academy" : "gym") as PlanCategory,
     sessionsCount: row.sessions_count == null ? null : Number(row.sessions_count),
     invitationsCount: Math.max(0, Number(row.invitations_count || 0)),
+    allowedDays: row.allowed_days ? JSON.parse(row.allowed_days) : null,
     isActive: Number(row.is_active) === 1,
     createdAt: row.created_at,
     updatedAt: row.updated_at,
+    trainerId: row.trainer_id ? String(row.trainer_id) : null,
+    trainerName: row.trainer_name ? String(row.trainer_name) : null,
+    capacity: row.academy_capacity != null ? Number(row.academy_capacity) : (row.capacity != null ? Number(row.capacity) : undefined),
+    scheduleSlots: parseScheduleSlots(row.schedule_json),
+    classId: row.class_id ? String(row.class_id) : null,
   };
 }
 
-export function getPlanRow(db: Db, planId: string): PlanRow | null {
-  return db.first<PlanRow>("SELECT * FROM membership_plans WHERE id = ?", [planId]);
+const PLAN_SELECT_JOIN = `
+  SELECT 
+    p.*,
+    c.id AS class_id,
+    c.trainer_id,
+    c.capacity AS academy_capacity,
+    c.schedule_json,
+    t.full_name AS trainer_name
+  FROM membership_plans p
+  LEFT JOIN classes c ON c.plan_id = p.id
+  LEFT JOIN trainers t ON t.id = c.trainer_id
+`;
+
+export function getPlanRow(db: Db, planId: string): (PlanRow & Record<string, unknown>) | null {
+  return db.first<PlanRow & Record<string, unknown>>(`${PLAN_SELECT_JOIN} WHERE p.id = ?`, [planId]);
+}
+
+export function getPlan(db: Db, actor: ServiceActor, planId: string): Plan | null {
+  requirePermission(actor, "plans.view");
+  const row = getPlanRow(db, planId);
+  return row ? toPlan(row) : null;
 }
 
 export function listPlans(
   db: Db,
   actor: ServiceActor,
   includeInactive = false,
+  category?: PlanCategory | "all",
 ): Plan[] {
   requirePermission(actor, "plans.view");
-  const where = includeInactive ? "" : "WHERE is_active = 1";
+  const conditions: string[] = [];
+  const params: (string | number)[] = [];
+  if (!includeInactive) {
+    conditions.push("p.is_active = 1");
+  }
+  if (category && category !== "all") {
+    conditions.push("p.category = ?");
+    params.push(category);
+  }
+  const where = conditions.length > 0 ? `WHERE ${conditions.join(" AND ")}` : "";
   return db
-    .all<PlanRow>(
-      `SELECT * FROM membership_plans ${where} ORDER BY duration_days ASC`,
+    .all<PlanRow & Record<string, unknown>>(
+      `${PLAN_SELECT_JOIN} ${where} ORDER BY p.duration_days ASC`,
+      params,
     )
     .map(toPlan);
 }
@@ -112,11 +170,17 @@ export async function createPlan(
     throw errConflict("errors.planNameTaken", { name });
   }
 
+  const allowedDaysJson =
+    input.allowedDays && Array.isArray(input.allowedDays) && input.allowedDays.length > 0
+      ? JSON.stringify(input.allowedDays)
+      : null;
+
+  const category: PlanCategory = input.category === "academy" ? "academy" : "gym";
   const id = crypto.randomUUID();
   const invitationsCount = Math.max(0, Math.round(input.invitationsCount ?? 0));
   await db.transaction(async () => {
     db.run(
-      "INSERT INTO membership_plans (id, name, duration_days, price, description, color, kind, sessions_count, invitations_count, is_active, created_at, updated_at)\nVALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 1, ?, ?)",
+      "INSERT INTO membership_plans (id, name, duration_days, price, description, color, kind, category, sessions_count, invitations_count, allowed_days, is_active, created_at, updated_at)\nVALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 1, ?, ?)",
       [
         id,
         name,
@@ -125,8 +189,10 @@ export async function createPlan(
         input.description?.trim() || null,
         input.color?.trim() || null,
         kind,
+        category,
         sessionsCount,
         invitationsCount,
+        allowedDaysJson,
         nowStamp(),
         nowStamp(),
       ],
@@ -135,9 +201,21 @@ export async function createPlan(
       name,
       durationDays: input.durationDays,
       kind,
+      category,
       sessionsCount,
       invitationsCount,
     });
+    if (category === "academy") {
+      syncAcademyClassForPlan(
+        db,
+        actor,
+        id,
+        name,
+        input.trainerId,
+        input.capacity,
+        input.scheduleSlots,
+      );
+    }
   });
 
   const row = getPlanRow(db, id);
@@ -153,8 +231,13 @@ export interface PlanPatch {
   color?: string | null;
   isActive?: boolean;
   kind?: PlanKind;
+  category?: PlanCategory;
   sessionsCount?: number | null;
   invitationsCount?: number;
+  allowedDays?: number[] | null;
+  trainerId?: string | null;
+  capacity?: number;
+  scheduleSlots?: ClassScheduleSlot[];
 }
 
 export async function updatePlan(
@@ -188,6 +271,10 @@ export async function updatePlan(
   const isActive =
     patch.isActive !== undefined ? (patch.isActive ? 1 : 0) : Number(row.is_active);
   const kind = patch.kind !== undefined ? patch.kind : ((row.kind ?? "time") as PlanKind);
+  const category: PlanCategory =
+    patch.category !== undefined
+      ? patch.category
+      : ((row.category === "academy" ? "academy" : "gym") as PlanCategory);
   let sessionsCount: number | null =
     patch.sessionsCount !== undefined
       ? patch.sessionsCount
@@ -208,12 +295,33 @@ export async function updatePlan(
       ? Math.max(0, Math.round(patch.invitationsCount))
       : Math.max(0, Number(row.invitations_count || 0));
 
+  const allowedDays =
+    patch.allowedDays !== undefined
+      ? patch.allowedDays && patch.allowedDays.length > 0
+        ? JSON.stringify(patch.allowedDays)
+        : null
+      : (row.allowed_days ?? null);
+
   await db.transaction(async () => {
     db.run(
-      "UPDATE membership_plans SET name = ?, duration_days = ?, price = ?, description = ?, color = ?, kind = ?, sessions_count = ?, invitations_count = ?, is_active = ?, updated_at = ? WHERE id = ?",
-      [name, durationDays, price, description, color, kind, sessionsCount, invitationsCount, isActive, nowStamp(), planId],
+      "UPDATE membership_plans SET name = ?, duration_days = ?, price = ?, description = ?, color = ?, kind = ?, category = ?, sessions_count = ?, invitations_count = ?, allowed_days = ?, is_active = ?, updated_at = ? WHERE id = ?",
+      [name, durationDays, price, description, color, kind, category, sessionsCount, invitationsCount, allowedDays, isActive, nowStamp(), planId],
     );
-    recordAudit(db, actor, "PLAN_UPDATED", "plan", planId, { name, invitationsCount });
+    if (category === "academy") {
+      const currentTrainerId = patch.trainerId !== undefined ? patch.trainerId : (row.trainer_id ? String(row.trainer_id) : null);
+      const currentCapacity = patch.capacity !== undefined ? patch.capacity : (row.academy_capacity != null ? Number(row.academy_capacity) : 15);
+      const currentSlots = patch.scheduleSlots !== undefined ? patch.scheduleSlots : parseScheduleSlots(row.schedule_json);
+      syncAcademyClassForPlan(
+        db,
+        actor,
+        planId,
+        name,
+        currentTrainerId,
+        currentCapacity,
+        currentSlots,
+      );
+    }
+    recordAudit(db, actor, "PLAN_UPDATED", "plan", planId, { name, category, invitationsCount });
   });
 
   const fresh = getPlanRow(db, planId);

@@ -71,6 +71,7 @@ export interface Subscription extends Row {
   status: SubscriptionRowStatus;
   effectiveStatus: EffectiveSubscriptionStatus;
   kind: SubscriptionKind;
+  category: "gym" | "academy";
   sessionsTotal: number | null;
   sessionsUsed: number;
   invitationsTotal: number;
@@ -118,6 +119,7 @@ function toSubscription(
   planName: string | null,
   today: string,
   kind: SubscriptionKind = "time",
+  category: "gym" | "academy" = "gym",
 ): Subscription {
   return {
     id: row.id,
@@ -133,6 +135,7 @@ function toSubscription(
       today,
     ),
     kind,
+    category,
     sessionsTotal: row.sessions_total == null ? null : Number(row.sessions_total),
     sessionsUsed: Number(row.sessions_used ?? 0),
     invitationsTotal: Math.max(0, Number(row.invitations_total ?? 0)),
@@ -149,15 +152,21 @@ function toSubscription(
 
 function withPlanInfo(db: Db, row: SubscriptionRow, today: string): Subscription {
   const info = planNameFor(db, row.plan_id);
-  return toSubscription(row, info?.name ?? null, today, info?.kind ?? "time");
+  return toSubscription(row, info?.name ?? null, today, info?.kind ?? "time", info?.category ?? "gym");
 }
 
-function planNameFor(db: Db, planId: string): { name: string; kind: SubscriptionKind } | null {
-  const row = db.first<{ name: string; kind: string | null }>(
-    "SELECT name, kind FROM membership_plans WHERE id = ?",
+function planNameFor(db: Db, planId: string): { name: string; kind: SubscriptionKind; category: "gym" | "academy" } | null {
+  const row = db.first<{ name: string; kind: string | null; category: string | null }>(
+    "SELECT name, kind, category FROM membership_plans WHERE id = ?",
     [planId],
   );
-  return row ? { name: row.name, kind: (row.kind ?? "time") as SubscriptionKind } : null;
+  return row
+    ? {
+        name: row.name,
+        kind: (row.kind ?? "time") as SubscriptionKind,
+        category: (row.category === "academy" ? "academy" : "gym") as "gym" | "academy",
+      }
+    : null;
 }
 
 export function getSubscriptionRow(db: Db, subscriptionId: string): SubscriptionRow | null {
@@ -178,14 +187,36 @@ function findOverlap(
   startDate: string,
   endDate: string,
   excludeId?: string,
+  category: "gym" | "academy" = "gym",
+  planId?: string,
 ): SubscriptionRow | null {
-  const exclusion = excludeId ? "AND id != ?" : "";
-  const params: Array<string> = [memberId, startDate, endDate];
-  if (excludeId) params.push(excludeId);
-  return db.first<SubscriptionRow>(
-    `SELECT * FROM member_subscriptions\nWHERE member_id = ? AND status = 'active' AND NOT (end_date < ? OR start_date > ?) ${exclusion}\nORDER BY end_date DESC`,
-    params,
-  );
+  const exclusion = excludeId ? "AND s.id != ?" : "";
+  if (category === "gym") {
+    const params: Array<string> = [memberId, startDate, endDate];
+    if (excludeId) params.push(excludeId);
+    return db.first<SubscriptionRow>(
+      `SELECT s.* FROM member_subscriptions s
+       JOIN membership_plans p ON p.id = s.plan_id
+       WHERE s.member_id = ? AND s.status = 'active'
+         AND (p.category IS NULL OR p.category = 'gym')
+         AND NOT (s.end_date < ? OR s.start_date > ?) ${exclusion}
+       ORDER BY s.end_date DESC`,
+      params,
+    );
+  } else {
+    // Academy / class plan: does not conflict with gym plans.
+    // Only prevents duplicate overlapping subscription of the EXACT SAME academy plan.
+    if (!planId) return null;
+    const params: Array<string> = [memberId, planId, startDate, endDate];
+    if (excludeId) params.push(excludeId);
+    return db.first<SubscriptionRow>(
+      `SELECT s.* FROM member_subscriptions s
+       WHERE s.member_id = ? AND s.plan_id = ? AND s.status = 'active'
+         AND NOT (s.end_date < ? OR s.start_date > ?) ${exclusion}
+       ORDER BY s.end_date DESC`,
+      params,
+    );
+  }
 }
 
 export async function createSubscription(
@@ -234,6 +265,7 @@ export async function createSubscription(
     throw errValidation("errors.planSessionsInvalid");
   }
 
+  const planCategory = (plan.category === "academy" ? "academy" : "gym") as "gym" | "academy";
   const id = crypto.randomUUID();
   // Overlap validation MUST run inside the same BEGIN IMMEDIATE transaction that
   // performs the insert (engine.ts opens every transaction with BEGIN IMMEDIATE),
@@ -241,7 +273,7 @@ export async function createSubscription(
   // between the check query and the INSERT that both request A and B would
   // otherwise race through.
   return db.transaction(() => {
-    const overlap = findOverlap(db, input.memberId, startDate, endDate);
+    const overlap = findOverlap(db, input.memberId, startDate, endDate, undefined, planCategory, effectivePlanId);
     if (overlap) {
       throw errConflict("errors.subscriptionOverlap", {
         suggestedStart: calcSubscriptionEndDate(overlap.end_date, 2),
@@ -291,7 +323,7 @@ VALUES (?, ?, ?, ?, ?, ?, 'active', ?, 0, ?, 0, ?, ?, ?, ?, ?,
       ...(packageRow ? { packageId: packageRow.id } : {}),
     });
 
-    return toSubscription(getSubscriptionRow(db, id)!, plan.name, todayKey(), (plan.kind ?? "time") as SubscriptionKind);
+    return toSubscription(getSubscriptionRow(db, id)!, plan.name, todayKey(), (plan.kind ?? "time") as SubscriptionKind, planCategory);
   });
 }
 
@@ -321,9 +353,10 @@ export async function updateSubscription(
     patch.price !== undefined && Number.isFinite(patch.price)
       ? Math.max(0, patch.price)
       : Number(row.price);
-  const notes = patch.notes !== undefined ? patch.notes?.trim() || null : row.notes;
-
-  const overlap = findOverlap(db, row.member_id, startDate, endDate, subscriptionId);
+  const notes = patch.notes !== undefined ? patch.notes : row.notes;
+  const subPlan = getPlanRow(db, row.plan_id);
+  const planCategory = (subPlan?.category === "academy" ? "academy" : "gym") as "gym" | "academy";
+  const overlap = findOverlap(db, row.member_id, startDate, endDate, subscriptionId, planCategory, row.plan_id);
   if (overlap) {
     throw errConflict("errors.subscriptionOverlap", {
       suggestedStart: calcSubscriptionEndDate(overlap.end_date, 2),
@@ -460,7 +493,7 @@ export function listMemberSubscriptions(
 export interface SubscriptionListQuery {
   page?: number;
   pageSize?: number;
-  effective?: "all" | EffectiveSubscriptionStatus;
+  effective?: "all" | EffectiveSubscriptionStatus | "expiring" | "unpaid";
   memberId?: string;
   search?: string;
 }
@@ -468,6 +501,9 @@ export interface SubscriptionListQuery {
 export interface SubscriptionWithMember extends Subscription {
   memberCode: string;
   memberName: string;
+  paidMinor: number;
+  discountMinor: number;
+  remainingMinor: number;
 }
 
 export function listSubscriptions(
@@ -497,6 +533,12 @@ export function listSubscriptions(
     conditions.push("s.status = 'suspended' AND s.frozen_at IS NULL");
   } else if (query.effective === "cancelled") {
     conditions.push("s.status = 'cancelled'");
+  } else if (query.effective === "expiring") {
+    const horizon = calcSubscriptionEndDate(today, 8);
+    conditions.push("s.status = 'active' AND s.end_date >= ? AND s.end_date <= ?");
+    params.push(today, horizon);
+  } else if (query.effective === "unpaid") {
+    conditions.push("s.status = 'active' AND (CAST(ROUND(s.price * 100) AS INTEGER) - COALESCE((SELECT SUM(paid_amount_minor + discount_amount_minor) FROM payments WHERE subscription_id = s.id AND status IN ('partial', 'paid')), 0)) > 0");
   }
   if (query.memberId) {
     conditions.push("s.member_id = ?");
@@ -519,17 +561,45 @@ export function listSubscriptions(
     "FROM member_subscriptions s\nJOIN members m ON m.id = s.member_id\nJOIN membership_plans p ON p.id = s.plan_id";
   const total = db.count(`SELECT COUNT(*) ${baseFrom.replace(/\n/g, " ")} ${where}`, params);
   const rows = db.all<
-    SubscriptionRow & { plan_name: string; member_code: string; full_name: string }
+    SubscriptionRow & {
+      plan_name: string;
+      plan_kind: string | null;
+      plan_category: string | null;
+      member_code: string;
+      full_name: string;
+      paid_minor: number;
+      discount_minor: number;
+    }
   >(
-    `SELECT s.*, p.name AS plan_name, p.kind AS plan_kind, m.member_code AS member_code, m.full_name AS full_name\n${baseFrom}\n${where} ORDER BY s.start_date DESC LIMIT ? OFFSET ?`,
+    `SELECT s.*, p.name AS plan_name, p.kind AS plan_kind, p.category AS plan_category, m.member_code AS member_code, m.full_name AS full_name,
+      COALESCE((SELECT SUM(paid_amount_minor) FROM payments WHERE subscription_id = s.id AND status IN ('partial', 'paid')), 0) AS paid_minor,
+      COALESCE((SELECT SUM(discount_amount_minor) FROM payments WHERE subscription_id = s.id AND status IN ('partial', 'paid')), 0) AS discount_minor
+    ${baseFrom}
+    ${where} ORDER BY s.start_date DESC LIMIT ? OFFSET ?`,
     [...params, pageSize, (page - 1) * pageSize],
   );
 
-  const items = rows.map((row) => ({
-    ...toSubscription(row, row.plan_name, today, (row.plan_kind ?? "time") as SubscriptionKind),
-    memberCode: row.member_code,
-    memberName: row.full_name,
-  }));
+  const items = rows.map((row) => {
+    const paidMinor = Number(row.paid_minor ?? 0);
+    const discountMinor = Number(row.discount_minor ?? 0);
+    const priceMinor = Math.round(Number(row.price ?? 0) * 100);
+    const remainingMinor = Math.max(0, priceMinor - paidMinor - discountMinor);
+
+    return {
+      ...toSubscription(
+        row,
+        row.plan_name,
+        today,
+        (row.plan_kind ?? "time") as SubscriptionKind,
+        (row.plan_category === "academy" ? "academy" : "gym") as "gym" | "academy",
+      ),
+      memberCode: row.member_code,
+      memberName: row.full_name,
+      paidMinor,
+      discountMinor,
+      remainingMinor,
+    };
+  });
   return { items, total };
 }
 
@@ -551,6 +621,9 @@ export function listExpiringSubscriptions(
     ...toSubscription(row, row.plan_name, today, (row.plan_kind ?? "time") as SubscriptionKind),
     memberCode: row.member_code,
     memberName: row.full_name,
+    paidMinor: 0,
+    discountMinor: 0,
+    remainingMinor: 0,
   }));
 }
 
@@ -560,6 +633,71 @@ export function countActiveSubscriptions(db: Db): number {
     "SELECT COUNT(*) FROM member_subscriptions WHERE status = 'active' AND start_date <= ? AND end_date >= ?",
     [today, today],
   );
+}
+
+export interface SubscriptionStats {
+  activeCount: number;
+  expiringCount: number;
+  frozenCount: number;
+  unpaidCount: number;
+  unpaidDuesMinor: number;
+  totalSubscriptions: number;
+}
+
+export function getSubscriptionStats(
+  db: Db,
+  actor: ServiceActor,
+): SubscriptionStats {
+  requirePermission(actor, "subscriptions.view");
+  const today = todayKey();
+  const horizon = calcSubscriptionEndDate(today, 8); // within 7 days
+
+  const scope = departmentScopeCondition(actor, "m");
+  const deptWhere = scope.sql ? `AND ${scope.sql.replace(/^ AND /, "")}` : "";
+
+  const activeCount = db.count(
+    `SELECT COUNT(*) FROM member_subscriptions s JOIN members m ON m.id = s.member_id WHERE s.status = 'active' AND s.start_date <= ? AND s.end_date >= ? ${deptWhere}`,
+    [today, today, ...scope.params],
+  );
+
+  const expiringCount = db.count(
+    `SELECT COUNT(*) FROM member_subscriptions s JOIN members m ON m.id = s.member_id WHERE s.status = 'active' AND s.end_date >= ? AND s.end_date <= ? ${deptWhere}`,
+    [today, horizon, ...scope.params],
+  );
+
+  const frozenCount = db.count(
+    `SELECT COUNT(*) FROM member_subscriptions s JOIN members m ON m.id = s.member_id WHERE s.status = 'suspended' AND s.frozen_at IS NOT NULL ${deptWhere}`,
+    [...scope.params],
+  );
+
+  const totalSubscriptions = db.count(
+    `SELECT COUNT(*) FROM member_subscriptions s JOIN members m ON m.id = s.member_id WHERE 1=1 ${deptWhere}`,
+    [...scope.params],
+  );
+
+  const unpaidRow = db.first<{ unpaid_count: number; total_unpaid_minor: number }>(
+    `SELECT 
+       COUNT(*) AS unpaid_count,
+       COALESCE(SUM(remaining_minor), 0) AS total_unpaid_minor
+     FROM (
+       SELECT 
+         s.id,
+         MAX(0, CAST(ROUND(s.price * 100) AS INTEGER) - COALESCE((SELECT SUM(paid_amount_minor + discount_amount_minor) FROM payments WHERE subscription_id = s.id AND status IN ('partial', 'paid')), 0)) AS remaining_minor
+       FROM member_subscriptions s
+       JOIN members m ON m.id = s.member_id
+       WHERE s.status = 'active' ${deptWhere}
+     ) WHERE remaining_minor > 0`,
+    [...scope.params],
+  );
+
+  return {
+    activeCount,
+    expiringCount,
+    frozenCount,
+    unpaidCount: Number(unpaidRow?.unpaid_count ?? 0),
+    unpaidDuesMinor: Number(unpaidRow?.total_unpaid_minor ?? 0),
+    totalSubscriptions,
+  };
 }
 
 // ---------------------------------------------------------------------------
@@ -638,21 +776,6 @@ export async function freezeSubscription(
     throw errValidation("errors.freezeWindowInvalid");
   }
 
-  // Package freeze limits: enforce allowed freeze COUNT (captured at purchase
-  // time, history-safe snapshot). The cumulative DAYS allowance is checked below
-  // once the requested duration is known.
-  const allowedFreezes = Number(row.package_allowed_freezes ?? 0);
-  const allowanceDays = Number(row.package_freeze_allowance_days ?? 0);
-  if (allowedFreezes > 0) {
-    const freezesSoFar = db.count(
-      "SELECT COUNT(*) FROM subscription_freezes WHERE subscription_id = ?",
-      [subscriptionId],
-    );
-    if (freezesSoFar >= allowedFreezes) {
-      throw errValidation("errors.freezeMaxReached", { max: allowedFreezes });
-    }
-  }
-
   // Validate input dates
   const startDate = (input.startDate?.trim() || today);
   if (!isValidDateKey(startDate)) throw errValidation("errors.freezeStartDateInvalid");
@@ -667,12 +790,6 @@ export async function freezeSubscription(
 
   const durationDays = diffDaysKeys(startDate, endDate) + 1;
   if (durationDays <= 0) throw errValidation("errors.freezeDurationInvalid");
-
-  // Cumulative DAYS allowance: the new request must not push the member past the
-  // allowed total (frozen_days already consumed + this request's duration).
-  if (allowanceDays > 0 && Number(row.frozen_days ?? 0) + durationDays > allowanceDays) {
-    throw errValidation("errors.freezeAllowanceExhausted", { days: allowanceDays });
-  }
 
   // Check for overlapping freezes (only open freezes with actual_resume_date IS NULL)
   const overlapFreeze = db.first<{ id: string }>(
@@ -824,8 +941,16 @@ export async function renewSubscription(
 
   const today = todayKey();
   const startDate = row.end_date >= today ? calcSubscriptionEndDate(row.end_date, 2) : today;
-
-  const overlap = findOverlap(db, row.member_id, startDate, calcSubscriptionEndDate(startDate, Number(plan.duration_days)));
+  const planCategory = (plan.category === "academy" ? "academy" : "gym") as "gym" | "academy";
+  const overlap = findOverlap(
+    db,
+    row.member_id,
+    startDate,
+    calcSubscriptionEndDate(startDate, Number(plan.duration_days)),
+    subscriptionId,
+    planCategory,
+    plan.id,
+  );
   if (overlap && overlap.id !== subscriptionId) {
     throw errConflict("errors.subscriptionOverlap", {
       suggestedStart: calcSubscriptionEndDate(overlap.end_date, 2),

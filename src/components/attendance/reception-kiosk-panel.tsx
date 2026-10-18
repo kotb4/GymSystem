@@ -15,6 +15,10 @@ import {
   UserRound,
   X,
   XCircle,
+  Maximize2,
+  Minimize2,
+  Volume2,
+  VolumeX,
 } from "lucide-react";
 import { useT } from "@/i18n";
 import { useAuth } from "@/contexts/auth-context";
@@ -100,6 +104,35 @@ export function ReceptionKioskPanel({
   const [attendanceDeleted, setAttendanceDeleted] = useState(false);
   const [confirmCancelOpen, setConfirmCancelOpen] = useState(false);
   const [actionBusy, setActionBusy] = useState(false);
+  const containerRef = useRef<HTMLDivElement>(null);
+  const [isFullscreen, setIsFullscreen] = useState(false);
+  const [soundMuted, setSoundMuted] = useState(false);
+
+  const toggleFullscreen = useCallback(async () => {
+    try {
+      if (!document.fullscreenElement) {
+        if (containerRef.current?.requestFullscreen) {
+          await containerRef.current.requestFullscreen();
+        }
+        setIsFullscreen(true);
+      } else {
+        if (document.exitFullscreen) {
+          await document.exitFullscreen();
+        }
+        setIsFullscreen(false);
+      }
+    } catch {
+      setIsFullscreen((p) => !p);
+    }
+  }, []);
+
+  useEffect(() => {
+    const handler = () => {
+      setIsFullscreen(Boolean(document.fullscreenElement));
+    };
+    document.addEventListener("fullscreenchange", handler);
+    return () => document.removeEventListener("fullscreenchange", handler);
+  }, []);
 
   // Stop camera media stream
   const stopStream = useCallback(() => {
@@ -283,19 +316,21 @@ export function ReceptionKioskPanel({
         startCountdown();
 
         if (result.kind === "success") {
-          void api.settings.soundEnabled().then((on) => {
-            if (on) playSuccessChime();
-          });
+          if (!soundMuted) {
+            playSuccessChime();
+          }
           onAttendanceChanged();
         } else {
           // Denied or duplicate
-          void api.settings.soundEnabled().then((on) => {
-            if (on) playErrorBuzz();
-          });
+          if (!soundMuted) {
+            playErrorBuzz();
+          }
         }
       } catch (err) {
         toast("error", describeError(err, t));
-        playErrorBuzz();
+        if (!soundMuted) {
+          playErrorBuzz();
+        }
       } finally {
         setProcessing(false);
       }
@@ -472,7 +507,13 @@ export function ReceptionKioskPanel({
   };
 
   return (
-    <div className="space-y-4">
+    <div
+      ref={containerRef}
+      className={cn(
+        "space-y-4 transition-all duration-300",
+        isFullscreen && "fixed inset-0 z-50 bg-[#070A11] p-6 overflow-y-auto"
+      )}
+    >
       {/* Top Kiosk Header / Control Bar */}
       <div className="flex flex-wrap items-center justify-between gap-3 rounded-2xl border border-neon/30 bg-neon/[0.04] p-4 shadow-sm">
         <div className="flex items-center gap-3">
@@ -481,8 +522,13 @@ export function ReceptionKioskPanel({
             <span className="relative inline-flex size-3.5 rounded-full bg-neon" />
           </span>
           <div>
-            <h2 className="text-base font-extrabold text-foreground">
-              {t("reception.autoKioskTitle")}
+            <h2 className="text-base font-extrabold text-foreground flex items-center gap-2">
+              <span>{t("reception.autoKioskTitle")}</span>
+              {isFullscreen && (
+                <span className="px-2 py-0.5 rounded-full bg-neon/15 border border-neon/30 text-neon text-[10px] font-bold">
+                  وضع ملء الشاشة المستقل
+                </span>
+              )}
             </h2>
             <p className="text-xs text-subtle">{t("reception.autoKioskSub")}</p>
           </div>
@@ -559,6 +605,32 @@ export function ReceptionKioskPanel({
               )}
             </Button>
           )}
+
+          {/* Sound Feedback Chimes Toggle */}
+          <Button
+            type="button"
+            variant="secondary"
+            size="sm"
+            onClick={() => setSoundMuted((m) => !m)}
+            title={soundMuted ? "تفعيل النغمات الصوتية" : "كتم النغمات الصوتية"}
+            className={cn("gap-1.5 border-line", !soundMuted && "border-neon/40 text-neon bg-neon/[0.08]")}
+          >
+            {soundMuted ? <VolumeX className="size-3.5 text-subtle" /> : <Volume2 className="size-3.5 text-neon" />}
+            <span className="hidden sm:inline">{soundMuted ? "صامت" : "صوت المسح"}</span>
+          </Button>
+
+          {/* Native Fullscreen Toggle */}
+          <Button
+            type="button"
+            variant="secondary"
+            size="sm"
+            onClick={toggleFullscreen}
+            title={isFullscreen ? "إنهاء ملء الشاشة (Esc)" : "وضع ملء الشاشة المستقل"}
+            className={cn("gap-1.5 border-line", isFullscreen ? "border-neon/50 bg-neon/15 text-neon font-bold shadow-glow-sm" : "hover:border-neon/30 hover:text-foreground")}
+          >
+            {isFullscreen ? <Minimize2 className="size-3.5" /> : <Maximize2 className="size-3.5" />}
+            <span>{isFullscreen ? "إنهاء ملء الشاشة" : "ملء الشاشة"}</span>
+          </Button>
 
           <Button
             type="button"

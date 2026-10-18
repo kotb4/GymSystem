@@ -5,8 +5,8 @@ import { drawDeveloperCredit } from "./credit";
 type PdfDoc = InstanceType<typeof PDFDocumentType>;
 
 const PAGE_MARGIN = 36;
-const COLOR_PRIMARY = "#0f766e";
-const COLOR_PRIMARY_DARK = "#115e59";
+const COLOR_PRIMARY = "#0055FF";
+const COLOR_PRIMARY_DARK = "#080B11";
 const COLOR_LABEL = "#475569";
 const COLOR_VALUE = "#0f172a";
 const COLOR_BORDER = "#cbd5e1";
@@ -51,9 +51,9 @@ export async function renderOperationVoucherPdf(data: OperationVoucherData): Pro
       margin: PAGE_MARGIN,
       info: {
         Title: `${data.title} ${data.docNo}`,
-        Author: "GymSystem",
+        Author: "GymGate",
         Subject: data.title,
-        Creator: "GymSystem",
+        Creator: "GymGate",
       },
     });
     const chunks: Buffer[] = [];

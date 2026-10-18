@@ -1,11 +1,14 @@
 import { errConflict, errNotFound, errValidation } from "@/core/errors";
-import { assertNonNegativeInteger } from "@/core/money";
+import { assertNonNegativeInteger, formatMinor } from "@/core/money";
 import { requirePermission, type ServiceActor } from "@/core/permissions";
 import type { Db, Row } from "@/db/engine";
 import { nowStamp } from "@/core/dates";
 import { insertLedgerEntry } from "./payments.service";
 import { recordAudit } from "./audit.service";
 import { assertDepartmentAccess } from "./department";
+import { readSetting, SETTING_KEYS } from "./settings.service";
+import { whatsappTransport } from "./card-delivery.service";
+import { buildWhatsAppDirectUrl } from "@/core/whatsapp";
 
 /**
  * Hard-deletes an employee and their payroll history (ADR-008). Paid salaries'
@@ -448,3 +451,265 @@ export async function paySalary(
 function stamp(): string {
   return nowStamp();
 }
+
+export interface TrainerMonthlyDuesResult {
+  trainerId: string | null;
+  trainerName: string | null;
+  periodMonth: string;
+  ptSessionsCount: number;
+  ptCommissionMinor: number;
+  ptDetails: Array<{
+    sessionId: string;
+    sessionDate: string;
+    pricePerSessionMinor: number;
+    commissionPercent: number;
+    commissionMinor: number;
+  }>;
+  classesCount: number;
+  classesEarningsMinor: number;
+  classesDetails: Array<{
+    sessionId: string;
+    sessionDate: string;
+    classTitle: string;
+    earningsMinor: number;
+  }>;
+  totalDuesMinor: number;
+  suggestedNotes: string;
+}
+
+export function calculateTrainerMonthlyDues(
+  db: Db,
+  actor: ServiceActor,
+  employeeId: string,
+  periodMonth: string,
+): TrainerMonthlyDuesResult {
+  requirePermission(actor, "salaries.manage");
+  const emp = db.first<Row>("SELECT * FROM employees WHERE id = ?", [employeeId]);
+  if (!emp) throw errNotFound("errors.employeeNotFound");
+  if (emp.department) assertDepartmentAccess(actor, String(emp.department));
+
+  const trainer = db.first<Row>("SELECT id, full_name FROM trainers WHERE employee_id = ?", [employeeId]);
+
+  if (!trainer) {
+    return {
+      trainerId: null,
+      trainerName: null,
+      periodMonth,
+      ptSessionsCount: 0,
+      ptCommissionMinor: 0,
+      ptDetails: [],
+      classesCount: 0,
+      classesEarningsMinor: 0,
+      classesDetails: [],
+      totalDuesMinor: 0,
+      suggestedNotes: "",
+    };
+  }
+
+  const trainerId = String(trainer.id);
+  const trainerName = String(trainer.full_name);
+  const monthPattern = `${periodMonth}%`;
+
+  // 1. PT sessions calculation
+  const ptSessions = db.all<Row>(
+    `SELECT 
+       s.id AS session_id,
+       s.session_date,
+       pt.id AS pt_id,
+       pt.price_minor,
+       pt.total_sessions,
+       pkg.coach_commission_percent
+     FROM private_training_sessions s
+     JOIN private_trainings pt ON s.private_training_id = pt.id
+     LEFT JOIN private_training_packages pkg ON pt.package_id = pkg.id
+     WHERE s.trainer_id = ?
+       AND s.session_date LIKE ?
+     ORDER BY s.session_date ASC`,
+    [trainerId, monthPattern],
+  );
+
+  const empCommissionPct = num(emp.commission_pct, 0);
+  let ptCommissionMinor = 0;
+  const ptDetails = ptSessions.map((row) => {
+    const totalSessions = num(row.total_sessions, 1) || 1;
+    const priceMinor = num(row.price_minor, 0);
+    const pricePerSessionMinor = Math.round(priceMinor / totalSessions);
+    const commPct = num(row.coach_commission_percent, 0) || empCommissionPct;
+    const commMinor = Math.round((pricePerSessionMinor * commPct) / 100);
+    ptCommissionMinor += commMinor;
+    return {
+      sessionId: str(row.session_id),
+      sessionDate: str(row.session_date),
+      pricePerSessionMinor,
+      commissionPercent: commPct,
+      commissionMinor: commMinor,
+    };
+  });
+
+  // 2. Class sessions calculation
+  const classSessions = db.all<Row>(
+    `SELECT 
+       cs.id AS session_id,
+       cs.session_date,
+       c.name AS class_title
+     FROM class_sessions cs
+     JOIN classes c ON cs.class_id = c.id
+     WHERE c.trainer_id = ?
+       AND cs.session_date LIKE ?
+       AND cs.status = 'done'
+     ORDER BY cs.session_date ASC`,
+    [trainerId, monthPattern],
+  );
+
+  const salaryType = str(emp.salary_type);
+  const baseSalaryMinor = num(emp.salary_base_minor, 0);
+  const perClassRateMinor = salaryType === "per_class" ? baseSalaryMinor : 0;
+
+  let classesEarningsMinor = 0;
+  const classesDetails = classSessions.map((row) => {
+    classesEarningsMinor += perClassRateMinor;
+    return {
+      sessionId: str(row.session_id),
+      sessionDate: str(row.session_date),
+      classTitle: str(row.class_title),
+      earningsMinor: perClassRateMinor,
+    };
+  });
+
+  const totalDuesMinor = ptCommissionMinor + classesEarningsMinor;
+
+  const notesParts: string[] = [];
+  if (ptSessions.length > 0) {
+    notesParts.push(`عمولة تدريب برايفت (${ptSessions.length} جلسات: ${formatMinor(ptCommissionMinor)} ج.م)`);
+  }
+  if (classSessions.length > 0) {
+    notesParts.push(`حصص جماعية (${classSessions.length} حصص${perClassRateMinor > 0 ? `: ${formatMinor(classesEarningsMinor)} ج.م` : ""})`);
+  }
+
+  return {
+    trainerId,
+    trainerName,
+    periodMonth,
+    ptSessionsCount: ptSessions.length,
+    ptCommissionMinor,
+    ptDetails,
+    classesCount: classSessions.length,
+    classesEarningsMinor,
+    classesDetails,
+    totalDuesMinor,
+    suggestedNotes: notesParts.join(" + "),
+  };
+}
+
+export interface PayslipData {
+  salary: PublicSalary;
+  employee: PublicEmployee;
+  gymName: string;
+  gymPhone: string;
+  gymAddress: string;
+  attendanceDays: number;
+  trainerDues?: TrainerMonthlyDuesResult;
+  generatedAt: string;
+}
+
+export function getPayslipData(
+  db: Db,
+  actor: ServiceActor,
+  salaryId: string,
+): PayslipData {
+  requirePermission(actor, "salaries.view");
+  const row = db.first<Row>(`${SALARY_SELECT} WHERE s.id = ?`, [salaryId]);
+  if (!row) throw errNotFound("errors.salaryNotFound");
+
+  const empRow = db.first<Row>(`${EMP_SELECT} WHERE id = ?`, [str(row.employee_id)]);
+  if (!empRow) throw errNotFound("errors.employeeNotFound");
+  if (empRow.department) assertDepartmentAccess(actor, String(empRow.department));
+
+  const periodMonth = str(row.period_month);
+  const attendanceDays = db.count(
+    "SELECT COUNT(*) FROM employee_attendance WHERE employee_id = ? AND date_key LIKE ?",
+    [str(row.employee_id), `${periodMonth}%`],
+  );
+
+  const gymName = String(readSetting(db, SETTING_KEYS.gymName) || "نظام إدارة الجيم");
+  const gymPhone = String(readSetting(db, SETTING_KEYS.gymPhone) || "");
+  const gymAddress = String(readSetting(db, SETTING_KEYS.gymAddress) || "");
+
+  const trainerDues = calculateTrainerMonthlyDues(db, actor, str(row.employee_id), periodMonth);
+
+  return {
+    salary: mapSalary(row),
+    employee: mapEmployee(empRow),
+    gymName,
+    gymPhone,
+    gymAddress,
+    attendanceDays,
+    trainerDues: trainerDues.trainerId ? trainerDues : undefined,
+    generatedAt: nowStamp(),
+  };
+}
+
+export async function sendSalaryPayslipWhatsApp(
+  db: Db,
+  actor: ServiceActor,
+  salaryId: string,
+): Promise<{ success: boolean; directUrl?: string; message: string }> {
+  requirePermission(actor, "salaries.manage");
+  const payslip = getPayslipData(db, actor, salaryId);
+  const phone = payslip.employee.phone?.trim();
+  if (!phone) {
+    throw errValidation("errors.employeePhoneMissing");
+  }
+
+  const { salary, employee, gymName } = payslip;
+  const statusText = salary.status === "paid" ? `مدفوع (${salary.paidAt?.slice(0, 10) ?? ""})` : "معتمد قيد الصرف";
+
+  const message = [
+    `🧾 *مفردات الراتب — ${gymName}*`,
+    `━━━━━━━━━━━━━━━━`,
+    `👤 *الموظف:* ${employee.fullName}`,
+    `💼 *الوظيفة:* ${employee.roleTitle || "موظف"}`,
+    `📅 *شهر الاستحقاق:* ${salary.periodMonth}`,
+    `━━━━━━━━━━━━━━━━`,
+    `💵 *الراتب الأساسي:* ${formatMinor(salary.baseMinor)} ج.م`,
+    salary.bonusMinor > 0 ? `➕ *المكافآت والعمولات:* ${formatMinor(salary.bonusMinor)} ج.م` : null,
+    salary.deductionMinor > 0 ? `➖ *الخصومات:* ${formatMinor(salary.deductionMinor)} ج.م` : null,
+    `━━━━━━━━━━━━━━━━`,
+    `💰 *صافي المستحق:* ${formatMinor(salary.netMinor)} ج.م`,
+    `📌 *الحالة:* ${statusText}`,
+    salary.notes ? `📝 *ملاحظات:* ${salary.notes}` : null,
+    `━━━━━━━━━━━━━━━━`,
+    `شكراً لجهودكم المتميزة في فريق العمل! ✨`,
+  ]
+    .filter(Boolean)
+    .join("\n");
+
+  let sent = false;
+  try {
+    const enabled = readSetting(db, SETTING_KEYS.whatsappEnabled) === "1";
+    const apiUrl = (readSetting(db, SETTING_KEYS.whatsappApiUrl) || "").trim() || "http://127.0.0.1:8891";
+    if (enabled && apiUrl !== "") {
+      const transport = whatsappTransport(apiUrl);
+      const res = await transport(phone, message);
+      sent = res.ok;
+    }
+  } catch {
+    sent = false;
+  }
+
+  const directUrl = buildWhatsAppDirectUrl(phone, message);
+
+  recordAudit(db, actor, "SALARY_PAYSLIP_SENT", "salary", salaryId, {
+    employeeId: employee.id,
+    employeeName: employee.fullName,
+    phone,
+    sentViaGateway: sent,
+  });
+
+  return {
+    success: sent,
+    directUrl: directUrl || undefined,
+    message,
+  };
+}
+

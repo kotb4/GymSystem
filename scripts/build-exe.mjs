@@ -34,7 +34,7 @@ const ROOT = path.resolve(__dirname, "..");
 const DIST_DIR = path.join(ROOT, "dist");
 const DIST_SERVER = path.join(ROOT, "dist-server", "index.cjs");
 const OUT_DIR = path.join(ROOT, "dist-exe");
-const EXE_NAME = "GymSystem.exe";
+const EXE_NAME = "GymGate.exe";
 const FUSE = "NODE_SEA_FUSE_fce680ab2cc467b6e072b8b5df1996b2";
 
 function log(msg) {
@@ -100,8 +100,17 @@ export const embeddedDist: Record<string, string> = {
 }
 
 function restoreStub() {
-  writeFileSync(path.join(ROOT, "server", "embedded-dist.ts"), STUB);
-  log("restored embedded-dist stub");
+  const target = path.join(ROOT, "server", "embedded-dist.ts");
+  for (let attempt = 1; attempt <= 10; attempt++) {
+    try {
+      writeFileSync(target, STUB);
+      log("restored embedded-dist stub");
+      return;
+    } catch (err) {
+      if (attempt === 10) throw err;
+      Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, 500);
+    }
+  }
 }
 
 function patchGuiSubsystem(exePath) {
@@ -134,7 +143,18 @@ function buildSea() {
   log("sea blob generated");
 
   const exePath = path.join(OUT_DIR, EXE_NAME);
-  copyFileSync(process.execPath, exePath);
+  for (let attempt = 0; attempt < 10; attempt++) {
+    try {
+      copyFileSync(process.execPath, exePath);
+      break;
+    } catch (err) {
+      if (err.code === "EBUSY" && attempt < 9) {
+        Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, 400);
+        continue;
+      }
+      throw err;
+    }
+  }
 
   const postjectCli = path.join(ROOT, "node_modules", "postject", "dist", "cli.js");
   if (!existsSync(postjectCli)) throw new Error("postject not installed — run `npm i -D postject`");
@@ -202,8 +222,11 @@ function copyRuntime() {
   for (const rel of walkRestricted(gatewaySrc)) {
     if (only.includes(rel)) copyFileSync(path.join(gatewaySrc, rel), path.join(gatewayDst, rel));
   }
-  // No node_modules are needed beside the gateway: wppconnect is loaded from
-  // the data-dir engine install at runtime (CJS require rooted via createRequire).
+  const gatewayNodeModules = path.join(gatewaySrc, "node_modules");
+  if (existsSync(gatewayNodeModules)) {
+    copyTree(gatewayNodeModules, path.join(gatewayDst, "node_modules"));
+    log("bundled Baileys node_modules copied → gateway/node_modules");
+  }
 }
 
 function walkRestricted(dir, base = dir, acc = []) {
@@ -226,18 +249,28 @@ function copyTree(src, dst) {
       copyTree(s, d);
     } else {
       mkdirSync(path.dirname(d), { recursive: true });
-      copyFileSync(s, d);
+      try {
+        copyFileSync(s, d);
+      } catch (err) {
+        if (err.code === "EBUSY" && existsSync(d)) {
+          // Locked by currently running gateway process; existing file preserved
+          continue;
+        }
+        throw err;
+      }
     }
   }
 }
 
 function killRunningExe() {
   if (process.platform === "win32") {
-    try {
-      execSync(`taskkill /F /IM ${EXE_NAME}`, { stdio: "ignore" });
-      log(`terminated running ${EXE_NAME} instance(s) prior to packaging`);
-    } catch {
-      // not running, that is expected
+    for (const name of [EXE_NAME, "GymSystem.exe", "GymGate-Branch2.exe", "GymSystem-Branch2.exe"]) {
+      try {
+        execSync(`taskkill /F /IM ${name}`, { stdio: "ignore" });
+        log(`terminated running ${name} instance(s) prior to packaging`);
+      } catch {
+        // not running, that is expected
+      }
     }
   }
 }
@@ -264,47 +297,7 @@ function main() {
   copyRuntime();
 
   log("step 6/6: done");
-  const branch2Exe = path.join(OUT_DIR, "GymSystem-Branch2.exe");
-  try {
-    copyFileSync(path.join(OUT_DIR, EXE_NAME), branch2Exe);
-    log(`→ ${branch2Exe} (Branch 2 standalone executable)`);
-  } catch (copyErr) {
-    log(`warning: could not copy branch 2 executable: ${String(copyErr)}`);
-  }
-
-  const runB1Bat = `@echo off
-rem ============================================================
-rem  GymSystem - Primary Branch Launcher (Port 8890)
-rem ============================================================
-setlocal
-cd /d "%~dp0"
-start "" "GymSystem.exe"
-exit /b 0
-`;
-  const runB2Bat = `@echo off
-rem ============================================================
-rem  GymSystem - Branch 2 Launcher (Port 8895)
-rem ============================================================
-setlocal
-cd /d "%~dp0"
-if exist "GymSystem-Branch2.exe" (
-  start "" "GymSystem-Branch2.exe"
-) else (
-  set GYMSYSTEM_PORT=8895
-  set GYMSYSTEM_DATA_DIR=%LOCALAPPDATA%\\GymSystem_Branch2
-  start "" "GymSystem.exe"
-)
-exit /b 0
-`;
-  try {
-    writeFileSync(path.join(OUT_DIR, "تشغيل الفرع الرئيسي.bat"), runB1Bat, "utf8");
-    writeFileSync(path.join(OUT_DIR, "تشغيل الفرع الثاني.bat"), runB2Bat, "utf8");
-    writeFileSync(path.join(OUT_DIR, "Start-Branch1.bat"), runB1Bat, "utf8");
-    writeFileSync(path.join(OUT_DIR, "Start-Branch2.bat"), runB2Bat, "utf8");
-    log("→ generated launcher scripts (تشغيل الفرع الرئيسي.bat, تشغيل الفرع الثاني.bat)");
-  } catch (batErr) {
-    log(`warning: could not write launcher scripts: ${String(batErr)}`);
-  }
+  cleanupExtraArtifacts();
 
   log(`→ ${path.join(OUT_DIR, EXE_NAME)}`);
   if (existsSync(path.join(OUT_DIR, "runtime", "node.exe"))) {
@@ -315,6 +308,21 @@ exit /b 0
   }
   if (existsSync(path.join(OUT_DIR, "gateway", "index.js"))) {
     log(`→ ${path.join(OUT_DIR, "gateway")} (WhatsApp gateway)`);
+  }
+}
+
+function cleanupExtraArtifacts() {
+  if (!existsSync(OUT_DIR)) return;
+  for (const entry of readdirSync(OUT_DIR)) {
+    const full = path.join(OUT_DIR, entry);
+    if (statSync(full).isDirectory()) continue;
+    if (entry.toLowerCase().endsWith(".bat") || (entry.toLowerCase().endsWith(".exe") && entry !== EXE_NAME)) {
+      try {
+        rmSync(full, { force: true });
+      } catch {
+        // ignore
+      }
+    }
   }
 }
 

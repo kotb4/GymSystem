@@ -147,16 +147,27 @@ export function listPromoCodes(
   return rows.map(toPromo);
 }
 
+export interface ValidatePromoInput {
+  code: string;
+  orderAmountMinor?: number;
+  spendAmountMinor?: number;
+}
+
 export function validatePromoCode(
   db: Db,
-  actorOrInput: any,
-  inputOrSpend?: any,
+  actorOrInput: ServiceActor | ValidatePromoInput | string,
+  inputOrSpend?: ValidatePromoInput | string | number,
   optionalSpendMinor?: number,
 ): ValidatePromoResult {
   let rawCode = "";
   let spendAmountMinor = 0;
 
-  const isActor = actorOrInput && typeof actorOrInput === "object" && "userId" in actorOrInput;
+  const isActor =
+    typeof actorOrInput === "object" &&
+    actorOrInput !== null &&
+    "userId" in actorOrInput &&
+    "roleId" in actorOrInput;
+
   const target = isActor ? inputOrSpend : actorOrInput;
   const secondarySpend = isActor ? optionalSpendMinor : inputOrSpend;
 
@@ -165,7 +176,7 @@ export function validatePromoCode(
     spendAmountMinor = Number(target.orderAmountMinor ?? target.spendAmountMinor ?? 0);
   } else {
     rawCode = String(target || "");
-    spendAmountMinor = Number(secondarySpend || 0);
+    spendAmountMinor = typeof secondarySpend === "number" ? secondarySpend : Number(secondarySpend || 0);
   }
 
   const code = normalizeCode(rawCode);

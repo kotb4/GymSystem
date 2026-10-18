@@ -61,6 +61,8 @@ interface FrozenSubRow extends Row {
   id: string;
 }
 
+import { getLocalBranchId } from "@/core/branch";
+
 /** Display-only eligibility for one member. Reuses shared attendance helpers. */
 function resolveEligibility(db: Db, member: MemberRow, today: string): ReceptionEligibility {
   const lastRaw = db.scalar(
@@ -80,6 +82,13 @@ function resolveEligibility(db: Db, member: MemberRow, today: string): Reception
 
   if (member.deleted_at) return base({ reason: "MEMBER_DELETED" });
   if (member.status !== "active") return base({ reason: "MEMBER_INACTIVE" });
+
+  if (Number(member.home_branch_only ?? 0) === 1 && member.branch_id) {
+    const currentBranchId = getLocalBranchId(db);
+    if (member.branch_id !== currentBranchId) {
+      return base({ reason: "BRANCH_NOT_ALLOWED" });
+    }
+  }
 
   const sub = findActiveSubscription(db, member.id, today);
   if (!sub) {

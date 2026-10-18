@@ -92,6 +92,7 @@ export function RenewalAlertsModal({ open, onClose }: RenewalAlertsModalProps) {
     }
   };
 
+
   return (
     <Modal
       open={open}
@@ -202,19 +203,21 @@ export function RenewalAlertsModal({ open, onClose }: RenewalAlertsModalProps) {
                       </div>
                     </div>
 
-                    <div className="text-end">
-                      {c.reminderStatus === "already_sent" ? (
-                        <Badge variant="success">تم الإرسال اليوم</Badge>
-                      ) : c.reminderStatus === "no_phone" ? (
-                        <Badge variant="danger">لا يمكن الإرسال</Badge>
-                      ) : (
-                        <Badge variant="warning">جاهز للإرسال</Badge>
-                      )}
-                      {c.lastReminderSentAt && (
-                        <div className="text-[10px] text-faint mt-1" dir="ltr">
-                          آخر إرسال: {formatDateShort(new Date(c.lastReminderSentAt))}
-                        </div>
-                      )}
+                    <div className="flex items-center gap-2">
+                      <div className="text-end shrink-0">
+                        {c.reminderStatus === "already_sent" ? (
+                          <Badge variant="success">تم الإرسال اليوم</Badge>
+                        ) : c.reminderStatus === "no_phone" ? (
+                          <Badge variant="danger">لا يمكن الإرسال</Badge>
+                        ) : (
+                          <Badge variant="warning">جاهز للإرسال</Badge>
+                        )}
+                        {c.lastReminderSentAt && (
+                          <div className="text-[10px] text-faint mt-1" dir="ltr">
+                            آخر إرسال: {formatDateShort(new Date(c.lastReminderSentAt))}
+                          </div>
+                        )}
+                      </div>
                     </div>
                   </div>
                 );

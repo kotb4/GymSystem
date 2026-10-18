@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState, type FormEvent } from "react";
-import { Banknote, UserRound } from "lucide-react";
+import { Banknote, UserRound, Send } from "lucide-react";
 import { useAuth } from "@/contexts/auth-context";
 import { useT } from "@/i18n";
 import { useToast } from "@/components/ui/toast";
@@ -8,6 +8,8 @@ import { api } from "@/api";
 
 import type { PublicMember } from "@/core/services/members.service";
 import { computeDiscount, formatMinor, toMinor, type DiscountKind } from "@/core/money";
+import { todayKey } from "@/core/dates";
+import { buildPaymentReceiptMessage, buildWhatsAppDirectUrl } from "@/core/whatsapp";
 import { Modal } from "@/components/ui/modal";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -38,9 +40,6 @@ export function PaymentFormModal({ open, onClose, onSaved, presetMember }: Payme
   const [referenceNo, setReferenceNo] = useState("");
   const [notes, setNotes] = useState("");
   const [methods, setMethods] = useState<Array<{ code: string; labelAr: string }>>([]);
-  const [promoCodeInput, setPromoCodeInput] = useState("");
-  const [promoApplying, setPromoApplying] = useState(false);
-  const [promoSuccessMsg, setPromoSuccessMsg] = useState<string | null>(null);
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
@@ -57,8 +56,6 @@ export function PaymentFormModal({ open, onClose, onSaved, presetMember }: Payme
     setMethodCode("cash");
     setReferenceNo("");
     setNotes("");
-    setPromoCodeInput("");
-    setPromoSuccessMsg(null);
     setError(null);
     void (async () => {
       try {
@@ -79,7 +76,7 @@ export function PaymentFormModal({ open, onClose, onSaved, presetMember }: Payme
         );
         const mapped = rows.map((s) => ({
           id: (s as { id: string }).id,
-          label: `${(s as { planName?: string }).planName ?? "—"} · ${(s as { startDate: string }).startDate} → ${(s as { endDate: string }).endDate}`,
+          label: `${(s as { planName?: string }).planName ?? "—"} · من ${(s as { startDate: string }).startDate} إلى ${(s as { endDate: string }).endDate}`,
           remainingMinor: Math.max(0, Math.round((s as { price: number }).price * 100)),
           priceMinor: Math.round((s as { price: number }).price * 100),
           effective: (s as { effectiveStatus?: string }).effectiveStatus ?? "",
@@ -116,7 +113,8 @@ export function PaymentFormModal({ open, onClose, onSaved, presetMember }: Payme
     if (!subscriptionId) return;
     const sub = subs.find((s) => s.id === subscriptionId);
     if (sub && baseMajor === "") {
-      setBaseMajor((sub.priceMinor / 100).toString());
+      const defaultAmount = sub.remainingMinor > 0 ? sub.remainingMinor : sub.priceMinor;
+      setBaseMajor((defaultAmount / 100).toString());
       if (sub.remainingMinor > 0) setPaidMajor((sub.remainingMinor / 100).toString());
     }
   }, [subscriptionId, subs, baseMajor]);
@@ -155,13 +153,13 @@ export function PaymentFormModal({ open, onClose, onSaved, presetMember }: Payme
     return () => { alive = false; };
   }, [selected?.id]);
 
-  const onSubmit = async (e: FormEvent) => {
-    e.preventDefault();
+  const onSubmit = async (e?: FormEvent, sendWhatsApp = false) => {
+    if (e) e.preventDefault();
     if (!actor || !selected) return;
     setSubmitting(true);
     setError(null);
     try {
-      await api.payments.record({
+      const res = await api.payments.record({
         memberId: selected.id,
         subscriptionId: subscriptionId || null,
         baseAmountMinor: toMinor(baseMajor),
@@ -178,6 +176,40 @@ export function PaymentFormModal({ open, onClose, onSaved, presetMember }: Payme
         notes: notes || null,
       });
       toast("success", t("pay.recordedToast"));
+      if (sendWhatsApp && selected.phone) {
+        const subLabel = subs.find((s) => s.id === subscriptionId)?.label;
+        const msg = buildPaymentReceiptMessage({
+          memberName: selected.fullName,
+          memberCode: selected.memberCode,
+          receiptNo: res?.receiptNo || undefined,
+          amountPaid: paidMajor,
+          amountRemaining: summary?.remainingMinor && summary.remainingMinor > 0 ? (summary.remainingMinor / 100).toFixed(2) : undefined,
+          planName: subLabel ? subLabel.split(" · ")[0] : undefined,
+          date: todayKey(),
+          notes: notes || undefined,
+        });
+        let sentDirectly = false;
+        try {
+          const sendRes = await api.messages.send({
+            memberId: selected.id,
+            segment: "payment",
+            body: msg,
+          });
+          if (sendRes && sendRes.status === "sent") {
+            sentDirectly = true;
+            toast("success", "تم إرسال إيصال السداد عبر الواتساب تلقائياً! ✅");
+          }
+        } catch {
+          // gateway offline or failed, fallback to manual direct url
+        }
+        if (!sentDirectly) {
+          const waUrl = buildWhatsAppDirectUrl(selected.phone, msg);
+          if (waUrl) {
+            window.open(waUrl, "_blank");
+            toast("info", "تم فتح واتساب لإرسال الإيصال يدوياً لعدم اتصال البوابة");
+          }
+        }
+      }
       onSaved();
       onClose();
     } catch (err) {
@@ -256,62 +288,6 @@ export function PaymentFormModal({ open, onClose, onSaved, presetMember }: Payme
               ) : null}
             </div>
 
-            {canDiscount && (
-              <div className="rounded-xl border border-line bg-muted/10 p-3 space-y-2">
-                <span className="text-xs font-bold text-foreground block">
-                  هل لديك كود خصم ترويجي؟ (Promo Code)
-                </span>
-                <div className="flex items-center gap-2">
-                  <Input
-                    placeholder="أدخل رمز الكود مثل: SUMMER2026"
-                    value={promoCodeInput}
-                    onChange={(e) => setPromoCodeInput(e.target.value.toUpperCase())}
-                    dir="ltr"
-                    disabled={submitting || promoApplying}
-                  />
-                  <Button
-                    type="button"
-                    variant="secondary"
-                    loading={promoApplying}
-                    disabled={promoApplying || !promoCodeInput.trim() || !baseMajor}
-                    onClick={async () => {
-                      setPromoApplying(true);
-                      setError(null);
-                      setPromoSuccessMsg(null);
-                      try {
-                        const baseMin = toMinor(baseMajor || "0");
-                        const val = await api.promo.validate({
-                          code: promoCodeInput.trim(),
-                          orderAmountMinor: baseMin,
-                        });
-                        if (val.valid) {
-                          if (val.discountType === "percentage") {
-                            setDiscountKind("percent");
-                            setDiscountValue(String(val.discountValue));
-                          } else {
-                            setDiscountKind("fixed");
-                            setDiscountValue((val.discountValue / 100).toFixed(2));
-                          }
-                          setPromoSuccessMsg(`تم تطبيق كود الخصم بنجاح (-${formatMinor(val.calculatedDiscountMinor)})`);
-                          toast("success", "تم تطبيق الخصم بنجاح!");
-                        } else {
-                          toast("error", val.errorKey ? t(val.errorKey) : "كود الخصم غير صالح");
-                        }
-                      } catch (err) {
-                        toast("error", describeError(err, t));
-                      } finally {
-                        setPromoApplying(false);
-                      }
-                    }}
-                  >
-                    تطبيق
-                  </Button>
-                </div>
-                {promoSuccessMsg && (
-                  <p className="text-xs font-bold text-emerald">{promoSuccessMsg}</p>
-                )}
-              </div>
-            )}
 
             {canDiscount && discountKind !== "none" && (
               <Input
@@ -397,13 +373,29 @@ export function PaymentFormModal({ open, onClose, onSaved, presetMember }: Payme
             )}
 
             <div className="grid gap-3 sm:grid-cols-2">
-              <Input
-                label={t("pay.referenceNo")}
-                dir="ltr"
-                value={referenceNo}
-                onChange={(e) => setReferenceNo(e.target.value)}
-                disabled={submitting}
-              />
+              <div>
+                <Input
+                  label={
+                    methodCode === "instapay" || methodCode === "wallet" || methodCode === "transfer"
+                      ? t("pay.referenceNoInstaPay")
+                      : t("pay.referenceNo")
+                  }
+                  placeholder={
+                    methodCode === "instapay" || methodCode === "wallet"
+                      ? "مثال: 948271039512"
+                      : undefined
+                  }
+                  dir="ltr"
+                  value={referenceNo}
+                  onChange={(e) => setReferenceNo(e.target.value)}
+                  disabled={submitting}
+                />
+                {(methodCode === "instapay" || methodCode === "wallet" || methodCode === "transfer") && (
+                  <p className="mt-1 text-[11px] text-cyan">
+                    {t("pay.referenceNoInstaPayHint")}
+                  </p>
+                )}
+              </div>
               <Input
                 label={t("common.notes")}
                 value={notes}
@@ -424,6 +416,20 @@ export function PaymentFormModal({ open, onClose, onSaved, presetMember }: Payme
           <Button type="button" variant="ghost" onClick={onClose} disabled={submitting}>
             {t("common.cancel")}
           </Button>
+          {selected?.phone && (
+            <Button
+              type="button"
+              variant="secondary"
+              loading={submitting}
+              disabled={!selected || submitting}
+              onClick={() => void onSubmit(undefined, true)}
+              className="text-emerald-400 hover:text-emerald-300 border-emerald-500/30 gap-1.5"
+              title="تسجيل الدفعة وفتح إيصال الواتساب مباشرة"
+            >
+              <Send className="size-3.5" />
+              <span>تسجيل وإرسال واتساب</span>
+            </Button>
+          )}
           <Button type="submit" loading={submitting} disabled={!selected || submitting}>
             <Banknote className="size-4" />
             {t("pay.record")}

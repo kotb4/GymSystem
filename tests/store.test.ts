@@ -265,7 +265,7 @@ describe("returns", () => {
       reason: "استبدال",
     });
 
-    expect(ret.returnNo).toMatch(/^(?:[A-Z0-9]{1,6}-)?SRT-\d{4}-\d{6}$/);
+    expect(ret.returnNo).toMatch(/^(?:[A-Z0-9]{1,6}-)+SRT-\d{4}-\d{6}$/);
     expect(ret.totalMinor).toBe(1 * 10000);
     expect(ret.items.length).toBe(1);
     expect(ret.items[0].productId).toBe(p.id);

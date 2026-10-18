@@ -11,5 +11,11 @@
   },
   "engines": {
     "node": ">=18"
+  },
+  "dependencies": {
+    "@hapi/boom": "^10.0.1",
+    "@whiskeysockets/baileys": "^6.7.24",
+    "pino": "^8.21.0",
+    "qrcode": "^1.5.4"
   }
 }

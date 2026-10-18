@@ -8,7 +8,9 @@ export type AppNotificationType =
   | "expired"
   | "balance"
   | "card_lost"
-  | "backup";
+  | "backup"
+  | "bot_handover"
+  | "cash_handover_deficit";
 
 export type NotificationSeverity = "info" | "warning" | "danger";
 
@@ -74,8 +76,26 @@ export function collectNotifications(db: Db, actor: ServiceActor): AppNotificati
   const mayBalance = roleHasPermission(actor.roleId, "payments.view");
   const mayCards = roleHasPermission(actor.roleId, "cards.view");
   const maySettings = roleHasPermission(actor.roleId, "settings.view");
+  const mayMessages = roleHasPermission(actor.roleId, "messages.view");
 
   const today = todayKey();
+
+  if (mayMessages) {
+    const tableExists = db.count("SELECT COUNT(*) FROM sqlite_master WHERE type = 'table' AND name = 'whatsapp_bot_handovers'") > 0;
+    if (tableExists) {
+      const pendingHandovers = db.count("SELECT COUNT(*) FROM whatsapp_bot_handovers WHERE status = 'pending'");
+      if (pendingHandovers > 0) {
+        items.push({
+          id: "bot_handover",
+          type: "bot_handover",
+          severity: "danger",
+          messageKey: "notifs.botHandover",
+          params: { count: pendingHandovers },
+          count: pendingHandovers,
+        });
+      }
+    }
+  }
 
   if (mayExpiry) {
     const expiredCount = db.count(
@@ -118,6 +138,22 @@ export function collectNotifications(db: Db, actor: ServiceActor): AppNotificati
         messageKey: "notifs.outstanding",
         params: { count: outstanding.count },
         count: outstanding.count,
+      });
+    }
+
+    const handoverDeficitCount = db.count(
+      "SELECT COUNT(*) FROM cash_sessions cs " +
+      "LEFT JOIN expenses ge ON ge.id = cs.gap_expense_id " +
+      "WHERE cs.inter_shift_gap_minor < 0 AND (cs.gap_expense_id IS NULL OR ge.id IS NULL OR ge.status != 'active')",
+    );
+    if (handoverDeficitCount > 0) {
+      items.push({
+        id: "cash_handover_deficit",
+        type: "cash_handover_deficit",
+        severity: "danger",
+        messageKey: "notifs.cashHandoverDeficit",
+        params: { count: handoverDeficitCount },
+        count: handoverDeficitCount,
       });
     }
   }

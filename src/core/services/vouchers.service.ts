@@ -6,7 +6,7 @@ import type { Db } from "@/db/engine";
 import { renderOperationVoucherPdf, type OperationVoucherData } from "@/core/pdf/operation-voucher";
 import { assignDocNo } from "./document-numbers.service";
 
-export type VoucherKind = "refund" | "store_debt_payment" | "cash_closing" | "attendance";
+export type VoucherKind = "refund" | "store_debt_payment" | "cash_closing" | "attendance" | "expense";
 
 export interface GeneratedVoucher {
   fileName: string;
@@ -29,6 +29,7 @@ const PERMISSION_BY_KIND: Record<VoucherKind, Parameters<typeof requirePermissio
   store_debt_payment: "store.view",
   cash_closing: "cash.close",
   attendance: "reports.view",
+  expense: "expenses.view",
 };
 
 const EM_DASH = "—";
@@ -115,6 +116,8 @@ function buildVoucherData(db: Db, kind: VoucherKind, rowId: string): BuiltVouche
       return buildCashClosing(db, rowId);
     case "attendance":
       return buildAttendance(db, rowId);
+    case "expense":
+      return buildExpense(db, rowId);
   }
 }
 
@@ -144,11 +147,11 @@ function buildRefund(db: Db, refundId: string): BuiltVoucher {
   );
   if (!row) throw errNotFound("errors.finance.paymentNotFound");
 
-  const docNo = assignDocNo(db, "refund", row.id, row.created_at);
+  const docNo = assignDocNo(db, "refund", row.id, row.created_at, row.created_by);
   // The receipt number is minted lazily when the payment receipt is first
   // printed. A refund voucher quotes it, so make sure it exists — the customer
   // can then reconcile both documents from the same search.
-  const receiptNo = assignDocNo(db, "payment", row.payment_id, row.paid_at);
+  const receiptNo = assignDocNo(db, "payment", row.payment_id, row.paid_at, row.created_by);
   return {
     table: "payment_refunds",
     memberId: row.member_id,
@@ -202,7 +205,7 @@ function buildDebtPayment(db: Db, paymentId: string): BuiltVoucher {
   );
   if (!row) throw errNotFound("errors.store.saleNotFound");
 
-  const docNo = assignDocNo(db, "store_debt_payment", row.id, row.created_at);
+  const docNo = assignDocNo(db, "store_debt_payment", row.id, row.created_at, row.created_by);
   const remaining = row.debt_original_minor - row.debt_paid_minor;
   return {
     table: "store_debt_payments",
@@ -246,7 +249,7 @@ function buildCashClosing(db: Db, sessionId: string): BuiltVoucher {
   }>("SELECT * FROM cash_sessions WHERE id = ?", [sessionId]);
   if (!row || !row.closed_at) throw errNotFound("errors.finance.paymentNotFound");
 
-  const docNo = assignDocNo(db, "cash_closing", row.id, row.closed_at);
+  const docNo = assignDocNo(db, "cash_closing", row.id, row.closed_at, row.closed_by);
   const diff = Number(row.difference_minor ?? 0);
   return {
     table: "cash_sessions",
@@ -299,7 +302,7 @@ function buildAttendance(db: Db, attendanceId: string): BuiltVoucher {
   );
   if (!row) throw errNotFound("errors.memberNotFound");
 
-  const docNo = assignDocNo(db, "attendance", row.id, row.checkin_at);
+  const docNo = assignDocNo(db, "attendance", row.id, row.checkin_at, row.created_by);
   return {
     table: "attendance",
     memberId: row.member_id,
@@ -326,3 +329,53 @@ function buildAttendance(db: Db, attendanceId: string): BuiltVoucher {
     },
   };
 }
+
+function buildExpense(db: Db, expenseId: string): BuiltVoucher {
+  const row = db.first<{
+    id: string;
+    category_id: string;
+    category_name: string | null;
+    amount_minor: number;
+    method_code: string;
+    description: string;
+    expense_date: string;
+    reference_no: string | null;
+    created_by: string;
+    created_at: string;
+    status: string;
+  }>(
+    "SELECT e.id, e.category_id, c.name_ar AS category_name, e.amount_minor, e.method_code, e.description, e.expense_date, e.reference_no, e.created_by, e.created_at, e.status\n" +
+      "  FROM expenses e\n" +
+      "  LEFT JOIN expense_categories c ON c.id = e.category_id\n" +
+      " WHERE e.id = ?",
+    [expenseId],
+  );
+  if (!row) throw errNotFound("errors.finance.categoryNotFound");
+
+  const docNo = row.reference_no || assignDocNo(db, "expense", row.id, row.created_at, row.created_by);
+  return {
+    table: "expenses",
+    memberId: null,
+    memberName: null,
+    data: {
+      title: "سند صرف نقدية / مصروف",
+      docNo,
+      issuedAt: row.created_at,
+      totalLabel: "المبلغ المصروف",
+      totalMinor: row.amount_minor,
+      totalTone: "out",
+      fields: [
+        { label: "بند المصروف", value: row.category_name ?? "مصروفات عامة" },
+        { label: "البيان / الوصف", value: row.description },
+        { label: "تاريخ المصروف", value: row.expense_date },
+        { label: "طريقة الصرف", value: methodLabel(db, row.method_code) },
+        { label: "المسؤول عن الصرف", value: userName(db, row.created_by) ?? EM_DASH },
+      ],
+      signatureLabel: "توقيع المستلم / المحاسب",
+      branchName: branchName(db),
+      createdByName: userName(db, row.created_by),
+      notes: row.status === "voided" ? "⚠️ هذا السند ملغي ومستبعد من الحسابات (Voided)" : null,
+    },
+  };
+}
+

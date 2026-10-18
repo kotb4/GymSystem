@@ -7,7 +7,6 @@ export type TabKey =
   | "payments"
   | "attendance"
   | "pt-classes"
-  | "inbody"
   | "notes"
   | "activity"
   | "referrals"
@@ -18,7 +17,7 @@ export interface MemberProfileContext {
   overview: MemberOverview | null;
   reloadTick: number;
   reload: () => void;
-  onAddSubscription: () => void;
+  onAddSubscription: (category?: "gym" | "academy") => void;
 }
 
 export interface TabProps {

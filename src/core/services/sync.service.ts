@@ -4,6 +4,7 @@ import { errForbidden, errValidation } from "@/core/errors";
 import type { Db, Row } from "@/db/engine";
 import { requirePermission, type ServiceActor } from "@/core/permissions";
 import { recordAudit } from "./audit.service";
+import { isDeveloperActor } from "./developer.service";
 
 export type BranchRole = "primary" | "replica";
 
@@ -213,6 +214,9 @@ export async function updateBranchConfig(
   input: UpdateBranchConfigInput,
 ): Promise<BranchConfig> {
   requirePermission(actor, "settings.edit");
+  if (!isDeveloperActor(actor)) {
+    throw errForbidden("errors.developerOnly");
+  }
   const current = getBranchConfig(db);
 
   const nextName = input.branchName !== undefined ? input.branchName.trim() : current.branchName;
@@ -541,7 +545,7 @@ export async function performSyncCycle(
         headers: {
           "Content-Type": "application/json",
           "x-sync-secret": config.syncSecret,
-          "User-Agent": "GymSystem-Sync/1.0",
+          "User-Agent": "GymGate-Sync/1.0",
         },
         signal: AbortSignal.timeout(30000),
         body: JSON.stringify({
@@ -564,8 +568,12 @@ export async function performSyncCycle(
         throw new Error(`Push failed with HTTP ${pushRes.status}: ${text}`);
       }
 
-      const pushRaw = (await pushRes.json()) as any;
-      const pushJson: SyncPushResult = (pushRaw.result ? { ...pushRaw, ...pushRaw.result } : pushRaw) as SyncPushResult;
+      const pushRaw = (await pushRes.json()) as unknown;
+      const pushJson: SyncPushResult = (
+        typeof pushRaw === "object" && pushRaw !== null && "result" in pushRaw
+          ? (pushRaw as { result: SyncPushResult }).result
+          : pushRaw
+      ) as SyncPushResult;
       if (pushJson.ok && Array.isArray(pushJson.acknowledgedIds) && pushJson.acknowledgedIds.length > 0) {
         const placeholders = pushJson.acknowledgedIds.map(() => "?").join(",");
         db.run(
@@ -583,7 +591,7 @@ export async function performSyncCycle(
       headers: {
         "Content-Type": "application/json",
         "x-sync-secret": config.syncSecret,
-        "User-Agent": "GymSystem-Sync/1.0",
+        "User-Agent": "GymGate-Sync/1.0",
       },
       signal: AbortSignal.timeout(30000),
       body: JSON.stringify({
@@ -609,8 +617,12 @@ export async function performSyncCycle(
       throw new Error(`Pull failed with HTTP ${pullRes.status}${cleanSnippet ? ": " + cleanSnippet : ""}`);
     }
 
-    const pullRaw = (await pullRes.json()) as any;
-    const pullJson: SyncPullResult = (pullRaw.result ? { ...pullRaw, ...pullRaw.result } : pullRaw) as SyncPullResult;
+    const pullRaw = (await pullRes.json()) as unknown;
+    const pullJson: SyncPullResult = (
+      typeof pullRaw === "object" && pullRaw !== null && "result" in pullRaw
+        ? (pullRaw as { result: SyncPullResult }).result
+        : pullRaw
+    ) as SyncPullResult;
     if (pullJson.ok) {
       if (pullJson.updates) {
         await db.transaction(async () => {
@@ -696,7 +708,7 @@ export async function testRemoteConnection(
       headers: {
         "Content-Type": "application/json",
         "x-sync-secret": targetSecret,
-        "User-Agent": "GymSystem-Sync/1.0",
+        "User-Agent": "GymGate-Sync/1.0",
       },
       signal: AbortSignal.timeout(15000),
       body: JSON.stringify({
@@ -739,8 +751,12 @@ export async function testRemoteConnection(
       };
     }
 
-    const raw = (await res.json()) as any;
-    const data = (raw?.result ?? raw) as {
+    const raw = (await res.json()) as unknown;
+    const data = (
+      typeof raw === "object" && raw !== null && "result" in raw
+        ? (raw as { result: { ok: boolean; branchName?: string; branchRole?: string; error?: string } }).result
+        : raw
+    ) as {
       ok: boolean;
       branchName?: string;
       branchRole?: string;
@@ -874,7 +890,7 @@ function upsertMember(db: Db, id: string, data: Record<string, unknown>, branchI
       "UPDATE members SET full_name = ?, phone = ?, email = ?, gender = ?, date_of_birth = ?, " +
         "address = ?, notes = ?, registration_date = ?, status = ?, height_cm = ?, weight_kg = ?, " +
         "emergency_contact_name = ?, emergency_contact_phone = ?, department = ?, photo_file_id = ?, " +
-        "deleted_at = ?, deleted_by = ?, deletion_reason = ?, branch_id = ?, updated_at = ? WHERE id = ?",
+        "deleted_at = ?, deleted_by = ?, deletion_reason = ?, branch_id = ?, home_branch_only = ?, updated_at = ? WHERE id = ?",
       [
         sReq(data.full_name, ""),
         s(data.phone),
@@ -895,6 +911,7 @@ function upsertMember(db: Db, id: string, data: Record<string, unknown>, branchI
         safeDeletedBy,
         s(data.deletion_reason),
         targetBranch,
+        data.home_branch_only ? 1 : 0,
         sReq(data.updated_at, nowStamp()),
         id,
       ],
@@ -910,8 +927,8 @@ function upsertMember(db: Db, id: string, data: Record<string, unknown>, branchI
     db.run(
       "INSERT INTO members (id, member_code, full_name, phone, email, gender, date_of_birth, address, notes, " +
         "registration_date, status, height_cm, weight_kg, emergency_contact_name, emergency_contact_phone, " +
-        "department, photo_file_id, deleted_at, deleted_by, deletion_reason, branch_id, created_at, updated_at) " +
-        "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+        "department, photo_file_id, deleted_at, deleted_by, deletion_reason, branch_id, home_branch_only, created_at, updated_at) " +
+        "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
       [
         id,
         memberCode,
@@ -934,6 +951,7 @@ function upsertMember(db: Db, id: string, data: Record<string, unknown>, branchI
         safeDeletedBy,
         s(data.deletion_reason),
         targetBranch,
+        data.home_branch_only ? 1 : 0,
         sReq(data.created_at, nowStamp()),
         sReq(data.updated_at, nowStamp()),
       ],

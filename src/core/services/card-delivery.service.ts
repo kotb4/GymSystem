@@ -8,6 +8,7 @@ import { getCardById } from "./cards.service";
 import { assertDepartmentAccess } from "./department";
 import { getMemberRowById } from "./members.service";
 import { readSetting, SETTING_KEYS } from "./settings.service";
+import { getMemberPortalUrl } from "./member-portal.service";
 
 export type CardDeliveryStatus =
   | "pending"
@@ -76,7 +77,7 @@ export const whatsappTransport =
       const controller = new AbortController();
       // Cold gateway launches (fresh browser + WhatsApp page settle) regularly
       // take 10-20s; abort must not cut a delivery in half.
-      const timer = setTimeout(() => controller.abort(), 45000);
+      const timer = setTimeout(() => controller.abort(), 65000);
       const res = await fetch(sendUrl, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
@@ -108,9 +109,9 @@ function envFlag(name: string): boolean {
 function resolveTransport(db: Db): { transport: MessageTransport | null; provider: "mock" | "whatsapp" | "none" } {
   if (envFlag("GYM_CRM_MOCK")) return { transport: mockTransport, provider: "mock" };
   const enabled = readSetting(db, SETTING_KEYS.whatsappEnabled) === "1";
-  const apiUrl = readSetting(db, SETTING_KEYS.whatsappApiUrl) ?? "";
-  if (enabled && apiUrl.trim() !== "") {
-    return { transport: whatsappTransport(apiUrl.trim()), provider: "whatsapp" };
+  const apiUrl = (readSetting(db, SETTING_KEYS.whatsappApiUrl) || "").trim() || "http://127.0.0.1:8891";
+  if (enabled && apiUrl !== "") {
+    return { transport: whatsappTransport(apiUrl), provider: "whatsapp" };
   }
   return { transport: null, provider: "none" };
 }
@@ -133,7 +134,7 @@ function toDelivery(row: CardDeliveryRow): PublicCardDelivery {
   };
 }
 
-export const DEVELOPER_CREDIT_LINE = "System by : Yassen Mohamed Kotb | 01288536381";
+export const DEVELOPER_CREDIT_LINE = "Powered by GymGate — KOTB Digital Solutions";
 
 async function renderDeliveryMedia(barcodeValue: string, memberName: string): Promise<CardDeliveryMediaPayload> {
   const base64 = await renderQrPngBase64(barcodeValue);
@@ -235,6 +236,7 @@ export async function sendPendingCardDeliveries(
   db: Db,
   actor: ServiceActor,
   limit = 20,
+  _includePortalLink = false,
 ): Promise<{ sent: number; failed: number; skippedNoPhone: number; notConfigured: number }> {
   requirePermission(actor, "cards.send");
   const { transport, provider } = resolveTransport(db);
@@ -268,7 +270,19 @@ export async function sendPendingCardDeliveries(
       await sha256Hex(media.base64).catch(() => ""),
       item.id,
     ]);
-    const body = `بطاقة العضوية - ${item.memberName ?? ""}\n${item.barcodeValue}\n\n${DEVELOPER_CREDIT_LINE}`;
+
+    let portalLinkText = "";
+    try {
+      const portalInfo = getMemberPortalUrl(db, actor, item.memberId);
+      if (portalInfo?.url) {
+        portalLinkText = `\n\n📲 رابط بروفايلك الخاص وبطاقتك الإلكترونية:\n${portalInfo.url}`;
+      }
+    } catch {
+      // ignore
+    }
+
+    const body = `بطاقة العضوية - ${item.memberName ?? ""}\n💳 كود العضو: ${item.barcodeValue}${portalLinkText}\n\n${DEVELOPER_CREDIT_LINE}`;
+    media.caption = body;
 
     try {
       const result = await transport(item.phone, body, media);

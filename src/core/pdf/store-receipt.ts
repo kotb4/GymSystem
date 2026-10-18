@@ -15,6 +15,8 @@ export interface StoreReceiptItem {
 
 export interface StoreReceiptData {
   gymName: string;
+  gymPhone?: string | null;
+  gymAddress?: string | null;
   saleNo: string;
   soldAt: string;
   branchName: string | null;
@@ -32,11 +34,15 @@ export interface StoreReceiptData {
   debtRemainingMinor?: number;
   status: string;
   title?: string;
+  logoBuffer?: Buffer | null;
+  logoWidth?: number;
+  showQr?: boolean;
+  footerText?: string | null;
 }
 
 const PAGE_MARGIN = 36;
-const COLOR_PRIMARY = "#0f766e"; // Emerald 700
-const COLOR_PRIMARY_DARK = "#115e59"; // Emerald 800
+const COLOR_PRIMARY = "#0055FF"; // Electric Cobalt Blue
+const COLOR_PRIMARY_DARK = "#080B11"; // Obsidian Black
 const COLOR_LABEL = "#475569"; // Slate 600
 const COLOR_VALUE = "#0f172a"; // Slate 900
 const COLOR_LIGHT_BORDER = "#cbd5e1"; // Slate 300
@@ -47,21 +53,23 @@ const COLOR_DANGER = "#b91c1c"; // Red 700
 
 /** Render the modern store sales receipt and return the raw PDF bytes. */
 export async function renderStoreReceiptPdf(data: StoreReceiptData): Promise<Buffer> {
-  const qrPayload = JSON.stringify({
-    sale: data.saleNo,
-    customer: data.customerName,
-    total: (data.totalMinor / 100).toFixed(2),
-    date: data.soldAt,
-  });
   let qrBuffer: Buffer | null = null;
-  try {
-    qrBuffer = await QRCode.toBuffer(qrPayload, {
-      width: 140,
-      margin: 1,
-      color: { dark: "#0f172a", light: "#ffffff" },
+  if (data.showQr !== false) {
+    const qrPayload = JSON.stringify({
+      sale: data.saleNo,
+      customer: data.customerName,
+      total: (data.totalMinor / 100).toFixed(2),
+      date: data.soldAt,
     });
-  } catch {
-    qrBuffer = null;
+    try {
+      qrBuffer = await QRCode.toBuffer(qrPayload, {
+        width: 140,
+        margin: 1,
+        color: { dark: "#0f172a", light: "#ffffff" },
+      });
+    } catch {
+      qrBuffer = null;
+    }
   }
 
   return new Promise((resolve, reject) => {
@@ -72,7 +80,7 @@ export async function renderStoreReceiptPdf(data: StoreReceiptData): Promise<Buf
         Title: `Store Sale ${data.saleNo}`,
         Author: data.gymName,
         Subject: "Store sales receipt",
-        Creator: "GymSystem",
+        Creator: "GymGate",
       },
     });
     const chunks: Buffer[] = [];
@@ -122,25 +130,43 @@ function paint(doc: PdfDoc, data: StoreReceiptData, qrBuffer: Buffer | null): vo
   const gymTitle = data.gymName;
   const subTitle = data.title ?? "فاتورة مبيعات متجر";
 
-  // Right side of Header Banner (Gym & Invoice Type)
+  // Right side of Header Banner (Gym & Invoice Type & Address/Phone)
   const headerRightW = width * 0.6 - 20;
-  drawText(doc, gymTitle, left + width - headerRightW - 20, PAGE_MARGIN + 14, headerRightW, {
-    size: 20,
+  drawText(doc, gymTitle, left + width - headerRightW - 20, PAGE_MARGIN + 12, headerRightW, {
+    size: 19,
     align: "right",
     color: "#ffffff",
     weight: "bold",
   });
 
-  drawText(doc, subTitle, left + width - headerRightW - 20, PAGE_MARGIN + 44, headerRightW, {
-    size: 11,
+  const subLineParts = [subTitle];
+  if (data.gymAddress) subLineParts.push(data.gymAddress);
+  if (data.gymPhone) subLineParts.push(`هاتف: ${toAsciiDigits(data.gymPhone)}`);
+  const subText = subLineParts.join(" • ");
+
+  drawText(doc, subText, left + width - headerRightW - 20, PAGE_MARGIN + 42, headerRightW, {
+    size: 9,
     align: "right",
     color: "#ccfbf1",
     weight: "regular",
   });
 
-  // Left side of Header Banner (Sale Number & Date)
-  const headerLeftW = width * 0.4 - 20;
-  drawText(doc, `رقم: ${toAsciiDigits(data.saleNo)}`, left + 20, PAGE_MARGIN + 16, headerLeftW, {
+  // Left side of Header Banner (Sale Number & Date & Optional Logo)
+  let headerLeftStart = left + 20;
+  let headerLeftW = width * 0.4 - 20;
+
+  if (data.logoBuffer) {
+    try {
+      const fitWidth = Math.max(30, Math.min(140, Math.round((data.logoWidth ?? 100) * 0.75)));
+      doc.image(data.logoBuffer, left + 16, PAGE_MARGIN + 12, { fit: [fitWidth, 54] });
+      headerLeftStart = left + 16 + fitWidth + 10;
+      headerLeftW = width * 0.4 - (fitWidth + 12);
+    } catch {
+      // Fallback
+    }
+  }
+
+  drawText(doc, `رقم: ${toAsciiDigits(data.saleNo)}`, headerLeftStart, PAGE_MARGIN + 15, headerLeftW, {
     size: 11,
     align: "left",
     color: "#ffffff",
@@ -149,8 +175,8 @@ function paint(doc: PdfDoc, data: StoreReceiptData, qrBuffer: Buffer | null): vo
 
   const dateClean = data.soldAt.slice(0, 10);
   const dateStr = data.branchName ? `${toAsciiDigits(dateClean)} • فرع: ${data.branchName}` : `التاريخ: ${toAsciiDigits(dateClean)}`;
-  drawText(doc, dateStr, left + 20, PAGE_MARGIN + 44, headerLeftW, {
-    size: 9.5,
+  drawText(doc, dateStr, headerLeftStart, PAGE_MARGIN + 43, headerLeftW, {
+    size: 9,
     align: "left",
     color: "#e6fffa",
     weight: "regular",
@@ -338,6 +364,18 @@ function paint(doc: PdfDoc, data: StoreReceiptData, qrBuffer: Buffer | null): vo
 
   if (qrBuffer) {
     doc.image(qrBuffer, left + 20, footerY + 10, { width: 68, height: 68 });
+  }
+
+  // Footer text
+  if (data.footerText) {
+    const footX = left + (qrBuffer ? 100 : 20);
+    const footW = width - (qrBuffer ? 120 : 40);
+    drawText(doc, data.footerText, footX, footerY + 14, footW, {
+      size: 9,
+      align: "center",
+      color: COLOR_LABEL,
+      weight: "bold",
+    });
   }
 
   // Centered Developer Credit (see ./credit.ts)

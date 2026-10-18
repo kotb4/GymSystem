@@ -11,6 +11,7 @@ import { useT } from "@/i18n";
 import { useToast } from "@/components/ui/toast";
 import { api, type SyncStatus, type RegisteredBranch } from "@/api";
 import { cn } from "@/utils/cn";
+import { formatTime } from "@/services/format";
 import { Dropdown } from "@/components/ui/dropdown";
 
 export function SyncStatusIndicator() {
@@ -172,7 +173,7 @@ export function SyncStatusIndicator() {
               {status.lastPullAt && (
                 <div className="text-[11px] text-faint pt-1">
                   <span>{t("sync.lastSyncedAt")}: </span>
-                  <span className="tabnum">{status.lastPullAt.slice(11, 19)}</span>
+                  <span className="tabnum">{formatTime(status.lastPullAt)}</span>
                 </div>
               )}
 
@@ -232,8 +233,8 @@ export function SyncStatusIndicator() {
                         {b.isOnline ? "متصل" : "أوفلاين"}
                       </span>
                       {b.lastSeenAt && (
-                        <span className="text-[9px] text-faint font-mono">
-                          {b.lastSeenAt.slice(11, 16)}
+                        <span className="text-[9px] text-faint">
+                          {formatTime(b.lastSeenAt)}
                         </span>
                       )}
                     </div>

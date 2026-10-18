@@ -46,7 +46,10 @@ export function QuickWhatsAppModal({
     let alive = true;
     setLoading(true);
 
-    Promise.all([api.messages.getMemberMessageData(memberId), api.messages.getConfig()])
+    Promise.all([
+      api.messages.getMemberMessageData(memberId),
+      api.messages.getConfig(),
+    ])
       .then(([mData, mCfg]) => {
         if (!alive) return;
         setMemberData(mData);
@@ -66,7 +69,11 @@ export function QuickWhatsAppModal({
     };
   }, [open, memberId, defaultTemplateType]);
 
-  const applyTemplate = (type: QuickTemplateType, data: MemberMessageData | null, cfg: MessagesConfig | null) => {
+  const applyTemplate = (
+    type: QuickTemplateType,
+    data: MemberMessageData | null,
+    cfg: MessagesConfig | null,
+  ) => {
     setTemplateType(type);
     if (!data || !cfg || type === "custom") {
       if (type === "custom") setBody("");

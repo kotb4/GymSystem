@@ -23,6 +23,7 @@ import { Button } from "@/components/ui/button";
 import { BarcodeField } from "@/components/ui/barcode-field";
 import { Badge } from "@/components/ui/badge";
 import { EmptyState } from "@/components/ui/empty-state";
+import { formatTime } from "@/services/format";
 import { cn } from "@/utils/cn";
 
 function hoursLabel(minutes: number): string {
@@ -270,12 +271,12 @@ export function EmployeeCheckInPage() {
                   {myEmployee.roleTitle || t("hr.employeeLabel")}
                   {myAttendance?.clockInAt && (
                     <span className="ms-2 font-mono text-neon">
-                      · {t("hr.clockInAt")}: {myAttendance.clockInAt.slice(11, 16)}
+                      · {t("hr.clockInAt")}: {formatTime(myAttendance.clockInAt)}
                     </span>
                   )}
                   {myAttendance?.clockOutAt && (
                     <span className="ms-2 font-mono text-cyan">
-                      · {t("hr.clockOutAt")}: {myAttendance.clockOutAt.slice(11, 16)} ({hoursLabel(myAttendance.workedMinutes)})
+                      · {t("hr.clockOutAt")}: {formatTime(myAttendance.clockOutAt)} ({hoursLabel(myAttendance.workedMinutes)})
                     </span>
                   )}
                 </div>
@@ -590,12 +591,12 @@ export function EmployeeCheckInPage() {
                         <div className="flex items-center gap-2 text-xs text-subtle mt-0.5">
                           {isWorking && att && (
                             <span className="text-neon font-medium">
-                              حاضر منذ: <span dir="ltr" className="tabnum font-mono">{att.clockInAt.slice(11, 16)}</span>
+                              حاضر منذ: <span className="tabnum font-mono">{formatTime(att.clockInAt)}</span>
                             </span>
                           )}
                           {isCheckedOut && att && (
                             <span className="text-cyan font-medium">
-                              انصرف في: <span dir="ltr" className="tabnum font-mono">{att.clockOutAt?.slice(11, 16)}</span>
+                              انصرف في: <span className="tabnum font-mono">{formatTime(att.clockOutAt)}</span>
                               {" · "}{hoursLabel(att.workedMinutes)}
                             </span>
                           )}

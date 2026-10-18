@@ -140,7 +140,7 @@ export function LicensePage() {
 
   const openWhatsAppSupport = () => {
     if (!status) return;
-    const msg = `السلام عليكم، أحتاج تفعيل كود الجهاز لنظام GymSystem:\nكود الجهاز (HWID): ${status.hwid}`;
+    const msg = `السلام عليكم، أحتاج تفعيل كود الجهاز لنظام GymGate:\nكود الجهاز (HWID): ${status.hwid}`;
     const url = buildWhatsAppDirectUrl("01288536381", msg);
     if (url) window.open(url, "_blank");
   };
@@ -224,8 +224,15 @@ export function LicensePage() {
 
       <div className="w-full max-w-[540px]">
         <div className="mb-6 flex flex-col items-center gap-3 text-center">
-          <h1 className="text-xl font-extrabold">{t("license.title")}</h1>
-          <p className="mt-1 text-xs text-subtle">{t("license.subtitle")}</p>
+          <img
+            src="/branding/kotb-logo.png"
+            alt="KOTB Digital Solutions"
+            className="h-10 object-contain drop-shadow-md select-none"
+          />
+          <div>
+            <h1 className="text-xl font-extrabold text-white font-sans">{t("license.title")}</h1>
+            <p className="mt-1 text-xs text-subtle">{t("license.subtitle")}</p>
+          </div>
           <span
             className={`inline-flex items-center gap-1.5 rounded-full border px-3 py-1 text-[11px] font-bold ${
               tampered
@@ -234,7 +241,7 @@ export function LicensePage() {
                   ? "border-amber/40 bg-amber/10 text-amber"
                   : state === "active"
                     ? "border-emerald/40 bg-emerald/10 text-emerald"
-                    : "border-neon/30 bg-neon/10 text-neon"
+                    : "border-[#0055FF]/40 bg-[#0055FF]/10 text-[#00D2FF]"
             }`}
           >
             {tampered ? <ShieldAlert className="size-3" /> : <Info className="size-3" />}
@@ -403,6 +410,15 @@ export function LicensePage() {
               </Button>
             )}
           </div>
+        </div>
+
+        <div className="mt-8 text-center space-y-1">
+          <p className="text-[12px] font-semibold text-[#94A3B8]">
+            GymGate — Powered by <span className="text-white font-bold">KOTB Digital Solutions</span>
+          </p>
+          <p className="text-[11px] text-[#64748B] font-sans">
+            قُطب للحلول الرقمية • جميع الحقوق محفوظة © 2026
+          </p>
         </div>
       </div>
 

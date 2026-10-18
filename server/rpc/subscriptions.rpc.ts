@@ -15,4 +15,5 @@ export const subscriptions = defineService({
   unfreezeSubscription: a(subscriptionsService.unfreezeSubscription as Fn),
   renewSubscription: a(subscriptionsService.renewSubscription as Fn),
   purgeSubscription: a(subscriptionsService.purgeSubscription as Fn),
+  getSubscriptionStats: a(subscriptionsService.getSubscriptionStats as Fn),
 });

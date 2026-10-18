@@ -3,8 +3,20 @@
   <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover" />
-    <meta name="theme-color" content="#080B12" />
-    <title>Yassen Mohamed Kotb | 01288536381 — نظام إدارة الجيم</title>
+    <meta name="theme-color" content="#080B11" />
+    <title>GymGate — Powered by KOTB Digital Solutions</title>
+    <link rel="icon" type="image/x-icon" href="/favicon.ico" />
+    <link rel="icon" type="image/png" sizes="512x512" href="/branding/kotb-k-icon.png" />
+    <link rel="apple-touch-icon" href="/branding/kotb-k-icon.png" />
+    <script>
+      (function() {
+        var p = window.location.pathname;
+        if (p === '/portal' || p === '/member-portal' || p === '/profile') {
+          var s = window.location.search || '';
+          window.location.replace('/#' + p + s);
+        }
+      })();
+    </script>
   </head>
   <body>
     <div id="root"></div>

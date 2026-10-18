@@ -9,16 +9,46 @@ const shortFmt = new Intl.DateTimeFormat("ar-EG-u-nu-latn", {
   month: "long",
 });
 
-const timeFmt = new Intl.DateTimeFormat("ar-EG-u-nu-latn", {
-  hour: "numeric",
-  minute: "2-digit",
-});
+export function formatTime12(input: Date | string | number | null | undefined): string {
+  if (!input) return "—";
+  let hours = 0;
+  let minutes = 0;
+
+  if (input instanceof Date) {
+    if (isNaN(input.getTime())) return "—";
+    hours = input.getHours();
+    minutes = input.getMinutes();
+  } else if (typeof input === "number") {
+    const d = new Date(input);
+    if (isNaN(d.getTime())) return "—";
+    hours = d.getHours();
+    minutes = d.getMinutes();
+  } else if (typeof input === "string") {
+    const str = input.trim();
+    const timeMatch = str.match(/(?:^|\s|T)(\d{1,2}):(\d{2})(?::\d{2})?/);
+    if (timeMatch) {
+      hours = parseInt(timeMatch[1], 10);
+      minutes = parseInt(timeMatch[2], 10);
+    } else {
+      const d = new Date(str);
+      if (isNaN(d.getTime())) return str;
+      hours = d.getHours();
+      minutes = d.getMinutes();
+    }
+  }
+
+  const period = hours >= 12 ? "م" : "ص";
+  let h12 = hours % 12;
+  if (h12 === 0) h12 = 12;
+  const mStr = minutes.toString().padStart(2, "0");
+  return `${h12}:${mStr} ${period}`;
+}
 
 const weekdayFmt = new Intl.DateTimeFormat("ar-EG", { weekday: "long" });
 
 export const formatDate = (d: Date) => fullFmt.format(d);
 export const formatDateShort = (d: Date) => shortFmt.format(d);
-export const formatTime = (d: Date) => timeFmt.format(d);
+export const formatTime = (d: Date | string | number | null | undefined) => formatTime12(d);
 export const formatWeekday = (d: Date) => weekdayFmt.format(d);
 
 export const formatFullHeading = (d: Date) =>

@@ -5,11 +5,12 @@ import { useToast } from "@/components/ui/toast";
 import { describeError } from "@/utils/app-error";
 import { api, type ClassSession, type GymClass } from "@/api";
 import { todayKey } from "@/core/dates";
-import { formatDateShort } from "@/services/format";
+import { formatDateShort, formatTime } from "@/services/format";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Select } from "@/components/ui/select";
 import { EmptyState } from "@/components/ui/empty-state";
+import { cn } from "@/utils/cn";
 import { SessionDetailsModal } from "./session-details-modal";
 
 const DAY_ORDER = [6, 0, 1, 2, 3, 4, 5];
@@ -112,56 +113,134 @@ export function ScheduleTab() {
       {isEmpty ? (
         <EmptyState icon={<CalendarPlus />} title={t("cls.scheduleEmpty")} description={t("cls.scheduleEmptyDesc")} />
       ) : (
-        <div className="grid grid-cols-7 gap-1.5">
-          {days.map((d) => (
-            <div key={d.day} className="min-w-0 rounded-xl border border-line bg-panel">
-              <div className={`flex flex-col items-center gap-0.5 border-b border-line px-1 py-2 ${d.dateKey === today ? "bg-neon/10" : ""}`}>
-                <span className="text-[11px] font-bold text-subtle">{d.dayName}</span>
-                <span className="tabnum text-[13px] font-extrabold">{formatDateShort(d.date)}</span>
-              </div>
-              <div className="flex min-h-24 flex-col gap-1.5 p-1.5">
-                {d.sessions.map((s) => {
-                  const full = s.bookedCount >= s.capacity;
-                  return (
-                    <button
-                      key={s.id}
-                      type="button"
-                      onClick={() => setDetails(s)}
-                      className={`group rounded-lg border p-1.5 text-start transition-colors hover:bg-white/5 ${
-                        s.status === "cancelled"
-                          ? "border-line bg-black/30 opacity-70"
-                          : s.status === "done"
-                            ? "border-line bg-black/20"
-                            : "border-line-strong"
-                      }`}
-                    >
-                      <span className="flex items-center justify-between gap-1">
-                        <span dir="ltr" className="tabnum text-[11px] font-bold text-neon">{s.startTime}</span>
-                        {s.status === "cancelled" && <Badge variant="neutral">{t("cls.status_cancelled")}</Badge>}
-                        {s.status === "done" && <Badge variant="success">{t("cls.status_done")}</Badge>}
-                      </span>
-                      <div className="flex items-center justify-between gap-1">
-                        <span className="block truncate text-[12px] font-bold">{s.className}</span>
-                        {s.discipline && s.discipline !== "general" && (
-                          <span className="text-[9px] font-medium text-warning bg-warning/10 px-1 py-0.5 rounded">
-                            {t(`cls.disciplines.${s.discipline}`)}
-                          </span>
-                        )}
-                      </div>
-                      {s.trainerName && <span className="block truncate text-[10px] text-faint">{s.trainerName}</span>}
-                      {s.status === "scheduled" && (
-                        <span className="mt-1 inline-flex">
-                          <Badge variant={full ? "danger" : s.bookedCount / s.capacity > 0.7 ? "warning" : "success"} dot>
-                            {s.bookedCount}/{s.capacity}
-                          </Badge>
-                        </span>
+        <div className="overflow-x-auto pb-3">
+          <div className="grid grid-cols-7 gap-2.5 min-w-[920px]">
+            {days.map((d) => {
+              const isCurrentDay = d.dateKey === today;
+              return (
+                <div
+                  key={d.day}
+                  className={cn(
+                    "flex flex-col rounded-2xl border transition-all duration-200 min-h-[360px]",
+                    isCurrentDay
+                      ? "border-primary/60 bg-panel/95 shadow-glow-sm ring-1 ring-primary/30"
+                      : "border-white/10 bg-panel/70 hover:border-white/20"
+                  )}
+                >
+                  {/* Day Header */}
+                  <div
+                    className={cn(
+                      "flex flex-col items-center justify-center gap-1 border-b px-2 py-3 rounded-t-2xl",
+                      isCurrentDay
+                        ? "border-primary/40 bg-primary/20 text-white"
+                        : "border-white/10 bg-surface/50 text-subtle"
+                    )}
+                  >
+                    <div className="flex items-center gap-1.5">
+                      <span className="text-xs font-black tracking-wide">{d.dayName}</span>
+                      {isCurrentDay && (
+                        <span className="size-2 rounded-full bg-emerald shadow-[0_0_8px_rgba(16,185,129,0.7)]" />
                       )}
-                    </button>
-                  );
-                })}
-              </div>
-            </div>
-          ))}
+                    </div>
+                    <span className="tabnum text-sm font-extrabold text-ink">
+                      {formatDateShort(d.date)}
+                    </span>
+                    <span className="text-[10px] font-semibold text-slate-400">
+                      {d.sessions.length > 0 ? `${d.sessions.length} حصة` : "لا توجد حصص"}
+                    </span>
+                  </div>
+
+                  {/* Day Sessions List */}
+                  <div className="flex-1 flex flex-col gap-2 p-2 overflow-y-auto max-h-[520px]">
+                    {d.sessions.length === 0 ? (
+                      <div className="flex flex-1 items-center justify-center py-10 text-center">
+                        <span className="text-xs text-faint font-medium">متاح</span>
+                      </div>
+                    ) : (
+                      d.sessions.map((s) => {
+                        const full = s.bookedCount >= s.capacity;
+                        const isDone = s.status === "done";
+                        const isCancelled = s.status === "cancelled";
+
+                        return (
+                          <button
+                            key={s.id}
+                            type="button"
+                            onClick={() => setDetails(s)}
+                            className={cn(
+                              "group relative flex flex-col gap-1.5 rounded-xl border p-2.5 text-start transition-all duration-150 hover:-translate-y-0.5 hover:shadow-pop",
+                              isCancelled
+                                ? "border-white/5 bg-black/40 opacity-60"
+                                : isDone
+                                  ? "border-emerald/30 bg-emerald/5 hover:border-emerald/50"
+                                  : "border-white/10 bg-raised/90 hover:border-primary/50 hover:bg-raised"
+                            )}
+                          >
+                            {/* Time & Status Header */}
+                            <div className="flex items-center justify-between gap-1">
+                              <span
+                                className="tabnum text-xs font-black text-cyan"
+                              >
+                                {formatTime(s.startTime)}
+                              </span>
+                              {isCancelled && (
+                                <Badge variant="neutral" className="text-[10px] px-1.5 py-0">
+                                  {t("cls.status_cancelled")}
+                                </Badge>
+                              )}
+                              {isDone && (
+                                <Badge variant="success" className="text-[10px] px-1.5 py-0">
+                                  {t("cls.status_done")}
+                                </Badge>
+                              )}
+                              {!isCancelled && !isDone && (
+                                <span className="tabnum text-[10px] font-bold text-subtle">
+                                  {s.durationMin} دقيقة
+                                </span>
+                              )}
+                            </div>
+
+                            {/* Class Title */}
+                            <span className="block font-bold text-xs text-ink leading-snug line-clamp-2">
+                              {s.className}
+                            </span>
+
+                            {/* Discipline & Coach Badges */}
+                            <div className="flex flex-wrap items-center gap-1">
+                              {s.discipline && s.discipline !== "general" && (
+                                <span className="text-[9px] font-bold text-amber-300 bg-amber-500/15 border border-amber-500/30 px-1.5 py-0.5 rounded-md truncate max-w-[110px]">
+                                  {t(`cls.disciplines.${s.discipline}`) || s.discipline}
+                                </span>
+                              )}
+                              {s.trainerName && (
+                                <span className="block truncate text-[10px] font-semibold text-slate-300">
+                                  👤 {s.trainerName}
+                                </span>
+                              )}
+                            </div>
+
+                            {/* Capacity & Attendance Bar */}
+                            {s.status === "scheduled" && (
+                              <div className="mt-0.5 flex items-center justify-between gap-1 pt-1 border-t border-white/5">
+                                <span className="text-[10px] text-faint">المقاعد:</span>
+                                <Badge
+                                  variant={full ? "danger" : s.bookedCount / s.capacity > 0.7 ? "warning" : "success"}
+                                  dot
+                                  className="text-[10px] px-1.5 py-0 font-bold tabnum"
+                                >
+                                  {s.bookedCount} / {s.capacity}
+                                </Badge>
+                              </div>
+                            )}
+                          </button>
+                        );
+                      })
+                    )}
+                  </div>
+                </div>
+              );
+            })}
+          </div>
         </div>
       )}
 

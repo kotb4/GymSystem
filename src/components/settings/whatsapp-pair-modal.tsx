@@ -1,10 +1,11 @@
 import { useCallback, useEffect, useState } from "react";
 import { useT } from "@/i18n";
 import { api } from "@/api";
+import { useToast } from "@/components/ui/toast";
 import { Modal } from "@/components/ui/modal";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
-import { Loader2, Play, Smartphone } from "lucide-react";
+import { Loader2, LogOut, Play, RefreshCw, Smartphone } from "lucide-react";
 
 /**
  * One-time WhatsApp Web pairing inside the app. Polls the local gateway,
@@ -21,13 +22,37 @@ export function WhatsAppPairModal({
   open: boolean;
   onClose: () => void;
   gatewayUrl: string;
-  onStart?: () => void;
+  onStart?: (restart?: boolean) => void | Promise<void | boolean>;
   starting?: boolean;
 }) {
   const t = useT();
+  const { toast } = useToast();
   const [state, setState] = useState<"down" | "ready" | "paired" | "error">("down");
   const [qr, setQr] = useState<string | null>(null);
   const [engineMissing, setEngineMissing] = useState(false);
+  const [disconnecting, setDisconnecting] = useState(false);
+
+  const handleDisconnect = async () => {
+    if (!window.confirm(t("settings.whatsappDisconnectConfirm"))) return;
+    setDisconnecting(true);
+    try {
+      await api.gateway.disconnect(gatewayUrl);
+      toast("success", t("settings.whatsappDisconnectedToast"));
+      setState("ready");
+      void tick();
+    } catch {
+      try {
+        await api.system.disconnectWhatsApp();
+        toast("success", t("settings.whatsappDisconnectedToast"));
+        setState("ready");
+        void tick();
+      } catch (err) {
+        toast("error", err instanceof Error ? err.message : "فشل إلغاء ربط الحساب");
+      }
+    } finally {
+      setDisconnecting(false);
+    }
+  };
 
   const tick = useCallback(async () => {
     try {
@@ -83,6 +108,17 @@ export function WhatsAppPairModal({
           <div className="flex flex-col items-center gap-3 py-2 text-center">
             <Badge variant="success">{t("settings.whatsappPairedDesc")}</Badge>
             <p className="text-[13px] text-subtle">{t("settings.whatsappPairedNote")}</p>
+            <Button
+              type="button"
+              variant="danger"
+              size="sm"
+              onClick={handleDisconnect}
+              disabled={disconnecting}
+              className="mt-2 flex items-center gap-1.5"
+            >
+              {disconnecting ? <Loader2 className="size-4 animate-spin" /> : <LogOut className="size-4" />}
+              <span>{disconnecting ? t("settings.whatsappDisconnecting") : t("settings.whatsappDisconnectButton")}</span>
+            </Button>
           </div>
         )}
 
@@ -114,7 +150,7 @@ export function WhatsAppPairModal({
             <Smartphone className="size-8 text-faint" />
             <p className="text-[13px] leading-relaxed text-subtle">{t("settings.whatsappGatewayDown")}</p>
             {onStart && (
-              <Button type="button" variant="secondary" size="sm" onClick={onStart} disabled={starting}>
+              <Button type="button" variant="secondary" size="sm" onClick={() => onStart(false)} disabled={starting}>
                 {starting ? <Loader2 className="size-4 animate-spin" /> : <Play className="size-4" />}
                 {starting ? t("settings.whatsappStarting") : t("settings.whatsappStartButton")}
               </Button>
@@ -123,11 +159,31 @@ export function WhatsAppPairModal({
         )}
 
         {state === "error" && (
-          <p className="text-center text-[13px] text-danger">
-            {engineMissing
-              ? t("settings.whatsappEngineNotInstalled")
-              : t("settings.whatsappBrowserFailed")}
-          </p>
+          <div className="flex flex-col items-center gap-3 py-2 text-center">
+            <p className="text-center text-[13px] font-semibold text-danger">
+              {engineMissing
+                ? t("settings.whatsappEngineNotInstalled")
+                : t("settings.whatsappBrowserFailed")}
+            </p>
+            <p className="text-[12px] leading-relaxed text-subtle">
+              تأكد من وجود متصفح Google Chrome أو Microsoft Edge على الجهاز. سيقوم النظام بفك أقفال المتصفح وإعادة المحاولة تلقائياً.
+            </p>
+            {onStart && (
+              <Button
+                type="button"
+                variant="primary"
+                size="sm"
+                onClick={async () => {
+                  await onStart(true);
+                  void tick();
+                }}
+                disabled={starting}
+              >
+                {starting ? <Loader2 className="size-4 animate-spin" /> : <RefreshCw className="size-4" />}
+                {starting ? t("settings.whatsappRestarting") : t("settings.whatsappRestartButton")}
+              </Button>
+            )}
+          </div>
         )}
       </div>
 

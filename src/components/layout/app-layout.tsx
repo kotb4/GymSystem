@@ -8,6 +8,7 @@ import { useBootMaintenance } from "@/hooks/use-boot-maintenance";
 import { Sidebar, MobileDrawer, MobileBottomNav } from "./sidebar";
 import { Header } from "./header";
 import { NewsTicker } from "./news-ticker";
+import { SectionCapsuleNav } from "./section-capsule-nav";
 
 export function AppLayout() {
   const t = useT();
@@ -64,8 +65,11 @@ export function AppLayout() {
           </div>
         ))}
         <main className="flex-1 overflow-y-auto pb-20 lg:pb-0">
-          <div key={location.pathname} className="mx-auto w-full max-w-[1440px] animate-fade-up px-3.5 py-4 sm:px-6 sm:py-6">
-            <Outlet />
+          <div className="mx-auto w-full max-w-[1440px] px-3.5 py-4 sm:px-6 sm:py-6 space-y-4">
+            <SectionCapsuleNav />
+            <div key={location.pathname} className="animate-fade-up">
+              <Outlet />
+            </div>
           </div>
         </main>
         <MobileBottomNav onOpenMenu={() => setMobileNavOpen(true)} />

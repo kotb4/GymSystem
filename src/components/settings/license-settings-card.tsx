@@ -40,7 +40,7 @@ export function LicenseSettingsCard() {
 
   const openWhatsAppSupport = () => {
     if (!status?.hwid) return;
-    const msg = `السلام عليكم، أحتاج تجديد/تفعيل رخصة نظام GymSystem:\nكود الجهاز (HWID): ${status.hwid}`;
+    const msg = `السلام عليكم، أحتاج تجديد/تفعيل رخصة نظام GymGate:\nكود الجهاز (HWID): ${status.hwid}`;
     const url = buildWhatsAppDirectUrl("01288536381", msg);
     if (url) window.open(url, "_blank");
   };

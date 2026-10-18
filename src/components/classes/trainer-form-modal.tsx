@@ -26,6 +26,7 @@ export function TrainerFormModal(props: {
   const [rankTitle, setRankTitle] = useState("");
   const [joinedDate, setJoinedDate] = useState("");
   const [notes, setNotes] = useState("");
+  const [defaultSessionFee, setDefaultSessionFee] = useState("");
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
@@ -39,6 +40,7 @@ export function TrainerFormModal(props: {
     setRankTitle(props.target?.rankTitle ?? "");
     setJoinedDate(props.target?.joinedDate ?? todayKey());
     setNotes(props.target?.notes ?? "");
+    setDefaultSessionFee(props.target?.defaultSessionFeeMinor ? String(props.target.defaultSessionFeeMinor / 100) : "");
   }, [props.open, props.target]);
 
   const onSubmit = async () => {
@@ -46,6 +48,7 @@ export function TrainerFormModal(props: {
     setSubmitting(true);
     setError(null);
     try {
+      const feeMinor = defaultSessionFee ? Math.round(Number(defaultSessionFee) * 100) : 0;
       const input = {
         fullName,
         phone: phone || null,
@@ -54,6 +57,8 @@ export function TrainerFormModal(props: {
         rankTitle: rankTitle || null,
         joinedDate,
         notes: notes || null,
+        defaultSessionFeeMinor: feeMinor,
+        workingSchedule: props.target?.workingSchedule ?? null,
       };
       if (props.target) {
         await api.trainers.update(props.target.id, input);
@@ -74,7 +79,7 @@ export function TrainerFormModal(props: {
       open={props.open}
       onClose={props.onClose}
       title={props.target ? t("trainers.editTitle") : t("trainers.addTitle")}
-      widthClass="max-w-lg"
+      widthClass="max-w-xl"
       footer={
         <>
           <Button variant="ghost" onClick={props.onClose} disabled={submitting}>
@@ -87,7 +92,7 @@ export function TrainerFormModal(props: {
       }
     >
       <form
-        className="space-y-3.5"
+        className="space-y-4"
         onSubmit={(e) => {
           e.preventDefault();
           void onSubmit();
@@ -133,13 +138,24 @@ export function TrainerFormModal(props: {
             disabled={submitting}
           />
         </div>
-        <Input
-          label={t("trainers.rankTitle")}
-          placeholder={t("trainers.rankTitlePlaceholder")}
-          value={rankTitle}
-          onChange={(e) => setRankTitle(e.target.value)}
-          disabled={submitting}
-        />
+        <div className="grid gap-3.5 sm:grid-cols-2">
+          <Input
+            label={t("trainers.rankTitle")}
+            placeholder={t("trainers.rankTitlePlaceholder")}
+            value={rankTitle}
+            onChange={(e) => setRankTitle(e.target.value)}
+            disabled={submitting}
+          />
+          <Input
+            label={t("trainers.defaultSessionFee")}
+            placeholder="0"
+            type="number"
+            value={defaultSessionFee}
+            onChange={(e) => setDefaultSessionFee(e.target.value)}
+            disabled={submitting}
+          />
+        </div>
+
         <Input
           label={t("members.notes")}
           value={notes}

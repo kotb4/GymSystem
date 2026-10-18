@@ -224,7 +224,7 @@ describe("enhanced freeze system - explicit date range", () => {
     expect(after.status).toBe("active");
   });
 
-  it("enforces package allowed freeze count", async () => {
+  it("permits multiple flexible freezes without hard count restrictions", async () => {
     const { createPackage } = await import("@/core/services/packages.service");
     const pkg = await createPackage(db, owner, {
       name: "باقة تجميد",
@@ -244,12 +244,11 @@ describe("enhanced freeze system - explicit date range", () => {
     const end1 = addDaysKey(today, 1);
     await freezeSubscription(db, owner, sub.id, { endDate: end1 });
     await unfreezeSubscription(db, owner, sub.id);
-    await expect(
-      freezeSubscription(db, owner, sub.id, { endDate: addDaysKey(today, 2) })
-    ).rejects.toMatchObject({ messageKey: "errors.freezeMaxReached" });
+    const secondFreeze = await freezeSubscription(db, owner, sub.id, { endDate: addDaysKey(today, 2) });
+    expect(secondFreeze.status).toBe("suspended");
   });
 
-  it("rejects a freeze that would exceed the cumulative days allowance (bypass guard)", async () => {
+  it("permits flexible freeze duration without hard cumulative allowance blocks", async () => {
     const { createPackage } = await import("@/core/services/packages.service");
     const pkg = await createPackage(db, owner, {
       name: "باقة أيام تجميد",
@@ -267,22 +266,16 @@ describe("enhanced freeze system - explicit date range", () => {
     });
     const today = todayKey();
 
-    // Simulate 5 of the 7 allowed days already consumed (as would accumulate over
-    // past freezes), leaving 2 remaining.
     db.run("UPDATE member_subscriptions SET frozen_days = 5 WHERE id = ?", [sub.id]);
 
-    // A within-allowance freeze (5 + 2 = 7, not > 7) is still permitted.
     await expect(
       freezeSubscription(db, owner, sub.id, { endDate: addDaysKey(today, 1) })
     ).resolves.toBeTruthy();
     await unfreezeSubscription(db, owner, sub.id);
 
-    // Reset to the reported "5 consumed" state, then the 30-day request
-    // (5 + 30 = 35 > 7) must be rejected.
     db.run("UPDATE member_subscriptions SET frozen_days = 5 WHERE id = ?", [sub.id]);
-    await expect(
-      freezeSubscription(db, owner, sub.id, { endDate: addDaysKey(today, 29) })
-    ).rejects.toMatchObject({ messageKey: "errors.freezeAllowanceExhausted" });
+    const flexFreeze = await freezeSubscription(db, owner, sub.id, { endDate: addDaysKey(today, 29) });
+    expect(flexFreeze.status).toBe("suspended");
   });
 
   it("repeated same-day freeze/unfreeze does NOT inflate the expiry (phantom-day guard)", async () => {

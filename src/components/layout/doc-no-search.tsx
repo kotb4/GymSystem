@@ -9,7 +9,7 @@ import { useT } from "@/i18n";
 import { useToast } from "@/components/ui/toast";
 import { cn } from "@/utils/cn";
 
-const MIN_CHARS = 3;
+const MIN_CHARS = 1;
 const DEBOUNCE_MS = 220;
 
 /**
@@ -22,6 +22,7 @@ const VOUCHER_FOR: Partial<Record<DocNoMatch["kind"], VoucherKind>> = {
   store_debt_payment: "store_debt_payment",
   cash_closing: "cash_closing",
   attendance: "attendance",
+  expense: "expense",
 };
 
 /**
@@ -41,6 +42,20 @@ export function DocNoSearch() {
   const [open, setOpen] = useState(false);
   const [printing, setPrinting] = useState<string | null>(null);
   const boxRef = useRef<HTMLDivElement>(null);
+  const inputRef = useRef<HTMLInputElement>(null);
+
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => {
+      if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === "k") {
+        e.preventDefault();
+        inputRef.current?.focus();
+        inputRef.current?.select();
+        setOpen(true);
+      }
+    };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, []);
 
   useEffect(() => {
     const term = query.trim();
@@ -85,7 +100,73 @@ export function DocNoSearch() {
     setOpen(false);
     setQuery("");
     setMatches([]);
-    navigate(m.route, { state: { focusRowId: m.rowId, focusDocNo: m.docNo } });
+
+    if (m.kind === "store_sale") {
+      navigate("/store", {
+        state: {
+          focusRowId: m.rowId,
+          focusDocNo: m.docNo,
+          storeTab: "sales",
+          autoOpen: true,
+        },
+      });
+      return;
+    }
+
+    if (m.kind === "store_return") {
+      navigate("/store", {
+        state: {
+          focusRowId: m.rowId,
+          focusDocNo: m.docNo,
+          storeTab: "returns",
+          autoOpen: true,
+        },
+      });
+      return;
+    }
+
+    if (m.kind === "store_debt_payment") {
+      navigate("/store", {
+        state: {
+          focusRowId: m.rowId,
+          focusDocNo: m.docNo,
+          storeTab: "debts",
+          autoOpen: true,
+        },
+      });
+      return;
+    }
+
+    if (m.kind === "payment") {
+      navigate("/payments", {
+        state: {
+          focusRowId: m.rowId,
+          focusDocNo: m.docNo,
+          autoOpen: true,
+        },
+      });
+      return;
+    }
+
+    if (m.kind === "refund") {
+      navigate("/payments", {
+        state: {
+          focusRowId: m.rowId,
+          focusDocNo: m.docNo,
+          paymentTab: "refunds",
+          autoOpen: true,
+        },
+      });
+      return;
+    }
+
+    navigate(m.route, {
+      state: {
+        focusRowId: m.rowId,
+        focusDocNo: m.docNo,
+        autoOpen: true,
+      },
+    });
   };
 
   const openBlobUrl = (base64: string): string => {
@@ -133,21 +214,42 @@ export function DocNoSearch() {
     }
   };
 
-  const onKeyDown = (e: React.KeyboardEvent<HTMLInputElement>) => {
+  const onKeyDown = async (e: React.KeyboardEvent<HTMLInputElement>) => {
     if (e.key === "Escape") {
       setOpen(false);
       return;
     }
-    if (e.key === "Enter" && matches.length > 0) {
+    if (e.key === "Enter") {
       e.preventDefault();
-      go(matches[0]);
+      const term = query.trim();
+      if (!term) return;
+
+      if (matches.length > 0) {
+        go(matches[0]);
+        return;
+      }
+
+      setLoading(true);
+      try {
+        const rows = await api.documentNumbers.searchByDocNo(term);
+        if (rows.length > 0) {
+          go(rows[0]);
+        } else {
+          toast("warning", t("header.docNoSearchNoResults"));
+        }
+      } catch {
+        toast("warning", t("header.docNoSearchNoResults"));
+      } finally {
+        setLoading(false);
+      }
     }
   };
 
   return (
-    <div ref={boxRef} className="relative ms-2 hidden w-80 lg:block">
+    <div ref={boxRef} className="relative ms-2 w-64 sm:w-80 md:w-96">
       <Search aria-hidden className="pointer-events-none absolute inset-y-0 start-0 my-auto ms-3.5 size-4 text-faint" />
       <input
+        ref={inputRef}
         type="search"
         value={query}
         onChange={(e) => {

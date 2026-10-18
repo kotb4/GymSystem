@@ -1,14 +1,16 @@
 import { useEffect, useRef, useState, type FormEvent } from "react";
-import { Camera, Image as ImageIcon, X } from "lucide-react";
+import { Camera, Image as ImageIcon, Send, X } from "lucide-react";
 import { useAuth } from "@/contexts/auth-context";
 import { useT } from "@/i18n";
 import { useToast } from "@/components/ui/toast";
 import { describeError } from "@/utils/app-error";
 import { api, type PublicMember } from "@/api";
+import { buildWhatsAppDirectUrl } from "@/core/whatsapp";
 import { Modal } from "@/components/ui/modal";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Select } from "@/components/ui/select";
+import { Checkbox } from "@/components/ui/checkbox";
 import { Avatar } from "@/components/ui/avatar";
 import { CameraCapture } from "@/components/ui/camera-capture";
 import { compressMemberPhoto } from "@/utils/image-compressor";
@@ -35,6 +37,7 @@ export function MemberFormModal({ open, onClose, onSaved, member }: MemberFormMo
   const [emergencyContactName, setEmergencyContactName] = useState("");
   const [emergencyContactPhone, setEmergencyContactPhone] = useState("");
   const [department, setDepartment] = useState("general");
+  const [homeBranchOnly, setHomeBranchOnly] = useState(false);
   const [notes, setNotes] = useState("");
   const [photoFile, setPhotoFile] = useState<File | null>(null);
   const [photoPreview, setPhotoPreview] = useState<string | null>(null);
@@ -57,6 +60,7 @@ export function MemberFormModal({ open, onClose, onSaved, member }: MemberFormMo
     setEmergencyContactName(member?.emergencyContactName ?? "");
     setEmergencyContactPhone(member?.emergencyContactPhone ?? "");
     setDepartment(member?.department ?? "general");
+    setHomeBranchOnly(member?.homeBranchOnly ?? false);
     setNotes(member?.notes ?? "");
     setPhotoFile(null);
     setPhotoRemoved(false);
@@ -65,8 +69,8 @@ export function MemberFormModal({ open, onClose, onSaved, member }: MemberFormMo
     setError(null);
   }, [open, member]);
 
-  const onSubmit = async (e: FormEvent) => {
-    e.preventDefault();
+  const onSubmit = async (e?: FormEvent, sendWelcome = false) => {
+    if (e) e.preventDefault();
     if (!actor) return;
     setSubmitting(true);
     setError(null);
@@ -83,6 +87,7 @@ export function MemberFormModal({ open, onClose, onSaved, member }: MemberFormMo
         emergencyContactName: emergencyContactName.trim() || null,
         emergencyContactPhone: emergencyContactPhone.trim() || null,
         department: department as "general" | "men" | "women",
+        homeBranchOnly,
         notes: notes.trim() || null,
       };
       const saved = member
@@ -105,7 +110,51 @@ export function MemberFormModal({ open, onClose, onSaved, member }: MemberFormMo
         }
       }
 
-      toast("success", t("toast.saved"));
+      if (sendWelcome && !member && finalMember.phone) {
+        let sentDirectly = false;
+        try {
+          const res = await api.messages.sendWelcomeMessage(finalMember.id);
+          if (res && res.status === "sent") {
+            sentDirectly = true;
+            toast("success", "تم حفظ العضو وإرسال رسالة الترحيب والـ QR عبر الواتساب تلقائياً! ✅");
+          }
+        } catch (msgErr) {
+          console.error("Auto welcome send error:", msgErr);
+        }
+
+        if (!sentDirectly) {
+          try {
+            let portalUrl = "";
+            try {
+              const portal = await api.memberPortal.getUrl(finalMember.id);
+              if (portal?.url) portalUrl = portal.url;
+            } catch {}
+
+            const welcomeText = [
+              `👋 أهلاً بك يا ${finalMember.fullName} في النادي!`,
+              `🆔 كود العضوية الخاص بك: ${finalMember.memberCode}`,
+              portalUrl ? `📲 رابط حسابك وبطاقتك الإلكترونية:\n${portalUrl}` : null,
+              `نتمنى لك رحلة تدريبية موفقة معنا! 💪✨`,
+              `Powered by GymGate — KOTB Digital Solutions`,
+            ]
+              .filter(Boolean)
+              .join("\n\n");
+
+            const waUrl = buildWhatsAppDirectUrl(finalMember.phone, welcomeText);
+            if (waUrl) {
+              window.open(waUrl, "_blank");
+              toast("info", "تم حفظ العضو وفتح واتساب لإرسال رسالة الترحيب لعدم اتصال البوابة المحلية");
+            } else {
+              toast("success", t("toast.saved"));
+            }
+          } catch {
+            toast("success", t("toast.saved"));
+          }
+        }
+      } else {
+        toast("success", t("toast.saved"));
+      }
+
       onSaved(finalMember);
       onClose();
     } catch (err) {
@@ -123,6 +172,26 @@ export function MemberFormModal({ open, onClose, onSaved, member }: MemberFormMo
       widthClass="max-w-lg"
       footer={
         <>
+          {!member && (
+            <Button
+              type="button"
+              variant="secondary"
+              onClick={() => {
+                if (!phone.trim()) {
+                  toast("error", "يرجى كتابة رقم الهاتف لإرسال رسالة الترحيب عبر الواتساب");
+                  return;
+                }
+                void onSubmit(undefined, true);
+              }}
+              loading={submitting}
+              disabled={submitting || !fullName.trim()}
+              className="text-emerald-400 hover:text-emerald-300 border-emerald-500/30 gap-1.5"
+              title="حفظ العضو وإرسال رسالة الترحيب والباركود عبر الواتساب"
+            >
+              <Send className="size-3.5" />
+              <span>{t("members.saveAndSend")}</span>
+            </Button>
+          )}
           <Button type="submit" form="member-form" loading={submitting} disabled={submitting}>
             {t("common.save")}
           </Button>
@@ -308,6 +377,18 @@ export function MemberFormModal({ open, onClose, onSaved, member }: MemberFormMo
           onChange={(e) => setNotes(e.target.value)}
           disabled={submitting}
         />
+        <div className="rounded-xl border border-line bg-surface/50 p-3.5 space-y-1">
+          <Checkbox
+            checked={homeBranchOnly}
+            onCheckedChange={setHomeBranchOnly}
+            disabled={submitting}
+          >
+            <span className="font-bold text-foreground text-sm">{t("members.homeBranchOnly")}</span>
+          </Checkbox>
+          <p className="text-xs text-subtle ms-6">
+            {t("members.homeBranchOnlyDesc")}
+          </p>
+        </div>
         {error && (
           <p role="alert" className="rounded-xl border border-red/30 bg-red/10 px-3.5 py-2.5 text-[13px] font-semibold text-red">
             {error}

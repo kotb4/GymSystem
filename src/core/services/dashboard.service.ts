@@ -16,6 +16,7 @@ import {
   listExpiringSubscriptions,
   type SubscriptionWithMember,
 } from "./subscriptions.service";
+import { getOccupancyDurationMinutes } from "./settings.service";
 
 // ----------------------- date-range + bucketing helpers --------------------
 
@@ -160,6 +161,30 @@ export interface DashboardStats {
   activeSubscriptions: number;
   frozenSubscriptions: number;
   checkinsToday: number;
+  occupancyNow: number;
+  birthdaysTodayCount: number;
+}
+
+export function getLiveOccupancy(db: Db, branchId?: string): number {
+  const targetBranch = branchId && branchId !== "all" ? branchId : undefined;
+  const branchClause = targetBranch ? " AND COALESCE(branch_id, 'main') = ?" : "";
+  const branchParams = targetBranch ? [targetBranch] : [];
+
+  const now = new Date();
+  const durationMinutes = getOccupancyDurationMinutes(db);
+  const cutoffTime = new Date(now.getTime() - durationMinutes * 60 * 1000);
+  const pad = (n: number) => String(n).padStart(2, "0");
+  const today = `${now.getFullYear()}-${pad(now.getMonth() + 1)}-${pad(now.getDate())}`;
+  const cutoffStamp = `${cutoffTime.getFullYear()}-${pad(cutoffTime.getMonth() + 1)}-${pad(cutoffTime.getDate())} ${pad(cutoffTime.getHours())}:${pad(cutoffTime.getMinutes())}:${pad(cutoffTime.getSeconds())}`;
+
+  return db.count(
+    `SELECT COUNT(*) FROM attendance 
+     WHERE deleted_at IS NULL 
+       AND substr(checkin_at, 1, 10) = ? 
+       AND checkout_at IS NULL 
+       AND checkin_at >= ?${branchClause}`,
+    [today, cutoffStamp, ...branchParams],
+  );
 }
 
 export function getDashboardStats(db: Db, actor: ServiceActor, branchId?: string): DashboardStats {
@@ -167,6 +192,7 @@ export function getDashboardStats(db: Db, actor: ServiceActor, branchId?: string
   const targetBranch = branchId && branchId !== "all" ? branchId : undefined;
   const branchClause = targetBranch ? " AND COALESCE(branch_id, 'main') = ?" : "";
   const branchParams = targetBranch ? [targetBranch] : [];
+  const today = todayKey();
 
   return {
     totalMembers: db.count(`SELECT COUNT(*) FROM members WHERE status != 'archived'${branchClause}`, branchParams),
@@ -180,9 +206,74 @@ export function getDashboardStats(db: Db, actor: ServiceActor, branchId?: string
     ),
     checkinsToday: db.count(
       `SELECT COUNT(*) FROM attendance WHERE deleted_at IS NULL AND substr(checkin_at, 1, 10) = ?${branchClause}`,
-      [todayKey(), ...branchParams],
+      [today, ...branchParams],
+    ),
+    occupancyNow: getLiveOccupancy(db, branchId),
+    birthdaysTodayCount: db.count(
+      `SELECT COUNT(*) FROM members 
+       WHERE deleted_at IS NULL 
+         AND status = 'active' 
+         AND date_of_birth IS NOT NULL 
+         AND substr(date_of_birth, 6, 5) = substr(?, 6, 5)${branchClause}`,
+      [today, ...branchParams],
     ),
   };
+}
+
+export interface BirthdayMember {
+  id: string;
+  memberCode: string;
+  fullName: string;
+  phone: string | null;
+  gender: string | null;
+  dateOfBirth: string | null;
+  age: number | null;
+}
+
+export function getTodayBirthdays(
+  db: Db,
+  actor: ServiceActor,
+  branchId?: string,
+): BirthdayMember[] {
+  requirePermission(actor, "members.view");
+  const today = todayKey();
+  const targetBranch = branchId && branchId !== "all" ? branchId : undefined;
+  const branchClause = targetBranch ? " AND COALESCE(branch_id, 'main') = ?" : "";
+  const branchParams = targetBranch ? [targetBranch] : [];
+
+  const rows = db.all<{
+    id: string;
+    member_code: string;
+    full_name: string;
+    phone: string | null;
+    gender: string | null;
+    date_of_birth: string | null;
+  }>(
+    `SELECT id, member_code, full_name, phone, gender, date_of_birth
+     FROM members
+     WHERE deleted_at IS NULL 
+       AND status = 'active'
+       AND date_of_birth IS NOT NULL
+       AND substr(date_of_birth, 6, 5) = substr(?, 6, 5)${branchClause}
+     ORDER BY full_name ASC
+     LIMIT 20`,
+    [today, ...branchParams],
+  );
+
+  const currentYear = Number(today.slice(0, 4));
+  return rows.map((r) => {
+    const birthYear = r.date_of_birth ? Number(r.date_of_birth.slice(0, 4)) : null;
+    const age = birthYear && !isNaN(birthYear) ? currentYear - birthYear : null;
+    return {
+      id: r.id,
+      memberCode: r.member_code,
+      fullName: r.full_name,
+      phone: r.phone,
+      gender: r.gender,
+      dateOfBirth: r.date_of_birth,
+      age,
+    };
+  });
 }
 
 export function getDashboardAttendance(
@@ -215,6 +306,9 @@ export interface DashboardOperationalStats {
   expiredSubscriptions: number;
   lostCards: number;
   busyHoursToday: Array<{ hour: number; count: number }>;
+  quickSessionsTodayCount: number;
+  quickSessionsTodayRevenueMinor: number;
+  activePTPackagesCount: number;
 }
 
 export function getDashboardOperational(
@@ -222,25 +316,35 @@ export function getDashboardOperational(
   actor: ServiceActor,
 ): DashboardOperationalStats {
   requirePermission(actor, "payments.view");
+  const today = todayKey();
   const balanceRow = db.first<OutstandingRow>(
     "WITH paid AS (\n  SELECT subscription_id, SUM(paid_amount_minor) AS paid_minor, SUM(discount_amount_minor) AS discount_minor\n  FROM payments\n  WHERE subscription_id IS NOT NULL AND status IN ('partial', 'paid')\n  GROUP BY subscription_id\n)\nSELECT COUNT(*) AS cnt,\n  COALESCE(SUM(MAX(CAST(ROUND(s.price * 100) AS INTEGER) - COALESCE(p.paid_minor, 0) - COALESCE(p.discount_minor, 0), 0)), 0) AS total_minor\nFROM member_subscriptions s\nLEFT JOIN paid p ON p.subscription_id = s.id\nWHERE s.status = 'active'",
   );
   const hourRows = db.all<{ hour: number; total: number }>(
     "SELECT CAST(substr(checkin_at, 12, 2) AS INTEGER) AS hour, COUNT(*) AS total\nFROM attendance WHERE deleted_at IS NULL AND substr(checkin_at, 1, 10) = ?\nGROUP BY hour ORDER BY total DESC LIMIT 5",
-    [todayKey()],
+    [today],
   );
+  const qsRow = db.first<{ cnt: number; rev: number }>(
+    "SELECT COUNT(*) AS cnt, COALESCE(SUM(paid_amount_minor), 0) AS rev FROM quick_sessions WHERE session_date = ?",
+    [today],
+  );
+  const ptCount = db.count("SELECT COUNT(*) FROM private_trainings WHERE status = 'active'");
+
   return {
     membersWithOutstanding: Number(balanceRow?.cnt ?? 0),
     outstandingTotalMinor: Number(balanceRow?.total_minor ?? 0),
     expiredSubscriptions: db.count(
       "SELECT COUNT(*) FROM member_subscriptions WHERE status = 'active' AND end_date < ?",
-      [todayKey()],
+      [today],
     ),
     lostCards: db.count("SELECT COUNT(*) FROM cards WHERE status = 'lost'"),
     busyHoursToday: hourRows.map((row) => ({
       hour: Number(row.hour),
       count: Number(row.total),
     })),
+    quickSessionsTodayCount: Number(qsRow?.cnt ?? 0),
+    quickSessionsTodayRevenueMinor: Number(qsRow?.rev ?? 0),
+    activePTPackagesCount: ptCount,
   };
 }
 
@@ -412,10 +516,18 @@ export function getDashboardSeries(
   return { range, bucket, series: buildSeries(dayMap, bucketKeys, bucket) };
 }
 
+export interface DashboardRevenueStreams {
+  subscriptionsMinor: number;
+  storeMinor: number;
+  quickSessionsMinor: number;
+  privateTrainingMinor: number;
+}
+
 export interface DashboardFinanceSection {
   revenue: TrendValue;
   expenses: TrendValue;
   net: TrendValue;
+  streams?: DashboardRevenueStreams;
 }
 
 export interface DashboardGrowthSection {
@@ -488,10 +600,37 @@ export function getDashboardOverview(
       prevFromKey,
       prevToKey,
     );
+    const fromStamp = `${range.fromKey} 00:00:00`;
+    const toStamp = `${addDaysKey(range.toKey, 1)} 00:00:00`;
+    const streamRow = db.first<{
+      subs_minor: number;
+      store_minor: number;
+      quick_minor: number;
+      pt_minor: number;
+    }>(
+      `SELECT 
+        COALESCE(SUM(CASE WHEN l.ref_table = 'payments' AND l.direction = 1 AND l.entry_type NOT IN ('refund', 'reversal_payment') THEN l.amount_minor ELSE 0 END), 0) -
+        COALESCE(SUM(CASE WHEN l.entry_type = 'refund' THEN l.amount_minor ELSE 0 END), 0) AS subs_minor,
+        COALESCE(SUM(CASE WHEN l.ref_table IN ('store_sales', 'store_debt_payments') AND l.direction = 1 AND l.entry_type NOT IN ('refund', 'reversal_payment') THEN l.amount_minor ELSE 0 END), 0) AS store_minor,
+        COALESCE(SUM(CASE WHEN l.ref_table = 'quick_sessions' AND l.direction = 1 THEN l.amount_minor ELSE 0 END), 0) AS quick_minor,
+        COALESCE(SUM(CASE WHEN l.ref_table = 'private_trainings' AND l.direction = 1 THEN l.amount_minor ELSE 0 END), 0) AS pt_minor
+      FROM financial_ledger l
+      WHERE l.occurred_at >= ? AND l.occurred_at < ?`,
+      [fromStamp, toStamp],
+    );
+
     finance = {
       revenue: trendOf(curr.revenueMinor, prev.revenueMinor),
       expenses: trendOf(curr.expensesMinor, prev.expensesMinor),
       net: trendOf(curr.netMinor, prev.netMinor),
+      streams: streamRow
+        ? {
+            subscriptionsMinor: Math.max(0, Number(streamRow.subs_minor)),
+            storeMinor: Math.max(0, Number(streamRow.store_minor)),
+            quickSessionsMinor: Math.max(0, Number(streamRow.quick_minor)),
+            privateTrainingMinor: Math.max(0, Number(streamRow.pt_minor)),
+          }
+        : undefined,
     };
   }
 

@@ -6,6 +6,7 @@ import {
   CheckCircle2,
   CircleUserRound,
   CreditCard,
+  Dumbbell,
   IdCard,
   MessageSquare,
   QrCode,
@@ -17,14 +18,22 @@ import {
   Trash2,
   UserRound,
   UserRoundCheck,
+  UserPlus,
+  Users,
+  Clock,
+  MonitorPlay,
+  Zap,
 } from "lucide-react";
 import { ReceptionKioskPanel } from "./reception-kiosk-panel";
+import { QuickDayPassModal } from "./quick-day-pass-modal";
+import { LiveOccupantsPanel } from "./live-occupants-panel";
+import { MemberFormModal } from "@/components/members/member-form-modal";
 import { useT } from "@/i18n";
 import { useToast } from "@/components/ui/toast";
 import { useAuth } from "@/contexts/auth-context";
 import { describeError } from "@/utils/app-error";
 import { trialPlanLabel } from "@/utils/trial-label";
-import { api } from "@/api";
+import { api, type PublicMember } from "@/api";
 import type {
   ReceptionLookup,
   ReceptionSearchResult,
@@ -32,6 +41,7 @@ import type {
 import type { CheckInResult } from "@/core/services/attendance.service";
 import { diffDaysKeys, todayKey } from "@/core/dates";
 import { formatMinor } from "@/core/money";
+import { formatTime } from "@/services/format";
 import { QuickWhatsAppModal } from "@/components/messages/quick-whatsapp-modal";
 import { CardQrDeliveryModal } from "@/components/cards/card-qr-delivery-modal";
 import { SubscriptionFormModal } from "@/components/subscriptions/subscription-form-modal";
@@ -86,6 +96,50 @@ export function ReceptionTab() {
   const [deletingAttendance, setDeletingAttendance] = useState(false);
 
   const [whatsAppOpen, setWhatsAppOpen] = useState(false);
+  const [dayPassOpen, setDayPassOpen] = useState(false);
+  const [memberFormOpen, setMemberFormOpen] = useState(false);
+  const [registeredMemberForSub, setRegisteredMemberForSub] = useState<PublicMember | null>(null);
+  const [activeRightTab, setActiveRightTab] = useState<"live" | "history">("live");
+  const [liveOccupantsCount, setLiveOccupantsCount] = useState<number>(0);
+  const [telemetry, setTelemetry] = useState<{
+    liveOccupants: number;
+    todayCheckins: number;
+    expiringCount: number;
+    dayPassesCount: number;
+    pendingDebtMinor: number;
+  }>({
+    liveOccupants: 0,
+    todayCheckins: 0,
+    expiringCount: 0,
+    dayPassesCount: 0,
+    pendingDebtMinor: 0,
+  });
+
+  const fetchTelemetry = useCallback(async () => {
+    try {
+      const today = todayKey();
+      const [statsRes, expiringRes, quickRes, debtsRes] = await Promise.allSettled([
+        api.dashboard.stats(),
+        api.dashboard.expiring(1),
+        api.quickSessions.getStats(today),
+        api.debts.list({ limit: 1 }),
+      ]);
+
+      setTelemetry((prev) => ({
+        liveOccupants: statsRes.status === "fulfilled" && statsRes.value ? statsRes.value.occupancyNow : liveOccupantsCount,
+        todayCheckins: statsRes.status === "fulfilled" && statsRes.value ? statsRes.value.checkinsToday : recent.length,
+        expiringCount: expiringRes.status === "fulfilled" && Array.isArray(expiringRes.value) ? expiringRes.value.length : prev.expiringCount,
+        dayPassesCount: quickRes.status === "fulfilled" && quickRes.value ? quickRes.value.guestSessionsToday ?? quickRes.value.totalSessionsToday ?? 0 : prev.dayPassesCount,
+        pendingDebtMinor: debtsRes.status === "fulfilled" && debtsRes.value ? debtsRes.value.totalDebtMinor ?? 0 : prev.pendingDebtMinor,
+      }));
+    } catch {
+      // ignore
+    }
+  }, [liveOccupantsCount, recent.length]);
+
+  useEffect(() => {
+    void fetchTelemetry();
+  }, [fetchTelemetry, tick]);
   const [subModalOpen, setSubModalOpen] = useState(false);
   const [payModalOpen, setPayModalOpen] = useState(false);
   const [qrModalOpen, setQrModalOpen] = useState(false);
@@ -336,8 +390,8 @@ export function ReceptionTab() {
       key: "time",
       header: t("common.time"),
       render: (row) => (
-        <span dir="ltr" className="tabnum text-subtle font-mono">
-          {row.checkinAt.slice(11, 16)}
+        <span className="tabnum text-subtle font-medium">
+          {formatTime(row.checkinAt)}
         </span>
       ),
     },
@@ -364,22 +418,204 @@ export function ReceptionTab() {
   const showResultsList = !selected && results.length > 0;
 
   return (
-    <div className="grid gap-4 xl:grid-cols-5">
-      <div className="space-y-4 xl:col-span-3">
-        {kioskMode ? (
-          <ReceptionKioskPanel
-            onExitKiosk={() => setKioskMode(false)}
-            onOpenProfile={(memberId) => navigate(`/members/${memberId}`)}
-            onOpenWhatsApp={handleKioskOpenWhatsApp}
-            onRenewSub={handleKioskRenewSub}
-            onPayDebt={handleKioskPayDebt}
-            onAttendanceChanged={() => setTick((p) => p + 1)}
-            externalBarcode={externalKioskBarcode}
-            onExternalBarcodeHandled={() => setExternalKioskBarcode(null)}
-          />
-        ) : (
-          <>
-            <Card>
+    <div className="space-y-4">
+      {/* Top Reception Hub Bar with Live Occupants Badge & Quick Actions */}
+      {!kioskMode && (
+        <>
+          <div className="flex flex-wrap items-center justify-between gap-3 bg-[#0F1420]/80 p-3.5 rounded-2xl border border-white/[0.08] shadow-lg backdrop-blur-md">
+            <div className="flex items-center gap-3">
+              <div className="grid size-10 place-items-center rounded-xl bg-gradient-to-br from-neon/20 to-blue-500/10 border border-neon/30 text-neon shadow-glow-sm">
+                <ScanLine className="size-5" />
+              </div>
+              <div>
+                <h1 className="text-base font-black text-white tracking-tight flex items-center gap-2">
+                  <span>شاشة الاستقبال واليومية</span>
+                  <span className="flex items-center gap-1.5 px-2.5 py-0.5 rounded-full bg-emerald-500/15 border border-emerald-500/30 text-emerald-400 text-xs font-bold font-mono">
+                    <span className="size-2 rounded-full bg-emerald-500 animate-pulse" />
+                    <span>{liveOccupantsCount || telemetry.liveOccupants} متواجد حالياً</span>
+                  </span>
+                </h1>
+                <p className="text-[11px] text-slate-400 font-medium">
+                  مسح الباركود، تذاكر اليوم الواحد السريعة، وإدارة الحضور اللحظي
+                </p>
+              </div>
+            </div>
+
+            {/* Quick Action Buttons */}
+            <div className="flex flex-wrap items-center gap-2.5">
+              <Button
+                type="button"
+                onClick={() => setKioskMode(true)}
+                className="bg-panel border border-neon/40 text-neon hover:bg-neon/15 font-bold text-xs h-9 px-3.5 gap-2 shadow-glow-sm"
+              >
+                <MonitorPlay className="size-4" />
+                <span>كشك الحضور الذاتي 🖥️</span>
+              </Button>
+
+              <Button
+                type="button"
+                onClick={() => setMemberFormOpen(true)}
+                className="bg-neon hover:bg-neon/90 text-black font-bold text-xs h-9 px-3.5 gap-2 shadow-glow-sm"
+              >
+                <UserPlus className="size-4" />
+                <span>مشترك جديد ➕</span>
+              </Button>
+            </div>
+          </div>
+
+          {/* Top Telemetry Hub (5 KPI cards with active glow badges) */}
+          <div className="grid grid-cols-2 gap-3 sm:grid-cols-3 lg:grid-cols-5">
+            {/* Card 1: Live Occupants */}
+            <button
+              type="button"
+              onClick={() => setActiveRightTab("live")}
+              className={cn(
+                "group relative overflow-hidden rounded-2xl border p-3.5 text-start transition-all duration-200",
+                "bg-panel/70 backdrop-blur-md hover:scale-[1.01] active:scale-[0.99]",
+                activeRightTab === "live"
+                  ? "border-emerald-500/60 shadow-[0_0_15px_rgba(16,185,129,0.2)] bg-emerald-500/[0.04]"
+                  : "border-white/[0.08] hover:border-emerald-500/40 hover:bg-white/[0.04]"
+              )}
+            >
+              <div className="flex items-center justify-between">
+                <span className="text-xs font-bold text-subtle">المتواجدون الآن</span>
+                <span className="relative flex size-2.5">
+                  <span className="absolute inline-flex h-full w-full animate-ping rounded-full bg-emerald-500 opacity-75" />
+                  <span className="relative inline-flex size-2.5 rounded-full bg-emerald-500" />
+                </span>
+              </div>
+              <div className="mt-2 flex items-baseline gap-2">
+                <span className="tabnum font-mono text-2xl font-black text-emerald-400">
+                  {liveOccupantsCount || telemetry.liveOccupants}
+                </span>
+                <span className="text-[11px] text-subtle">عضو في الجيم</span>
+              </div>
+              <div className="mt-1 flex items-center gap-1 text-[11px] text-emerald-400/80">
+                <Users className="size-3" />
+                <span>تمرين قيد التقدم</span>
+              </div>
+            </button>
+
+            {/* Card 2: Today's Attendance */}
+            <button
+              type="button"
+              onClick={() => setActiveRightTab("history")}
+              className={cn(
+                "group relative overflow-hidden rounded-2xl border p-3.5 text-start transition-all duration-200",
+                "bg-panel/70 backdrop-blur-md hover:scale-[1.01] active:scale-[0.99]",
+                activeRightTab === "history"
+                  ? "border-cyan-500/60 shadow-[0_0_15px_rgba(6,182,212,0.2)] bg-cyan-500/[0.04]"
+                  : "border-white/[0.08] hover:border-cyan-500/40 hover:bg-white/[0.04]"
+              )}
+            >
+              <div className="flex items-center justify-between">
+                <span className="text-xs font-bold text-subtle">حضور اليوم</span>
+                <div className="size-6 rounded-lg bg-cyan-500/15 text-cyan-400 grid place-items-center">
+                  <UserRoundCheck className="size-3.5" />
+                </div>
+              </div>
+              <div className="mt-2 flex items-baseline gap-2">
+                <span className="tabnum font-mono text-2xl font-black text-cyan-400">
+                  {telemetry.todayCheckins}
+                </span>
+                <span className="text-[11px] text-subtle">تسجيل دخول</span>
+              </div>
+              <div className="mt-1 flex items-center gap-1 text-[11px] text-cyan-400/80">
+                <ScanLine className="size-3" />
+                <span>إجمالي الزيارات</span>
+              </div>
+            </button>
+
+            {/* Card 3: Expiring Soon */}
+            <button
+              type="button"
+              onClick={() => navigate("/reports")}
+              className="group relative overflow-hidden rounded-2xl border border-white/[0.08] bg-panel/70 p-3.5 text-start backdrop-blur-md transition-all duration-200 hover:border-amber-500/50 hover:bg-white/[0.04] hover:scale-[1.01] active:scale-[0.99]"
+            >
+              <div className="flex items-center justify-between">
+                <span className="text-xs font-bold text-subtle">تنتهي قريباً</span>
+                <div className="size-6 rounded-lg bg-amber-500/15 text-amber-400 grid place-items-center">
+                  <Clock className="size-3.5" />
+                </div>
+              </div>
+              <div className="mt-2 flex items-baseline gap-2">
+                <span className="tabnum font-mono text-2xl font-black text-amber-400">
+                  {telemetry.expiringCount}
+                </span>
+                <span className="text-[11px] text-subtle">اشتراك</span>
+              </div>
+              <div className="mt-1 flex items-center gap-1 text-[11px] text-amber-400/80">
+                <Sparkles className="size-3" />
+                <span>تتطلب متابعة وتجديد</span>
+              </div>
+            </button>
+
+            {/* Card 4: Day Passes */}
+            <button
+              type="button"
+              onClick={() => setDayPassOpen(true)}
+              className="group relative overflow-hidden rounded-2xl border border-white/[0.08] bg-panel/70 p-3.5 text-start backdrop-blur-md transition-all duration-200 hover:border-yellow-500/50 hover:bg-white/[0.04] hover:scale-[1.01] active:scale-[0.99]"
+            >
+              <div className="flex items-center justify-between">
+                <span className="text-xs font-bold text-subtle">تذاكر اليوم</span>
+                <div className="size-6 rounded-lg bg-yellow-500/15 text-yellow-400 grid place-items-center">
+                  <Zap className="size-3.5" />
+                </div>
+              </div>
+              <div className="mt-2 flex items-baseline gap-2">
+                <span className="tabnum font-mono text-2xl font-black text-yellow-400">
+                  {telemetry.dayPassesCount}
+                </span>
+                <span className="text-[11px] text-subtle">تذكرة مباعة</span>
+              </div>
+              <div className="mt-1 flex items-center gap-1 text-[11px] text-yellow-400/80">
+                <Zap className="size-3" />
+                <span>إصدار تذكرة سريعة</span>
+              </div>
+            </button>
+
+            {/* Card 5: Pending Debts */}
+            <button
+              type="button"
+              onClick={() => navigate("/debts")}
+              className="group relative overflow-hidden rounded-2xl border border-white/[0.08] bg-panel/70 p-3.5 text-start backdrop-blur-md transition-all duration-200 hover:border-rose-500/50 hover:bg-white/[0.04] hover:scale-[1.01] active:scale-[0.99]"
+            >
+              <div className="flex items-center justify-between">
+                <span className="text-xs font-bold text-subtle">الديون المعلقة</span>
+                <div className="size-6 rounded-lg bg-rose-500/15 text-rose-400 grid place-items-center">
+                  <CreditCard className="size-3.5" />
+                </div>
+              </div>
+              <div className="mt-2 flex items-baseline gap-2">
+                <span className="tabnum font-mono text-xl font-black text-rose-400">
+                  {formatMinor(telemetry.pendingDebtMinor)}
+                </span>
+              </div>
+              <div className="mt-1 flex items-center gap-1 text-[11px] text-rose-400/80">
+                <ShieldAlert className="size-3" />
+                <span>مستحقات على الأعضاء</span>
+              </div>
+            </button>
+          </div>
+        </>
+      )}
+
+      <div className="grid gap-4 xl:grid-cols-5">
+        <div className="space-y-4 xl:col-span-3">
+          {kioskMode ? (
+            <ReceptionKioskPanel
+              onExitKiosk={() => setKioskMode(false)}
+              onOpenProfile={(memberId) => navigate(`/members/${memberId}`)}
+              onOpenWhatsApp={handleKioskOpenWhatsApp}
+              onRenewSub={handleKioskRenewSub}
+              onPayDebt={handleKioskPayDebt}
+              onAttendanceChanged={() => setTick((p) => p + 1)}
+              externalBarcode={externalKioskBarcode}
+              onExternalBarcodeHandled={() => setExternalKioskBarcode(null)}
+            />
+          ) : (
+            <>
+              <Card>
               <div className="flex items-center justify-between border-b border-line px-5 py-4">
                 <h2 className="text-base font-bold text-foreground">{t("reception.searchTitle")}</h2>
               </div>
@@ -407,17 +643,6 @@ export function ReceptionTab() {
                   >
                     <Camera className="size-4 text-neon" />
                     <span>{t("reception.cameraScanBtn")}</span>
-                  </Button>
-                  <Button
-                    type="button"
-                    variant="secondary"
-                    size="lg"
-                    onClick={() => setKioskMode(true)}
-                    title={t("reception.autoKioskTitle")}
-                    className="gap-2 border-neon/40 text-neon hover:bg-neon/10"
-                  >
-                    <Sparkles className="size-4" />
-                    <span>{t("reception.autoKioskBtn")}</span>
                   </Button>
                   <Button type="submit" size="lg" disabled={looking || term.trim() === ""}>
                     <ScanLine className="size-4" />
@@ -477,6 +702,10 @@ export function ReceptionTab() {
             onPayDebt={() => setPayModalOpen(true)}
             onTakePhoto={() => setCameraOpen(true)}
             onPreviewPhoto={(url) => setPreviewPhotoUrl(url)}
+            onAttendanceChanged={() => {
+              setTick((p) => p + 1);
+              if (selected.member) void applyLookup({ memberId: selected.member.id });
+            }}
           />
         )}
 
@@ -508,16 +737,68 @@ export function ReceptionTab() {
         )}
       </div>
 
-      {hasPermission("checkin.view_history") ? (
-        <Card className="h-fit xl:col-span-2">
-          <CardHeader title={t("reception.recent")} />
-          {recent.length === 0 ? (
-            <EmptyState icon={<UserRoundCheck />} title={t("reception.noRecent")} />
-          ) : (
-            <DataTable columns={recentColumns} data={recent} rowKey={(r) => r.id} />
-          )}
-        </Card>
-      ) : null}
+      <div className="space-y-3 xl:col-span-2">
+        {/* Segmented Switcher: Live Occupants vs History */}
+        <div className="flex items-center gap-1.5 p-1 rounded-xl bg-surface border border-line">
+          <button
+            type="button"
+            onClick={() => setActiveRightTab("live")}
+            className={cn(
+              "flex-1 flex items-center justify-center gap-2 py-2 px-3 rounded-lg text-xs font-bold transition-all",
+              activeRightTab === "live"
+                ? "bg-neon/15 text-neon border border-neon/30 shadow-sm"
+                : "text-subtle hover:text-ink hover:bg-white/[0.03]"
+            )}
+          >
+            <span className="relative flex size-2">
+              <span className="absolute inline-flex h-full w-full animate-ping rounded-full bg-emerald-400 opacity-75" />
+              <span className="relative inline-flex size-2 rounded-full bg-emerald-500" />
+            </span>
+            <span>المتواجدون الآن</span>
+            <span className="font-mono text-[11px] font-bold px-1.5 py-0.2 rounded-full bg-black/40 border border-white/[0.08]">
+              {liveOccupantsCount}
+            </span>
+          </button>
+
+          <button
+            type="button"
+            onClick={() => setActiveRightTab("history")}
+            className={cn(
+              "flex-1 flex items-center justify-center gap-2 py-2 px-3 rounded-lg text-xs font-bold transition-all",
+              activeRightTab === "history"
+                ? "bg-neon/15 text-neon border border-neon/30 shadow-sm"
+                : "text-subtle hover:text-ink hover:bg-white/[0.03]"
+            )}
+          >
+            <UserRoundCheck className="size-3.5" />
+            <span>سجل حضور اليوم</span>
+            <span className="font-mono text-[11px] font-bold px-1.5 py-0.2 rounded-full bg-black/40 border border-white/[0.08]">
+              {recent.length}
+            </span>
+          </button>
+        </div>
+
+        {activeRightTab === "live" ? (
+          <LiveOccupantsPanel
+            tick={tick}
+            onOccupancyChange={(cnt) => {
+              setLiveOccupantsCount(cnt);
+              setTelemetry((p) => ({ ...p, liveOccupants: cnt }));
+            }}
+          />
+        ) : (
+          hasPermission("checkin.view_history") && (
+            <Card className="h-fit">
+              <CardHeader title={t("reception.recent")} />
+              {recent.length === 0 ? (
+                <EmptyState icon={<UserRoundCheck />} title={t("reception.noRecent")} />
+              ) : (
+                <DataTable columns={recentColumns} data={recent} rowKey={(r) => r.id} />
+              )}
+            </Card>
+          )
+        )}
+      </div>
 
       {selected?.member && (
         <>
@@ -528,18 +809,7 @@ export function ReceptionTab() {
               memberId={selected.member.id}
             />
           )}
-          {subModalOpen && (
-            <SubscriptionFormModal
-              open={subModalOpen}
-              onClose={() => setSubModalOpen(false)}
-              presetMember={selected.member}
-              onSaved={() => {
-                setSubModalOpen(false);
-                toast("success", t("reception.quickCheckInSuccess"));
-                if (selected.member) void applyLookup({ memberId: selected.member.id });
-              }}
-            />
-          )}
+
           {payModalOpen && (
             (selected.eligibility?.outstandingMinor ?? 0) > 0 ? (
               <SettleMemberDuesModal
@@ -573,6 +843,7 @@ export function ReceptionTab() {
               memberPhone={selected.member.phone}
               barcodeValue={qrCardData.barcode}
               cardId={qrCardData.cardId}
+              memberId={selected.member.id}
             />
           )}
           {cameraOpen && (
@@ -613,6 +884,45 @@ export function ReceptionTab() {
             </Modal>
           )}
         </>
+      )}
+
+      {dayPassOpen && (
+        <QuickDayPassModal
+          open={dayPassOpen}
+          onClose={() => setDayPassOpen(false)}
+          onSaved={() => setTick((p) => p + 1)}
+        />
+      )}
+
+      {memberFormOpen && (
+        <MemberFormModal
+          open={memberFormOpen}
+          onClose={() => setMemberFormOpen(false)}
+          onSaved={(newMember) => {
+            setMemberFormOpen(false);
+            setRegisteredMemberForSub(newMember);
+            setSubModalOpen(true);
+          }}
+        />
+      )}
+
+      {subModalOpen && (
+        <SubscriptionFormModal
+          open={subModalOpen}
+          onClose={() => {
+            setSubModalOpen(false);
+            setRegisteredMemberForSub(null);
+          }}
+          presetMember={registeredMemberForSub || selected?.member}
+          onSaved={() => {
+            setSubModalOpen(false);
+            toast("success", t("reception.quickCheckInSuccess"));
+            const targetId = registeredMemberForSub?.id || selected?.member?.id;
+            setRegisteredMemberForSub(null);
+            setTick((p) => p + 1);
+            if (targetId) void applyLookup({ memberId: targetId });
+          }}
+        />
       )}
 
       {barcodeScannerOpen && (
@@ -668,6 +978,7 @@ export function ReceptionTab() {
           </div>
         </Modal>
       )}
+    </div>
     </div>
   );
 }
@@ -728,6 +1039,7 @@ function StatusPanel({
   onPayDebt,
   onTakePhoto,
   onPreviewPhoto,
+  onAttendanceChanged,
 }: {
   lookup: ReceptionLookup;
   checking: boolean;
@@ -740,13 +1052,86 @@ function StatusPanel({
   onPayDebt: () => void;
   onTakePhoto: () => void;
   onPreviewPhoto: (url: string) => void;
+  onAttendanceChanged?: () => void;
 }) {
   const t = useT();
+  const { toast } = useToast();
   const { hasPermission } = useAuth();
   const member = lookup.member!;
   const elig = lookup.eligibility;
   const valid = elig?.eligible ?? false;
   const left = elig?.subscriptionEndsAt != null ? diffDaysKeys(elig.subscriptionEndsAt, todayKey()) : null;
+
+  const [academySubs, setAcademySubs] = useState<
+    Array<{ id: string; planName: string; remaining: number | null; total: number | null; used: number }>
+  >([]);
+  const [deductingSubId, setDeductingSubId] = useState<string | null>(null);
+
+  useEffect(() => {
+    if (!member.id) {
+      setAcademySubs([]);
+      return;
+    }
+    let alive = true;
+    api.subscriptions
+      .listForMember(member.id)
+      .then((list) => {
+        if (!alive) return;
+        const activeSessionsSubs = list
+          .filter((s) => s.status === "active" && (s.sessionsTotal != null || (s as any).planSessionsCount != null))
+          .map((s) => {
+            const rawTotal = s.sessionsTotal ?? (s as any).planSessionsCount;
+            const total = rawTotal != null ? Number(rawTotal) : null;
+            const used = Number(s.sessionsUsed ?? 0);
+            const remaining = total !== null ? Math.max(0, total - used) : null;
+            return {
+              id: s.id,
+              planName: String(s.planName || "اشتراك حصص"),
+              total,
+              used,
+              remaining,
+            };
+          })
+          .filter((s) => s.remaining === null || s.remaining > 0);
+        setAcademySubs(activeSessionsSubs);
+      })
+      .catch(console.error);
+
+    return () => {
+      alive = false;
+    };
+  }, [member.id]);
+
+  const handleDeductAcademySession = async (sub: { id: string; planName: string }) => {
+    setDeductingSubId(sub.id);
+    try {
+      const res = await api.classes.recordDirectAttendance({
+        memberId: member.id,
+        subscriptionId: sub.id,
+      });
+      toast("success", `تم تسجيل حضور وخصم حصة (${res.memberName}) بنجاح`);
+      playSuccessChime();
+      onAttendanceChanged?.();
+      setAcademySubs((prev) =>
+        prev
+          .map((s) =>
+            s.id === sub.id
+              ? {
+                  ...s,
+                  used: res.sessionsUsed,
+                  remaining: res.sessionsRemaining,
+                }
+              : s,
+          )
+          .filter((s) => s.remaining === null || s.remaining > 0),
+      );
+    } catch (err) {
+      playErrorBuzz();
+      toast("error", describeError(err, t));
+    } finally {
+      setDeductingSubId(null);
+    }
+  };
 
   return (
     <div
@@ -850,7 +1235,7 @@ function StatusPanel({
           />
           <Info
             label={t("reception.lastCheckIn")}
-            value={elig.lastCheckInAt ? elig.lastCheckInAt.slice(11, 16) : t("reception.noCheckInYet")}
+            value={elig.lastCheckInAt ? formatTime(elig.lastCheckInAt) : t("reception.noCheckInYet")}
           />
         </dl>
       ) : (
@@ -870,6 +1255,40 @@ function StatusPanel({
             }
           />
         </dl>
+      )}
+
+      {/* Academy Subscriptions Quick Check-in Banner */}
+      {academySubs.length > 0 && (
+        <div className="mt-3.5 space-y-2">
+          {academySubs.map((sub) => (
+            <div
+              key={sub.id}
+              className="flex flex-wrap items-center justify-between gap-2.5 rounded-xl border border-cyan-500/40 bg-cyan-500/10 px-3.5 py-2.5 text-xs text-cyan-300"
+            >
+              <div className="flex items-center gap-2">
+                <Dumbbell className="size-4 shrink-0 text-cyan-400" />
+                <span className="font-bold text-fg">اشتراك أكاديمية نشط:</span>
+                <span className="font-bold text-cyan-200">{sub.planName}</span>
+                <Badge variant={sub.remaining !== null && sub.remaining <= 1 ? "warning" : "info"} className="text-[10px]">
+                  {sub.remaining !== null ? `باقي ${sub.remaining} من ${sub.total} حصص` : "حصص مفتوحة"}
+                </Badge>
+              </div>
+              {hasPermission("checkin.create") && (
+                <Button
+                  type="button"
+                  size="sm"
+                  variant="primary"
+                  loading={deductingSubId === sub.id}
+                  onClick={() => void handleDeductAcademySession(sub)}
+                  className="border border-cyan-400/40 bg-cyan-500/20 text-cyan-200 hover:bg-cyan-500/30 font-bold text-xs h-7 px-3 gap-1.5 shadow-sm"
+                >
+                  <span>خصم حصة ({sub.planName})</span>
+                  <span>⚡</span>
+                </Button>
+              )}
+            </div>
+          ))}
+        </div>
       )}
 
       {/* Dues Breakdown Banner if Member Has Outstanding Balance */}

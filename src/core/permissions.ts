@@ -109,6 +109,20 @@ export const PERMS = [
   "shifts.manage",
   "promo.view",
   "promo.manage",
+  "quick_sessions.view",
+  "quick_sessions.create",
+  "debts.view",
+  "debts.manage",
+  "purchases.view",
+  "purchases.manage",
+  "suppliers.view",
+  "suppliers.manage",
+  "private_training.view",
+  "private_training.manage",
+  "announcements.view",
+  "announcements.manage",
+  "trainer_attendance.view",
+  "trainer_attendance.manage",
 ] as const;
 
 export type Permission = (typeof PERMS)[number];
@@ -208,9 +222,22 @@ const MANAGER_PERMS: readonly Permission[] = [
   "pdf.receipt",
   "invitations.manage",
   "shifts.view",
-  "shifts.manage",
   "promo.view",
   "promo.manage",
+  "quick_sessions.view",
+  "quick_sessions.create",
+  "debts.view",
+  "debts.manage",
+  "purchases.view",
+  "purchases.manage",
+  "suppliers.view",
+  "suppliers.manage",
+  "private_training.view",
+  "private_training.manage",
+  "announcements.view",
+  "announcements.manage",
+  "trainer_attendance.view",
+  "trainer_attendance.manage",
 ];
 
 const RECEPTION_PERMS: readonly Permission[] = [
@@ -249,6 +276,15 @@ const RECEPTION_PERMS: readonly Permission[] = [
   "shifts.view",
   "shifts.manage",
   "promo.view",
+  "quick_sessions.view",
+  "quick_sessions.create",
+  "debts.view",
+  "debts.manage",
+  "private_training.view",
+  "private_training.manage",
+  "announcements.view",
+  "trainer_attendance.view",
+  "trainer_attendance.manage",
 ];
 
 const TRAINER_PERMS: readonly Permission[] = [
@@ -295,4 +331,13 @@ export function roleHasPermission(roleId: RoleId, perm: Permission): boolean {
 
 export function requirePermission(actor: ActorLike | null | undefined, perm: Permission): void {
   if (!actor || !roleHasPermission(actor.roleId, perm)) throw errForbidden();
+}
+
+export function hasAnyPermission(actor: ActorLike | null | undefined, perms: readonly Permission[]): boolean {
+  if (!actor) return false;
+  return perms.some((p) => roleHasPermission(actor.roleId, p));
+}
+
+export function requireAnyPermission(actor: ActorLike | null | undefined, perms: readonly Permission[]): void {
+  if (!hasAnyPermission(actor, perms)) throw errForbidden();
 }

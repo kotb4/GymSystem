@@ -48,6 +48,16 @@ import { renewalAlerts } from "./renewal-alerts.rpc";
 import { shifts } from "./shifts.rpc";
 import { sync } from "./sync.rpc";
 import { vouchersService } from "./vouchers.rpc";
+import { quickSessions } from "./quick-sessions.rpc";
+import { debts } from "./debts.rpc";
+import { purchases } from "./purchases.rpc";
+import { privateTraining } from "./private-training.rpc";
+import { announcements } from "./announcements.rpc";
+import { trainerAttendance } from "./trainer-attendance.rpc";
+import { memberMessages } from "./member-messages.rpc";
+import { memberPortal } from "./member-portal.rpc";
+import { beltGradings } from "./belt-gradings.rpc";
+import { whatsappBot } from "./whatsapp-bot.rpc";
 
 /**
  * The frontend never touches SQLite. It calls whitelisted service functions
@@ -100,6 +110,16 @@ export const REGISTRY: Record<string, Record<string, Exposed>> = {
   shifts,
   sync,
   vouchersService,
+  quickSessions,
+  debts,
+  purchases,
+  privateTraining,
+  announcements,
+  trainerAttendance,
+  memberMessages,
+  memberPortal,
+  beltGradings,
+  whatsappBot,
 };
 
 export interface SerializedError {

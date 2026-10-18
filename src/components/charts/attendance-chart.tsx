@@ -81,12 +81,12 @@ export function AttendanceChart({ dataset }: AttendanceChartProps) {
         >
           <defs>
             <linearGradient id="chart-area" x1="0" y1="0" x2="0" y2="1">
-              <stop offset="0%" stopColor="#39FF88" stopOpacity="0.22" />
-              <stop offset="100%" stopColor="#39FF88" stopOpacity="0" />
+              <stop offset="0%" stopColor="#0055FF" stopOpacity="0.25" />
+              <stop offset="100%" stopColor="#0055FF" stopOpacity="0" />
             </linearGradient>
             <linearGradient id="chart-bar" x1="0" y1="0" x2="0" y2="1">
-              <stop offset="0%" stopColor="#39FF88" />
-              <stop offset="100%" stopColor="#39FF88" stopOpacity="0.45" />
+              <stop offset="0%" stopColor="#00D2FF" />
+              <stop offset="100%" stopColor="#0055FF" stopOpacity="0.75" />
             </linearGradient>
           </defs>
 
@@ -125,7 +125,7 @@ export function AttendanceChart({ dataset }: AttendanceChartProps) {
                 <path
                   d={linePath}
                   fill="none"
-                  stroke="#39FF88"
+                  stroke="#0055FF"
                   strokeWidth={2.5}
                   strokeLinejoin="round"
                   strokeLinecap="round"
@@ -137,8 +137,8 @@ export function AttendanceChart({ dataset }: AttendanceChartProps) {
                     cx={xOf(i)}
                     cy={yOf(p.value)}
                     r={hover === i ? 5 : 3}
-                    fill="#0D111A"
-                    stroke="#39FF88"
+                    fill="#080B11"
+                    stroke="#0055FF"
                     strokeWidth={2}
                   />
                 ))}

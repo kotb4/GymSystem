@@ -135,6 +135,7 @@ export function killProcess(pid: number, force = true): boolean {
     try {
       execSync(`taskkill ${force ? "/F /T " : ""}/PID ${pid}`, {
         stdio: ["ignore", "ignore", "ignore"],
+        windowsHide: true,
       });
       return true;
     } catch {
@@ -164,13 +165,18 @@ export function killProcess(pid: number, force = true): boolean {
  */
 export async function ensureSingleActiveInstance(options: {
   port: number;
-  exeName?: string;
+  exeName?: string | string[];
   log?: (msg: string) => void;
 }): Promise<boolean> {
   const log = options.log ?? (() => {});
   const port = options.port;
-  const exeName =
-    options.exeName ?? (process.platform === "win32" ? path.basename(process.execPath) : undefined);
+  const exeNames = options.exeName
+    ? Array.isArray(options.exeName)
+      ? options.exeName
+      : [options.exeName]
+    : process.platform === "win32"
+      ? [path.basename(process.execPath)]
+      : [];
 
   const portInUse = await isPortInUse(port);
   if (!portInUse) {
@@ -192,12 +198,14 @@ export async function ensureSingleActiveInstance(options: {
     if (listeningPid && listeningPid !== process.pid) {
       log(`terminating process occupying port ${port} (PID ${listeningPid})...`);
       killProcess(listeningPid, true);
-    } else if (exeName) {
+    } else if (exeNames.length > 0) {
       // Fallback: if netstat didn't resolve PID but port is still locked, kill matching exe instances
-      const remainingExePids = findOtherExePids(exeName);
-      for (const pid of remainingExePids) {
-        log(`terminating executable process holding port (PID ${pid})...`);
-        killProcess(pid, true);
+      for (const name of exeNames) {
+        const remainingExePids = findOtherExePids(name);
+        for (const pid of remainingExePids) {
+          log(`terminating executable process holding port (PID ${pid}, ${name})...`);
+          killProcess(pid, true);
+        }
       }
     }
   }

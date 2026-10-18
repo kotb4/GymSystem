@@ -1,6 +1,6 @@
 import { hashPassword, assessPasswordStrength } from "@/core/auth/password";
 import { errConflict, errForbidden, errNotFound, errValidation } from "@/core/errors";
-import { requirePermission, ROLES, type RoleId, type ServiceActor } from "@/core/permissions";
+import { requirePermission, requireAnyPermission, ROLES, type RoleId, type ServiceActor } from "@/core/permissions";
 import { nowStamp } from "@/core/dates";
 import type { Db, Row } from "@/db/engine";
 import { recordAudit } from "./audit.service";
@@ -25,6 +25,7 @@ export interface UserRow extends Row {
   last_login_at: string | null;
   department: string;
   is_developer: number | null;
+  user_code: string | null;
 }
 
 export interface PublicUser {
@@ -41,6 +42,7 @@ export interface PublicUser {
   lastLoginAt: string | null;
   isDeveloper?: boolean;
   token?: string;
+  userCode?: string | null;
 }
 
 export interface CreateUserInput {
@@ -51,6 +53,7 @@ export interface CreateUserInput {
   email?: string | null;
   phone?: string | null;
   department?: "general" | "men" | "women";
+  userCode?: string | null;
 }
 
 export interface UpdateUserInput {
@@ -59,6 +62,7 @@ export interface UpdateUserInput {
   email?: string | null;
   phone?: string | null;
   department?: "general" | "men" | "women";
+  userCode?: string | null;
 }
 
 export function toPublicUser(row: UserRow): PublicUser {
@@ -75,6 +79,7 @@ export function toPublicUser(row: UserRow): PublicUser {
     updatedAt: row.updated_at,
     lastLoginAt: row.last_login_at,
     isDeveloper: Number(row.is_developer ?? 0) === 1 || row.username.toLowerCase() === "kotb",
+    userCode: row.user_code ?? null,
   };
 }
 
@@ -108,7 +113,7 @@ function assertValidNewUser(input: CreateUserInput): void {
 }
 
 export function listUsers(db: Db, actor: ServiceActor): PublicUser[] {
-  requirePermission(actor, "users.view");
+  requireAnyPermission(actor, ["users.view", "reports.view", "payments.view", "expenses.view", "cash.open", "cash.close"]);
   const isDev = isDeveloperActor(actor);
   const sql = isDev
     ? "SELECT * FROM users ORDER BY created_at ASC"
@@ -127,16 +132,33 @@ export async function createUser(db: Db, actor: ServiceActor, input: CreateUserI
 
   if (getUserRowByUsername(db, input.username)) throw errConflict("errors.usernameTaken");
 
+  let userCode = input.userCode?.trim().toUpperCase();
+  if (userCode) {
+    if (!/^[A-Za-z0-9_-]{2,10}$/.test(userCode)) throw errValidation("errors.userCodeInvalid");
+    if (db.count("SELECT COUNT(*) FROM users WHERE user_code = ? COLLATE NOCASE", [userCode]) > 0) {
+      throw errConflict("errors.userCodeTaken");
+    }
+  } else {
+    db.run("INSERT INTO counters (name, value) VALUES ('user_code', 1) ON CONFLICT(name) DO UPDATE SET value = value + 1");
+    let seq = Number(db.scalar("SELECT value FROM counters WHERE name = 'user_code'") ?? 1);
+    userCode = `U${seq}`;
+    while (db.count("SELECT COUNT(*) FROM users WHERE user_code = ?", [userCode]) > 0) {
+      db.run("UPDATE counters SET value = value + 1 WHERE name = 'user_code'");
+      seq = Number(db.scalar("SELECT value FROM counters WHERE name = 'user_code'"));
+      userCode = `U${seq}`;
+    }
+  }
+
   const id = crypto.randomUUID();
   const stamp = nowStamp();
   const hash = await hashPassword(input.password);
   const phone = input.phone?.trim() || null;
   await db.transaction(() => {
     db.run(
-      "INSERT INTO users (id, username, email, phone, password_hash, full_name, role_id, department, is_active, created_at, updated_at)\nVALUES (?, ?, ?, ?, ?, ?, ?, ?, 1, ?, ?)",
-      [id, input.username, email, phone, hash, fullName, input.roleId, input.department ?? "general", stamp, stamp],
+      "INSERT INTO users (id, username, email, phone, password_hash, full_name, role_id, department, is_active, user_code, created_at, updated_at)\nVALUES (?, ?, ?, ?, ?, ?, ?, ?, 1, ?, ?, ?)",
+      [id, input.username, email, phone, hash, fullName, input.roleId, input.department ?? "general", userCode, stamp, stamp],
     );
-    recordAudit(db, actor, "USER_CREATED", "user", id, { username: input.username, roleId: input.roleId });
+    recordAudit(db, actor, "USER_CREATED", "user", id, { username: input.username, roleId: input.roleId, userCode });
   });
 
   const row = getUserRowById(db, id);
@@ -177,15 +199,29 @@ export async function updateUser(
     throw errValidation("errors.lastOwner");
   }
 
+  let nextUserCode: string | null | undefined = undefined;
+  if (patch.userCode !== undefined) {
+    const trimmed = patch.userCode?.trim().toUpperCase() || null;
+    if (trimmed && trimmed !== row.user_code) {
+      if (!/^[A-Za-z0-9_-]{2,10}$/.test(trimmed)) throw errValidation("errors.userCodeInvalid");
+      if (db.count("SELECT COUNT(*) FROM users WHERE user_code = ? AND id != ? COLLATE NOCASE", [trimmed, userId]) > 0) {
+        throw errConflict("errors.userCodeTaken");
+      }
+    }
+    nextUserCode = trimmed;
+  }
+
   await db.transaction(async () => {
     const dept = patch.department ?? ((row.department ?? "general") as "general" | "men" | "women");
+    const finalUserCode = nextUserCode !== undefined ? nextUserCode : row.user_code ?? null;
     db.run(
-      "UPDATE users SET full_name = ?, email = ?, phone = ?, role_id = ?, department = ?, updated_at = ? WHERE id = ?",
-      [fullName ?? row.full_name, email, phone, roleId, dept, nowStamp(), userId],
+      "UPDATE users SET full_name = ?, email = ?, phone = ?, role_id = ?, department = ?, user_code = ?, updated_at = ? WHERE id = ?",
+      [fullName ?? row.full_name, email, phone, roleId, dept, finalUserCode, nowStamp(), userId],
     );
     recordAudit(db, actor, "USER_UPDATED", "user", userId, {
       fullName: fullName ?? row.full_name,
       roleId,
+      userCode: finalUserCode,
     });
   });
 

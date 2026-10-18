@@ -1,10 +1,11 @@
 import { useEffect, useState } from "react";
-import { Pencil, Plus, ReceiptText, RotateCcw, Tags, Undo2 } from "lucide-react";
+import { useSearchParams } from "react-router-dom";
+import { Download, Info, Layers, Pencil, Plus, ReceiptText, RotateCcw, Tags, TrendingDown, Undo2, Wallet } from "lucide-react";
 import { useAuth } from "@/contexts/auth-context";
 import { useT } from "@/i18n";
 import { useToast } from "@/components/ui/toast";
 import { describeError } from "@/utils/app-error";
-import { api, type Expense, type ExpenseCategory } from "@/api";
+import { api, type Expense, type ExpenseCategory, type ExpenseStats } from "@/api";
 import type { ExpenseStatus } from "@/core/services/expenses.service";
 import { formatMinor, minorToMajor } from "@/core/money";
 import { appConfig } from "@/config/app.config";
@@ -21,11 +22,17 @@ import { Pagination } from "@/components/ui/pagination";
 import { ConfirmDialog } from "@/components/ui/confirm-dialog";
 import { ExpenseFormModal, ExpenseCategoriesModal, ExpenseVoidModal } from "@/components/finance/expense-form-modal";
 import { BranchBadge } from "@/components/ui/branch-badge";
+import { VoucherActions } from "@/components/finance/voucher-actions";
+import { downloadCsvWithBom } from "@/utils/csv-helper";
+import { todayKey } from "@/core/dates";
+import { FinanceHubHeader } from "@/components/finance/finance-hub-header";
 
 export function ExpensesPage() {
   const t = useT();
   const { actor, hasPermission } = useAuth();
   const { toast } = useToast();
+  const [searchParams, setSearchParams] = useSearchParams();
+  const highlightId = searchParams.get("highlight") || searchParams.get("id");
 
   const [search, setSearch] = useState("");
   const [debounced, setDebounced] = useState("");
@@ -33,9 +40,11 @@ export function ExpensesPage() {
   const [toKey, setToKey] = useState("");
   const [categoryId, setCategoryId] = useState("all");
   const [methodCode, setMethodCode] = useState("all");
+  const [statusFilter, setStatusFilter] = useState<ExpenseStatus | "all">("active");
   const [page, setPage] = useState(1);
   const [items, setItems] = useState<Expense[]>([]);
   const [total, setTotal] = useState(0);
+  const [stats, setStats] = useState<ExpenseStats | null>(null);
   const [categories, setCategories] = useState<ExpenseCategory[]>([]);
   const [methods, setMethods] = useState<Array<{ code: string; labelAr: string }>>([]);
   const [formOpen, setFormOpen] = useState(false);
@@ -45,6 +54,19 @@ export function ExpensesPage() {
   const [unvoidTarget, setUnvoidTarget] = useState<Expense | null>(null);
   const [reloadTick, setReloadTick] = useState(0);
   const reload = () => setReloadTick((v) => v + 1);
+
+  useEffect(() => {
+    if (highlightId) {
+      setSearch(highlightId);
+      setDebounced(highlightId);
+      setStatusFilter("all");
+      setCategoryId("all");
+      setMethodCode("all");
+      setFromKey("");
+      setToKey("");
+      setPage(1);
+    }
+  }, [highlightId]);
 
   useEffect(() => {
     const timer = window.setTimeout(() => {
@@ -68,6 +90,12 @@ export function ExpensesPage() {
         if (alive) setMethods(m);
       })
       .catch((err) => console.error(err));
+    api.expenses
+      .stats()
+      .then((res) => {
+        if (alive) setStats(res);
+      })
+      .catch((err) => console.error(err));
     return () => {
       alive = false;
     };
@@ -85,7 +113,7 @@ export function ExpensesPage() {
         toKey: toKey || undefined,
         categoryId,
         methodCode,
-        status: "active" as ExpenseStatus | "all",
+        status: statusFilter,
       })
       .then((result) => {
         if (alive) {
@@ -97,9 +125,36 @@ export function ExpensesPage() {
     return () => {
       alive = false;
     };
-  }, [actor, debounced, fromKey, toKey, categoryId, methodCode, page, reloadTick]);
+  }, [actor, debounced, fromKey, toKey, categoryId, methodCode, statusFilter, page, reloadTick]);
 
-  const totalMinor = items.reduce((sum, e) => sum + e.amountMinor, 0);
+  const onExportExpenses = () => {
+    if (items.length === 0) {
+      toast("info", t("exp.empty"));
+      return;
+    }
+    const headers = [
+      t("exp.colDate"),
+      t("exp.colCategory"),
+      t("exp.colDescription"),
+      t("exp.colAmount"),
+      t("exp.colMethod"),
+      t("exp.colRef"),
+      t("exp.colStatus"),
+      t("exp.colBy"),
+    ];
+    const dataRows = items.map((e) => [
+      e.expenseDate,
+      e.categoryNameAr,
+      e.description,
+      (e.amountMinor / 100).toFixed(2),
+      e.methodLabel,
+      e.referenceNo ?? "—",
+      e.status === "active" ? t("exp.statusActive") : t("exp.statusVoided"),
+      e.createdByName,
+    ]);
+    downloadCsvWithBom(`المصروفات_${todayKey()}`, headers, dataRows);
+    toast("success", t("exp.exportSuccess"));
+  };
 
   interface Row {
     id: string;
@@ -161,38 +216,51 @@ export function ExpensesPage() {
       header: t("exp.colRef"),
       render: (row) => <span dir="ltr" className="text-faint tabnum">{row.referenceNo ?? "—"}</span>,
     },
+    {
+      key: "status",
+      header: t("exp.colStatus"),
+      render: (row) =>
+        row.status === "active" ? (
+          <Badge variant="success">{t("exp.statusActive")}</Badge>
+        ) : (
+          <Badge variant="danger">{t("exp.statusVoided")}</Badge>
+        ),
+    },
     { key: "by", header: t("exp.colBy"), render: (row) => <span className="text-faint">{row.createdByName}</span> },
     {
       key: "actions",
       header: t("common.actions"),
-      render: (row) =>
-        hasPermission("expenses.edit") ? (
-          <div className="flex items-center gap-1">
-            <Button
-              variant="ghost"
-              size="sm"
-              onClick={() => {
-                setEditTarget(row.expense);
-                setFormOpen(true);
-              }}
-            >
-              <Pencil className="size-3.5" />
-              {t("common.edit")}
-            </Button>
-            <Button variant="ghost" size="sm" onClick={() => setVoidTarget(row.expense)}>
-              <Undo2 className="size-3.5" />
-              {t("exp.actionVoid")}
-            </Button>
-            {row.status === "voided" && (
-              <Button variant="ghost" size="sm" onClick={() => setUnvoidTarget(row.expense)}>
-                <RotateCcw className="size-3.5" />
-                {t("exp.actionRestore")}
+      render: (row) => (
+        <div className="flex items-center gap-1">
+          <VoucherActions kind="expense" rowId={row.id} />
+          {hasPermission("expenses.edit") && (
+            <>
+              <Button
+                variant="ghost"
+                size="sm"
+                onClick={() => {
+                  setEditTarget(row.expense);
+                  setFormOpen(true);
+                }}
+              >
+                <Pencil className="size-3.5" />
+                {t("common.edit")}
               </Button>
-            )}
-          </div>
-        ) : (
-          <span className="text-[11px] text-faint">—</span>
-        ),
+              {row.status === "active" ? (
+                <Button variant="ghost" size="sm" onClick={() => setVoidTarget(row.expense)}>
+                  <Undo2 className="size-3.5" />
+                  {t("exp.actionVoid")}
+                </Button>
+              ) : (
+                <Button variant="ghost" size="sm" onClick={() => setUnvoidTarget(row.expense)}>
+                  <RotateCcw className="size-3.5" />
+                  {t("exp.actionRestore")}
+                </Button>
+              )}
+            </>
+          )}
+        </div>
+      ),
     },
   ];
 
@@ -205,6 +273,10 @@ export function ExpensesPage() {
           <h2 className="text-2xl font-extrabold tracking-tight">{t("exp.title")}</h2>
         </div>
         <div className="flex items-center gap-2">
+          <Button variant="secondary" onClick={onExportExpenses}>
+            <Download className="size-4" />
+            {t("exp.exportExpenses")}
+          </Button>
           {hasPermission("expenses.edit") && (
             <Button variant="secondary" onClick={() => setCatsOpen(true)}>
               <Tags className="size-4" />
@@ -225,17 +297,75 @@ export function ExpensesPage() {
         </div>
       </section>
 
-      <StatCard
-        title={t("rpt.expenses")}
-        subtitle={`${t("rpt.count", { count: formatNumber(total) })}`}
-        value={minorToMajor(totalMinor).toFixed(2)}
-        icon={<ReceiptText className="size-5" />}
-        accent="red"
-      />
+      {/* Finance Hub Navigation & Live Telemetry Strip */}
+      <FinanceHubHeader currentSection="expenses" />
+
+      {/* 4 Professional KPI Stat Cards */}
+      <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
+        <StatCard
+          title={t("exp.todayExpenses")}
+          subtitle={`${t("rpt.count", { count: formatNumber(stats?.todayCount ?? 0) })}`}
+          value={minorToMajor(stats?.todayTotalMinor ?? 0).toFixed(2)}
+          icon={<TrendingDown className="size-5" />}
+          accent="amber"
+        />
+        <StatCard
+          title={t("exp.monthExpenses")}
+          subtitle={`${t("rpt.count", { count: formatNumber(stats?.monthCount ?? 0) })}`}
+          value={minorToMajor(stats?.monthTotalMinor ?? 0).toFixed(2)}
+          icon={<ReceiptText className="size-5" />}
+          accent="red"
+        />
+        <StatCard
+          title={t("exp.topCategory")}
+          subtitle={
+            stats?.topCategoryName
+              ? `${formatMinor(stats.topCategoryMinor)}`
+              : "—"
+          }
+          value={stats?.topCategoryName ?? "—"}
+          icon={<Layers className="size-5" />}
+          accent="cyan"
+        />
+        <StatCard
+          title={t("exp.cashOutflow")}
+          subtitle={t("dashboard.trendsThisMonth")}
+          value={minorToMajor(stats?.monthCashMinor ?? 0).toFixed(2)}
+          icon={<Wallet className="size-5" />}
+          accent="violet"
+        />
+      </div>
+
+      {highlightId && (
+        <div className="flex flex-wrap items-center justify-between gap-3 p-3.5 rounded-2xl border border-neon/40 bg-neon/10 text-xs font-semibold text-neon shadow-sm">
+          <div className="flex items-center gap-2">
+            <Info className="size-4 shrink-0 text-neon" />
+            <span className="size-2 rounded-full bg-neon animate-pulse" />
+            <span>
+              عرض تفاصيل المصروف المسجل لتغطية عجز تسليم الوردية (المعرف: <span className="font-mono text-white">{highlightId.slice(0, 8)}...</span>)
+            </span>
+          </div>
+          <Button
+            type="button"
+            variant="secondary"
+            size="sm"
+            className="text-xs h-7 px-2.5 text-white hover:bg-white/10"
+            onClick={() => {
+              setSearchParams({});
+              setSearch("");
+              setDebounced("");
+              setStatusFilter("active");
+              setPage(1);
+            }}
+          >
+            عرض كافة المصروفات
+          </Button>
+        </div>
+      )}
 
       <Card>
         <CardHeader title={t("common.search")} />
-        <div className="grid gap-3 px-5 pb-4 sm:grid-cols-2 xl:grid-cols-5">
+        <div className="grid gap-3 px-5 pb-4 sm:grid-cols-2 xl:grid-cols-6">
           <Input label={t("common.search")} placeholder={t("common.search")} value={search} onChange={(e) => setSearch(e.target.value)} />
           <Input
             label={t("pay.filterFrom")}
@@ -281,12 +411,25 @@ export function ExpensesPage() {
               ...methods.map((m) => ({ value: m.code, label: m.labelAr })),
             ]}
           />
+          <Select
+            label={t("exp.colStatus")}
+            value={statusFilter}
+            onChange={(e) => {
+              setStatusFilter(e.target.value as ExpenseStatus | "all");
+              setPage(1);
+            }}
+            options={[
+              { value: "all", label: t("exp.statusAll") },
+              { value: "active", label: t("exp.statusActive") },
+              { value: "voided", label: t("exp.statusVoided") },
+            ]}
+          />
         </div>
         {rows.length === 0 ? (
           <EmptyState icon={<ReceiptText />} title={t("exp.empty")} />
         ) : (
           <>
-            <DataTable columns={columns} data={rows} rowKey={(r) => r.id} />
+            <DataTable columns={columns} data={rows} rowKey={(r) => r.id} highlightRowKey={highlightId} />
             <Pagination page={page} pageSize={appConfig.pageSize} total={total} onPageChange={setPage} />
           </>
         )}

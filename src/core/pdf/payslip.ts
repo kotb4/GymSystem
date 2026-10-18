@@ -35,8 +35,8 @@ export interface PayslipData {
 }
 
 const PAGE_MARGIN = 36;
-const COLOR_PRIMARY = "#1e3a8a"; // Blue 900
-const COLOR_PRIMARY_DARK = "#172554"; // Blue 950
+const COLOR_PRIMARY = "#0055FF"; // Electric Cobalt Blue
+const COLOR_PRIMARY_DARK = "#080B11"; // Obsidian Black
 const COLOR_LABEL = "#475569"; // Slate 600
 const COLOR_VALUE = "#0f172a"; // Slate 900
 const COLOR_LIGHT_BORDER = "#cbd5e1"; // Slate 300
@@ -53,7 +53,7 @@ export async function renderPayslipPdf(data: PayslipData): Promise<Buffer> {
         Title: `Payslip ${data.slipNo}`,
         Author: data.gymName,
         Subject: "Employee Payslip",
-        Creator: "GymSystem",
+        Creator: "GymGate",
       },
     });
     const chunks: Buffer[] = [];

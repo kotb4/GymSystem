@@ -3,6 +3,8 @@ import { buildActor, setup } from "@/core/services/auth.service";
 import { createUser } from "@/core/services/users.service";
 import {
   assignCardByBarcode,
+  autoGenerateCards,
+  getCardStats,
   listCards,
   registerCard,
   reportCardLost,
@@ -335,6 +337,82 @@ it("surfaces outstanding money at check-in", async () => {
       [checkIn.attendanceId],
     )!;
     expect(attRowRestored.deleted_at).toBeNull();
+  });
+
+  it("denies check-in when member is restricted to home branch and scanned at a different branch", async () => {
+    // Member created with branch_id 'main' and homeBranchOnly true
+    const member = await createMember(db, owner, {
+      fullName: "عضو-فرع-رئيسي-فقط",
+      homeBranchOnly: true,
+    });
+    const plan = await createPlan(db, owner, {
+      name: "باقة-فرع",
+      durationDays: 30,
+      price: 200,
+    });
+    await createSubscription(db, owner, { memberId: member.id, planId: plan.id });
+    await assignCardByBarcode(db, reception, { barcodeValue: "GYM-BRANCH-01", memberId: member.id });
+
+    // When current branch matches member.branch_id ('main'), check-in succeeds
+    const ok = await recordCheckIn(db, reception, { barcode: "GYM-BRANCH-01" });
+    expect(ok.kind).toBe("success");
+
+    // Simulate changing current local branch to 'branch-2'
+    db.run("UPDATE branch_info SET branch_id = 'branch-2'");
+
+    // Scan again at different branch: rejected with BRANCH_NOT_ALLOWED
+    const denied = await recordCheckIn(db, reception, { barcode: "GYM-BRANCH-01" });
+    expect(denied).toMatchObject({
+      kind: "denied",
+      reason: "BRANCH_NOT_ALLOWED",
+      memberName: "عضو-فرع-رئيسي-فقط",
+    });
+
+    // Reset branch_info back to 'main'
+    db.run("UPDATE branch_info SET branch_id = 'main'");
+  });
+
+  it("calculates card stats telemetry accurately", async () => {
+    const member = await activeMemberWithSub("عضو-إحصائيات-الكروت");
+    // Register 2 physical available cards
+    await registerCard(db, reception, { barcodeValue: "GYM-STAT-001" });
+    const card2 = await registerCard(db, reception, { barcodeValue: "GYM-STAT-002" });
+    // Assign 1 card
+    await assignCardByBarcode(db, reception, { barcodeValue: "GYM-STAT-001", memberId: member.id });
+    // Block card2 (requires cards.block - owner)
+    await setCardBlocked(db, owner, card2.id, true);
+
+    const stats = getCardStats(db, reception);
+    expect(stats.total).toBeGreaterThanOrEqual(2);
+    expect(stats.assigned).toBeGreaterThanOrEqual(1);
+    expect(stats.blocked).toBeGreaterThanOrEqual(1);
+    expect(stats.physical).toBeGreaterThanOrEqual(2);
+  });
+
+  it("auto generates sequential batch cards with custom prefix", async () => {
+    const res = await autoGenerateCards(db, reception, { count: 5, prefix: "TEST-SEQ" });
+    expect(res.count).toBe(5);
+    expect(res.registered).toHaveLength(5);
+    expect(res.fromBarcode).toBe("TEST-SEQ-000101");
+    expect(res.toBarcode).toBe("TEST-SEQ-000105");
+
+    // Second batch continues from where it left off
+    const nextBatch = await autoGenerateCards(db, reception, { count: 3, prefix: "TEST-SEQ" });
+    expect(nextBatch.count).toBe(3);
+    expect(nextBatch.fromBarcode).toBe("TEST-SEQ-000106");
+    expect(nextBatch.toBarcode).toBe("TEST-SEQ-000108");
+  });
+
+  it("filters cards by lost_or_blocked", async () => {
+    const c1 = await registerCard(db, reception, { barcodeValue: "GYM-LST-001" });
+    const c2 = await registerCard(db, reception, { barcodeValue: "GYM-BLK-001" });
+    await reportCardLost(db, owner, c1.id);
+    await setCardBlocked(db, owner, c2.id, true);
+
+    const list = listCards(db, reception, { status: "lost_or_blocked" });
+    const barcodes = list.items.map((i) => i.barcodeValue);
+    expect(barcodes).toContain("GYM-LST-001");
+    expect(barcodes).toContain("GYM-BLK-001");
   });
 });
 

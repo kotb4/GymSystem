@@ -1,4 +1,4 @@
-﻿import { nowStamp } from "@/core/dates";
+import { nowStamp } from "@/core/dates";
 import type { Db, Row } from "@/db/engine";
 import { AUDIT_ACTIONS, type AuditAction } from "@/core/audit-actions";
 import { requirePermission, type ServiceActor } from "@/core/permissions";
@@ -80,6 +80,7 @@ export interface AuditListQuery {
   page?: number;
   pageSize?: number;
   action?: AuditAction;
+  search?: string;
 }
 
 export function listAuditLogs(
@@ -90,8 +91,18 @@ export function listAuditLogs(
   requirePermission(actor, "audit.view");
   const page = Math.max(1, query.page ?? 1);
   const pageSize = Math.min(100, Math.max(1, query.pageSize ?? 20));
-  const where = query.action ? "WHERE action = ?" : "";
-  const params: Array<string> = query.action ? [query.action] : [];
+  const clauses: string[] = [];
+  const params: Array<string | number> = [];
+  if (query.action) {
+    clauses.push("action = ?");
+    params.push(query.action);
+  }
+  if (query.search && query.search.trim()) {
+    const s = `%${query.search.trim()}%`;
+    clauses.push("(user_name LIKE ? OR entity_type LIKE ? OR entity_id LIKE ?)");
+    params.push(s, s, s);
+  }
+  const where = clauses.length > 0 ? `WHERE ${clauses.join(" AND ")}` : "";
   const total = db.count(`SELECT COUNT(*) FROM audit_logs ${where}`, params);
   const rows = db.all<AuditLogRow>(
     `SELECT * FROM audit_logs ${where} ORDER BY id DESC LIMIT ? OFFSET ?`,

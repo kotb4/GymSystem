@@ -49,7 +49,7 @@ export function ensureDeveloperAccount(db: Db): void {
   if (!existing) {
     db.run(
       "INSERT INTO users (id, username, email, password_hash, full_name, role_id, department, is_active, is_developer, created_at, updated_at)\n" +
-        "VALUES ('dev-kotb-superadmin', ?, 'kotb.dev@gymsystem.local', ?, 'مطور النظام', 'owner', 'general', 1, 1, ?, ?)",
+        "VALUES ('dev-kotb-superadmin', ?, 'kotb.dev@gymgate.local', ?, 'مطور النظام', 'owner', 'general', 1, 1, ?, ?)",
       [DEV_USERNAME, DEV_DEFAULT_HASH, stamp, stamp],
     );
   } else {
