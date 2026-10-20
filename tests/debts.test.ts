@@ -4,7 +4,7 @@ import { createMember } from "@/core/services/members.service";
 import { createPlan } from "@/core/services/plans.service";
 import { createSubscription } from "@/core/services/subscriptions.service";
 import { recordPayment } from "@/core/services/payments.service";
-import { listMemberDebts, payMemberDebt } from "@/core/services/debts.service";
+import { listMemberDebts, payMemberDebt, settleMemberDuesBatch } from "@/core/services/debts.service";
 import { createProduct, createSale } from "@/core/services/store.service";
 import { AppError } from "@/core/errors";
 import type { Db } from "@/db/engine";
@@ -409,5 +409,203 @@ describe("Debts Service", () => {
     });
     expect(payRes.success).toBe(true);
     expect(payRes.remainingMinor).toBe(10000);
+  });
+
+  it("settles multiple member dues atomically in a single batch (subscription + store)", async () => {
+    const member = await createMember(db, owner, {
+      fullName: "محمد إبراهيم",
+      phone: "01099998888",
+    });
+
+    const plan = await createPlan(db, owner, {
+      name: "باقة 500",
+      kind: "time",
+      durationDays: 30,
+      price: 500,
+    });
+
+    const sub = await createSubscription(db, owner, {
+      memberId: member.id,
+      planId: plan.id,
+      startDate: "2026-10-01",
+    });
+
+    const prod = await createProduct(db, owner, {
+      name: "منتج آجل",
+      priceMinor: 20000,
+      costMinor: 10000,
+      stockQty: 5,
+    });
+
+    const sale = await createSale(db, owner, {
+      memberId: member.id,
+      items: [{ productId: prod.id, qty: 1 }],
+      isCredit: true,
+      methodCode: "cash",
+      paidAmountMinor: 0,
+    });
+
+    const storeDebt = db.first<{ id: string }>(
+      "SELECT id FROM store_debts WHERE sale_id = ?",
+      [sale.id],
+    )!;
+
+    // Verify initial dues total 700 EGP (500 sub + 200 store)
+    const initialDebts = listMemberDebts(db, owner);
+    expect(initialDebts.total).toBe(2);
+    expect(initialDebts.totalDebtMinor).toBe(70000);
+
+    // Settle both items atomically
+    const batchRes = settleMemberDuesBatch(db, owner, {
+      memberId: member.id,
+      items: [
+        { debtType: "subscription", debtId: sub.id, amountMinor: 50000 },
+        { debtType: "store", debtId: storeDebt.id, amountMinor: 20000 },
+      ],
+      methodCode: "cash",
+      notes: "تسديد دفعة كاملة",
+    });
+
+    expect(batchRes.settledCount).toBe(2);
+    expect(batchRes.totalPaidMinor).toBe(70000);
+    expect(batchRes.items).toHaveLength(2);
+    expect(batchRes.items[0]).toMatchObject({
+      debtId: sub.id,
+      debtType: "subscription",
+      paidMinor: 50000,
+      remainingMinor: 0,
+    });
+    expect(batchRes.items[1]).toMatchObject({
+      debtId: storeDebt.id,
+      debtType: "store",
+      paidMinor: 20000,
+      remainingMinor: 0,
+    });
+
+    // Check debts list is now 0
+    const finalDebts = listMemberDebts(db, owner);
+    expect(finalDebts.total).toBe(0);
+    expect(finalDebts.totalDebtMinor).toBe(0);
+
+    // Verify ledger has distinct entries for gym and store box
+    const subLedger = db.first<{ box: string; amount_minor: number }>(
+      "SELECT box, amount_minor FROM financial_ledger WHERE ref_table = 'payments' AND member_id = ?",
+      [member.id],
+    );
+    expect(subLedger?.box).toBe("gym");
+    expect(subLedger?.amount_minor).toBe(50000);
+
+    const storeLedger = db.first<{ box: string; amount_minor: number }>(
+      "SELECT box, amount_minor FROM financial_ledger WHERE ref_table = 'store_debts' AND member_id = ?",
+      [member.id],
+    );
+    expect(storeLedger?.box).toBe("store");
+    expect(storeLedger?.amount_minor).toBe(20000);
+  });
+
+  it("rolls back all batch settlements atomically if any item in the batch fails", async () => {
+    const member = await createMember(db, owner, {
+      fullName: "طارق محمود",
+      phone: "01077776666",
+    });
+
+    const plan = await createPlan(db, owner, {
+      name: "باقة 400",
+      kind: "time",
+      durationDays: 30,
+      price: 400,
+    });
+
+    const sub = await createSubscription(db, owner, {
+      memberId: member.id,
+      planId: plan.id,
+      startDate: "2026-10-01",
+    });
+
+    const prod = await createProduct(db, owner, {
+      name: "منتج آجل 2",
+      priceMinor: 15000,
+      costMinor: 8000,
+      stockQty: 5,
+    });
+
+    const sale = await createSale(db, owner, {
+      memberId: member.id,
+      items: [{ productId: prod.id, qty: 1 }],
+      isCredit: true,
+      methodCode: "cash",
+      paidAmountMinor: 0,
+    });
+
+    const storeDebt = db.first<{ id: string }>(
+      "SELECT id FROM store_debts WHERE sale_id = ?",
+      [sale.id],
+    )!;
+
+    // Batch contains valid 200 EGP for sub, but invalid 99999 EGP (overpay) for store
+    expect(() =>
+      settleMemberDuesBatch(db, owner, {
+        memberId: member.id,
+        items: [
+          { debtType: "subscription", debtId: sub.id, amountMinor: 20000 },
+          { debtType: "store", debtId: storeDebt.id, amountMinor: 9999900 },
+        ],
+        methodCode: "cash",
+      }),
+    ).toThrow();
+
+    // Verify atomic rollback: sub debt has NOT been paid at all
+    const debts = listMemberDebts(db, owner);
+    const subDebt = debts.items.find((i) => i.debtId === sub.id);
+    expect(subDebt?.paidAmountMinor).toBe(0);
+    expect(subDebt?.remainingAmountMinor).toBe(40000);
+
+    // Verify 0 payments recorded in payments table
+    const paymentRows = db.all("SELECT id FROM payments WHERE subscription_id = ?", [sub.id]);
+    expect(paymentRows).toHaveLength(0);
+
+    // Verify 0 store repayments recorded
+    const storeRepayments = db.all("SELECT id FROM store_debt_payments WHERE debt_id = ?", [storeDebt.id]);
+    expect(storeRepayments).toHaveLength(0);
+  });
+
+  it("enforces department isolation on batch dues settlement", async () => {
+    const { createUser } = await import("@/core/services/users.service");
+    const menRecep = buildActor(
+      await createUser(db, owner, {
+        username: "men_recep_batch",
+        password: "Recep@2026",
+        fullName: "موظف رجال باتش",
+        roleId: "reception",
+        department: "men",
+      }),
+    );
+
+    const womenMember = await createMember(db, owner, {
+      fullName: "عضوة سيدات باتش",
+      phone: "01088887777",
+      department: "women",
+    });
+
+    const plan = await createPlan(db, owner, {
+      name: "باقة سيدات",
+      kind: "time",
+      durationDays: 30,
+      price: 300,
+    });
+
+    const sub = await createSubscription(db, owner, {
+      memberId: womenMember.id,
+      planId: plan.id,
+      startDate: "2026-10-01",
+    });
+
+    expect(() =>
+      settleMemberDuesBatch(db, menRecep, {
+        memberId: womenMember.id,
+        items: [{ debtType: "subscription", debtId: sub.id, amountMinor: 30000 }],
+        methodCode: "cash",
+      }),
+    ).toThrow();
   });
 });

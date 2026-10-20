@@ -25,6 +25,7 @@ import type {
   CashSession,
 } from "@/core/services/cash-session.service";
 import { formatMinor, toMinor } from "@/core/money";
+import { todayKey } from "@/core/dates";
 import { appConfig } from "@/config/app.config";
 import { formatDateShort, formatTime } from "@/services/format";
 import { Card, CardHeader } from "@/components/ui/card";
@@ -65,8 +66,8 @@ export function CashSessionsPanel() {
   const [filterBox, setFilterBox] = useState<"all" | "gym" | "store">("all");
   const [filterStatus, setFilterStatus] = useState<"all" | "open" | "closed">("all");
   const [filterDiscrepancy, setFilterDiscrepancy] = useState<"all" | "exact" | "difference" | "shortage" | "surplus">("all");
-  const [filterFrom, setFilterFrom] = useState("");
-  const [filterTo, setFilterTo] = useState("");
+  const [filterFrom, setFilterFrom] = useState(todayKey());
+  const [filterTo, setFilterTo] = useState(todayKey());
   const [reloadTick, setReloadTick] = useState(0);
   const [confirmAbort, setConfirmAbort] = useState(false);
   const [deleteSessionTarget, setDeleteSessionTarget] = useState<Row | null>(null);
@@ -912,10 +913,10 @@ export function CashSessionsPanel() {
                 الكل
               </Button>
               <Button
-                variant="ghost"
+                variant={filterFrom === todayKey() && filterTo === todayKey() ? "secondary" : "ghost"}
                 size="sm"
                 onClick={() => {
-                  const today = new Date().toISOString().slice(0, 10);
+                  const today = todayKey();
                   setFilterFrom(today);
                   setFilterTo(today);
                   setPage(1);

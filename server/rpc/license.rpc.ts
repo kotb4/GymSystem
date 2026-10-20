@@ -23,7 +23,18 @@ export const license = defineService({
     if (typeof licJson !== "string" || licJson.length === 0) {
       throw errValidation("errors.license.empty");
     }
-    return activate(licJson);
+    try {
+      return activate(licJson);
+    } catch (err: unknown) {
+      const code = (err as { code?: string })?.code;
+      if (code === "LICENSE_INVALID") {
+        throw errValidation("errors.license.invalid");
+      }
+      if (code === "LICENSE_HWID_MISMATCH") {
+        throw errValidation("errors.license.hwidMismatch");
+      }
+      throw err;
+    }
   }),
   deactivate: a((_db: Db, actor: ServiceActor) => {
     requirePermission(actor, "settings.edit");

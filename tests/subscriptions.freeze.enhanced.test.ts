@@ -150,24 +150,24 @@ describe("enhanced freeze system - explicit date range", () => {
         sub.id,
       ])!
     ).end_date;
-    // Create a freeze starting today, then backdate its start_date so it spans
-    // yesterday + today (inclusive endpoints) before the same-day unfreeze → +2 days.
+    // Create a freeze starting today, then backdate its start_date to yesterday.
+    // Elapsed days: diffDaysKeys(yesterday, today) = 1 day (exact, no +1 overcompensation).
     await freezeSubscription(db, owner, sub.id, { endDate: addDaysKey(today, 2) });
     db.run("UPDATE subscription_freezes SET start_date = ? WHERE subscription_id = ?", [
       addDaysKey(today, -1),
       sub.id,
     ]);
     const updated = await unfreezeSubscription(db, owner, sub.id);
-    const expected = addDaysKey(endBefore, 2);
+    const expected = addDaysKey(endBefore, 1);
     expect(updated.endDate).toBe(expected);
     const after = db.first<{ frozen_days: number }>(
       "SELECT frozen_days FROM member_subscriptions WHERE id = ?",
       [sub.id]
     );
-    expect(Number(after?.frozen_days)).toBe(2);
+    expect(Number(after?.frozen_days)).toBe(1);
   });
 
-  it("auto-unfreeze on check-in respects the freeze_extends_expiry setting (off)", async () => {
+  it("card scan denies frozen subscription without silent unfreeze, and unfreeze respects freeze_extends_expiry setting (off)", async () => {
     const m = await createMember(db, owner, { fullName: "عضو 8" });
     const plan = await createPlan(db, owner, { name: "شهري", durationDays: 30, price: 200 });
     const sub = await createSubscription(db, owner, { memberId: m.id, planId: plan.id });
@@ -182,7 +182,18 @@ describe("enhanced freeze system - explicit date range", () => {
     await freezeSubscription(db, owner, sub.id, { endDate: freezeEnd });
     const { assignCardByBarcode } = await import("@/core/services/cards.service");
     const { card } = await assignCardByBarcode(db, owner, { memberId: m.id, barcodeValue: `GYM-F1-${m.id.slice(0, 4)}` });
-    await recordCheckIn(db, owner, { barcode: card.barcodeValue });
+
+    // Silent auto-unfreeze is stopped: scanning card returns denied FROZEN and keeps sub suspended
+    const checkInBefore = await recordCheckIn(db, owner, { barcode: card.barcodeValue });
+    expect(checkInBefore).toMatchObject({ kind: "denied", reason: "FROZEN" });
+    const subDuringFreeze = db.first<{ status: string }>(
+      "SELECT status FROM member_subscriptions WHERE id = ?",
+      [sub.id],
+    )!;
+    expect(subDuringFreeze.status).toBe("suspended");
+
+    // Explicit unfreeze with setting off respects setting (does not extend expiry)
+    await unfreezeSubscription(db, owner, sub.id, { isAutoUnfreeze: true });
     const after = db.first<{ end_date: string; status: string; frozen_days: number }>(
       "SELECT end_date, status, frozen_days FROM member_subscriptions WHERE id = ?",
       [sub.id]
@@ -190,9 +201,13 @@ describe("enhanced freeze system - explicit date range", () => {
     expect(after.status).toBe("active");
     expect(after.end_date).toBe(endBefore);
     expect(Number(after.frozen_days)).toBe(0);
+
+    // After unfreeze, check-in succeeds
+    const checkInAfter = await recordCheckIn(db, owner, { barcode: card.barcodeValue });
+    expect(checkInAfter.kind).toBe("success");
   });
 
-  it("auto-unfreeze on check-in extends end_date when setting is on", async () => {
+  it("card scan denies frozen subscription, and unfreeze extends end_date when setting is on", async () => {
     const m = await createMember(db, owner, { fullName: "عضو 9" });
     const plan = await createPlan(db, owner, { name: "شهري", durationDays: 30, price: 200 });
     const sub = await createSubscription(db, owner, { memberId: m.id, planId: plan.id });
@@ -205,23 +220,32 @@ describe("enhanced freeze system - explicit date range", () => {
       ])!
     ).end_date;
     await freezeSubscription(db, owner, sub.id, { endDate: freezeEnd });
-    // Backdate the freeze start so it spans yesterday + today (inclusive
-    // endpoints) by the same-day auto-unfreeze → +2 days (non-same-day extends).
+    // Backdate the freeze start so it spans yesterday to today -> 1 elapsed day
     db.run("UPDATE subscription_freezes SET start_date = ? WHERE subscription_id = ?", [
       addDaysKey(today, -1),
       sub.id,
     ]);
     const { assignCardByBarcode } = await import("@/core/services/cards.service");
     const { card } = await assignCardByBarcode(db, owner, { memberId: m.id, barcodeValue: `GYM-F2-${m.id.slice(0, 4)}` });
-    await recordCheckIn(db, owner, { barcode: card.barcodeValue });
+
+    // Scanning card while frozen denies without silent unfreeze
+    const checkInBefore = await recordCheckIn(db, owner, { barcode: card.barcodeValue });
+    expect(checkInBefore).toMatchObject({ kind: "denied", reason: "FROZEN" });
+
+    // Unfreezing extends by exactly 1 day
+    await unfreezeSubscription(db, owner, sub.id, { isAutoUnfreeze: true });
     const after = db.first<{ end_date: string; status: string }>(
       "SELECT end_date, status FROM member_subscriptions WHERE id = ?",
       [sub.id]
     )!;
-    const actualFrozenDays = 2;
+    const actualFrozenDays = 1;
     const expected = addDaysKey(endBefore, actualFrozenDays);
     expect(after.end_date).toBe(expected);
     expect(after.status).toBe("active");
+
+    // After unfreeze, check-in succeeds
+    const checkInAfter = await recordCheckIn(db, owner, { barcode: card.barcodeValue });
+    expect(checkInAfter.kind).toBe("success");
   });
 
   it("permits multiple flexible freezes without hard count restrictions", async () => {

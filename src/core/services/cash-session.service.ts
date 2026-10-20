@@ -335,37 +335,38 @@ export async function closeCashSession(
   note?: string | null,
 ): Promise<CloseSessionResult> {
   requirePermission(actor, "cash.close");
-  assertNonNegativeInteger(Math.round(countedBalanceMinor), "errors.finance.invalidCounted");
+  const roundedCounted = Math.round(countedBalanceMinor);
+  assertNonNegativeInteger(roundedCounted, "errors.finance.invalidCounted");
 
-  const row = db.first<CashSessionRow>("SELECT * FROM cash_sessions WHERE id = ?", [sessionId]);
-  if (!row) throw errNotFound("errors.finance.sessionNotFound");
-  if (row.status !== "open") throw errConflict("errors.finance.sessionAlreadyClosed");
+  return await db.transaction(async () => {
+    const row = db.first<CashSessionRow>("SELECT * FROM cash_sessions WHERE id = ?", [sessionId]);
+    if (!row) throw errNotFound("errors.finance.sessionNotFound");
+    if (row.status !== "open") throw errConflict("errors.finance.sessionAlreadyClosed");
 
-  // Strict ownership enforcement: Only the employee who opened this session (or the owner/developer) can close it
-  const isOpener = actor.userId === row.opened_by;
-  const isOwnerOrDev = actor.roleId === "owner" || actor.isDeveloper === true;
-  if (!isOpener && !isOwnerOrDev) {
-    throw errValidation("errors.finance.sessionOpenerOnlyCanClose");
-  }
+    // Strict ownership enforcement: Only the employee who opened this session (or the owner/developer) can close it
+    const isOpener = actor.userId === row.opened_by;
+    const isOwnerOrDev = actor.roleId === "owner" || actor.isDeveloper === true;
+    if (!isOpener && !isOwnerOrDev) {
+      throw errValidation("errors.finance.sessionOpenerOnlyCanClose");
+    }
 
-  const stamp = nowStamp();
-  const totals = computeSessionCash(db, row.opened_at, stamp, (row.box ?? "gym") as CashBox);
-  const expected =
-    Number(row.opening_balance_minor) + totals.cashInMinor - totals.cashOutMinor;
-  if (expected < 0) {
-    throw errValidation("errors.finance.negativeExpected");
-  }
-  const difference = Math.round(countedBalanceMinor) - expected;
+    const stamp = nowStamp();
+    const totals = computeSessionCash(db, row.opened_at, stamp, (row.box ?? "gym") as CashBox);
+    const expected =
+      Number(row.opening_balance_minor) + totals.cashInMinor - totals.cashOutMinor;
+    if (expected < 0) {
+      throw errValidation("errors.finance.negativeExpected");
+    }
+    const difference = roundedCounted - expected;
 
-  await db.transaction(async () => {
     db.run(
       "UPDATE cash_sessions SET closed_by = ?, closed_at = ?, expected_closing_minor = ?, counted_closing_minor = ?, difference_minor = ?, close_note = ?, status = 'closed'\nWHERE id = ?",
-      [actor.userId, stamp, expected, Math.round(countedBalanceMinor), difference, note?.trim() || null, sessionId],
+      [actor.userId, stamp, expected, roundedCounted, difference, note?.trim() || null, sessionId],
     );
     assignDocNo(db, "cash_closing", sessionId, stamp, actor);
     recordAudit(db, actor, "CASH_SESSION_CLOSED", "cash_session", sessionId, {
       expectedMinor: expected,
-      countedMinor: Math.round(countedBalanceMinor),
+      countedMinor: roundedCounted,
       cashInMinor: totals.cashInMinor,
       cashOutMinor: totals.cashOutMinor,
     });
@@ -373,14 +374,14 @@ export async function closeCashSession(
       recordAudit(db, actor, "CASH_DISCREPANCY", "cash_session", sessionId, {
         differenceMinor: difference,
         expectedMinor: expected,
-        countedMinor: Math.round(countedBalanceMinor),
+        countedMinor: roundedCounted,
       });
     }
-  });
 
-  const fresh = getSessionRow(db, sessionId)!;
-  const mapped = mapSession(fresh);
-  return { ...mapped, cashInMinor: totals.cashInMinor, cashOutMinor: totals.cashOutMinor };
+    const fresh = getSessionRow(db, sessionId)!;
+    const mapped = mapSession(fresh);
+    return { ...mapped, cashInMinor: totals.cashInMinor, cashOutMinor: totals.cashOutMinor };
+  });
 }
 
 /**

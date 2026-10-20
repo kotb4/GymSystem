@@ -1275,7 +1275,7 @@ describe("Tier 3: Cross-Feature Combinations", () => {
     expect(overview.todayInMinor).toBeGreaterThanOrEqual(60_000);
   });
 
-  it("C3.4: frozen subscription auto-unfreezes upon front-desk check-in scan", async () => {
+  it("C3.4: frozen subscription denies check-in with FROZEN reason and allows check-in after explicit unfreeze", async () => {
     const member = await createMember(db, owner, { fullName: "هاني سلامة" });
     const plan = await createPlan(db, owner, { name: "باقة 6 شهور", durationDays: 180, price: 1800 });
     const sub = await createSubscription(db, owner, { memberId: member.id, planId: plan.id });
@@ -1298,15 +1298,22 @@ describe("Tier 3: Cross-Feature Combinations", () => {
     );
     expect(frozenCheck?.status).toBe("suspended");
 
-    // Scan at reception -> should trigger auto-unfreeze and grant check-in
-    const checkin = await recordCheckIn(db, owner, { barcode: assigned.card.barcodeValue });
-    expect(checkin.kind).toBe("success");
+    // Scan at reception -> returns denied with reason FROZEN so reception can prompt FrozenDecisionModal
+    const deniedCheckin = await recordCheckIn(db, owner, { barcode: assigned.card.barcodeValue });
+    expect(deniedCheckin).toMatchObject({ kind: "denied", reason: "FROZEN" });
+
+    // Explicitly unfreeze upon reception confirmation (Enter key on FrozenDecisionModal)
+    await unfreezeSubscription(db, owner, sub.id);
 
     const reactivated = db.first<{ status: string }>(
       "SELECT status FROM member_subscriptions WHERE id = ?",
       [sub.id],
     );
     expect(reactivated?.status).toBe("active");
+
+    // Now check-in succeeds
+    const checkin = await recordCheckIn(db, owner, { barcode: assigned.card.barcodeValue });
+    expect(checkin.kind).toBe("success");
   });
 
   it("C3.5: supplier restock invoice increases stock enabling rapid POS checkout", async () => {

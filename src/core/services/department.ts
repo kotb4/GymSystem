@@ -34,7 +34,7 @@ export function assertDepartmentAccess(
   if (dept === "general") return;
   const memberDept = memberDepartment ?? "general";
   if (memberDept !== dept && memberDept !== "general") {
-    throw errForbidden();
+    throw errForbidden("errors.departmentAccessDenied", { memberDept, userDept: dept });
   }
 }
 

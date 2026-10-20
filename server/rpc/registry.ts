@@ -58,6 +58,7 @@ import { memberMessages } from "./member-messages.rpc";
 import { memberPortal } from "./member-portal.rpc";
 import { beltGradings } from "./belt-gradings.rpc";
 import { whatsappBot } from "./whatsapp-bot.rpc";
+import { managerOverride } from "./manager-override.rpc";
 
 /**
  * The frontend never touches SQLite. It calls whitelisted service functions
@@ -120,6 +121,7 @@ export const REGISTRY: Record<string, Record<string, Exposed>> = {
   memberPortal,
   beltGradings,
   whatsappBot,
+  managerOverride,
 };
 
 export interface SerializedError {

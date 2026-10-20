@@ -1,112 +1,142 @@
-# GymGate Subsystems Modernization — Test Infrastructure & Architecture
+# Reception Peak-Hours (7–10 PM) Test Infrastructure & Architecture (TEST_INFRA.md)
 
-## 1. Test Architecture Overview
+## 1. Overview & Objective
+This document outlines the testing infrastructure, verification methodology, and contract specifications for the **8 Reception Peak-Hours Operational & Architectural Enhancements (R1–R9)** in GymGate (جيم جيت).
 
-The end-to-end (E2E) test suite for the GymGate 7-Subsystem Modernization initiative is built upon a deterministic, opaque-box, requirement-driven verification architecture.
+The test suite in `tests/e2e-reception-peak-hours.test.ts` provides an end-to-end, opaque-box verification layer guaranteeing operational stability, data integrity, and sub-millisecond responsiveness during the most demanding gym operational window (7:00 PM – 10:00 PM peak rush).
+
+---
+
+## 2. Architecture Under Test
 
 ```
 ┌────────────────────────────────────────────────────────────────────────┐
-│                        Vitest E2E Test Suite                          │
-│             (tests/e2e-subsystems-modernization.test.ts)               │
+│                   Reception & Treasury Frontend Tier                   │
+│  - Barcode Burst Detection (<50ms inter-key) & Scanner Autofocus      │
+│  - 3-Second Client-Side Scanning Cooldown Lock                        │
+│  - Front Desk Keyboard Shortcuts (F1–F4)                              │
+│  - Search Debounce (250ms) & KPI Query Decoupling                     │
+│  - Frozen Subscription Decision Modal (Enter=Unfreeze, Esc=Inspect)   │
+│  - Payment Submit Lock & Fast Parallel Balance Queries                │
+│  - In-Place Manager PIN / Credential Override Modal                   │
 └───────────────────────────────────┬────────────────────────────────────┘
-                                    │
-                                    ▼
-┌────────────────────────────────────────────────────────────────────────┐
-│                      Backend Service Layer (RPC)                       │
-│ cash-session · store · classes · subscriptions · reception · audit ... │
+                                    │ RPC / Service Layer
+┌───────────────────────────────────▼────────────────────────────────────┐
+│                       Core Services & Business Logic                   │
+│  - attendance.service.ts: Atomic checkin + CHECKIN_DUPLICATE_SENTINEL  │
+│  - subscriptions.service.ts: Freeze date math (no +1 overcompensation) │
+│  - cash-session.service.ts: Atomic shift close inside BEGIN IMMEDIATE   │
+│  - debts.service.ts: settleMemberDuesBatch (All-or-Nothing atomicity)   │
+│  - department.ts: assertDepartmentAccess with detailed error params    │
+│  - manager-override.service.ts: PIN & password verification + audit    │
 └───────────────────────────────────┬────────────────────────────────────┘
-                                    │
-                                    ▼
-┌────────────────────────────────────────────────────────────────────────┐
-│                In-Memory Node SQLite Driver (WAL Mode)                 │
-│              Full Append-Only Migrations v1..v63 Applied               │
-│               Role Permissions Grants Cache Initialized                │
+                                    │ SQLite Driver (WAL mode)
+┌───────────────────────────────────▼────────────────────────────────────┐
+│                    Database & Platform Infrastructure                  │
+│  - Migration v66: 5 Composite Indexes                                  │
+│    * idx_cards_barcode_status (barcode_value, status)                  │
+│    * idx_subs_member_status_dates (member_id, status, start/end_date)  │
+│    * idx_attendance_member_checkin (member_id, checkin_at DESC)        │
+│    * idx_payments_sub_status (subscription_id, status)                 │
+│    * idx_cash_sessions_box_opened (box, opened_at DESC)               │
+│  - Package Engines: Node >= 22.5.0 (node:sqlite DatabaseSync support)  │
 └────────────────────────────────────────────────────────────────────────┘
 ```
 
-### Core Design Principles:
-1. **Zero Facade / Strict Opaque-Box Execution**: Tests exercise actual production business logic, database transactions (`db.transaction`), financial ledger integrity rules, and permission checks (`requirePermission`).
-2. **Absolute State Isolation**: Every single test initializes a fresh in-memory SQLite database instance via `createTestDb()`, running all 63 migrations (`v1..v63`) from scratch. Tests never share mutable state or depend on run order.
-3. **Role & Permission Fidelity**: Realistic `ServiceActor` profiles (`owner`, `manager`, `reception`, `trainer`) are provisioned via `setup()` and `createUser()`. The in-memory role-permissions grant cache is populated via `loadPermissionsCache(db)`.
-4. **Append-Only Migration Compliance**: Zero alterations to schema migrations `v1..v63`.
-5. **Deterministic Monetary & Time Standards**: All money computations operate in integer minor units (piastres, 100 = 1 EGP). Time formatting is tested against the Arabic 12-hour AM/PM standard (`formatTime12`).
+---
+
+## 3. 4-Tier Test Methodology
+
+The test suite is structured into 4 distinct testing tiers:
+
+### Tier 1: Feature Coverage (>=5 test cases per feature area)
+1. **R1: Barcode Scanner Autofocus Resilience & Burst Hardware Input**
+   - Burst detection (<50ms intervals ending in Enter) captures scans even when focus is in inputs.
+   - Input marked with `data-scanner-input="true"` participates in scanner capture.
+   - Human slow typing (>50ms) in ordinary inputs does not trigger false barcode submissions.
+   - Arabic-to-English keyboard layout normalization maps Arabic keystrokes to ASCII barcodes.
+   - Client-side scan cooldown (3s) rejects rapid re-scans of the same barcode.
+
+2. **R2: Atomic Attendance Check-in & Idempotency Window**
+   - Enforce duplicate check-in detection inside SQLite transaction with `CHECKIN_DUPLICATE_SENTINEL`.
+   - Prevent double-consumption of session packages on rapid double-swipes.
+   - Duplicate window configurable (`duplicateWindowSeconds`) with safe defaults.
+   - Trial check-in enforces duplicate window inside write transaction.
+   - Denials returned with exact denial reasons (e.g. `CARD_UNKNOWN`, `NO_ACTIVE_SUBSCRIPTION`, `NO_SESSIONS_LEFT`).
+
+3. **R3: Frozen Subscription Decision Modal & Accurate Date Compensation**
+   - Frozen subscription is not automatically unfrozen without explicit confirmation.
+   - Inspection mode leaves subscription safely suspended and returns `FROZEN` status.
+   - Date math correction: multi-day freeze calculates exact missed days without `+1` day overcompensation.
+   - Same-day freeze and unfreeze awards exactly 0 days extension (anti-gaming safeguard).
+   - Planned freeze duration cap is strictly respected.
+
+4. **R4: Search Debounce & KPI Decoupling**
+   - Debounce utility standardizes 250ms delay across search inputs.
+   - Member search keystrokes do not trigger redundant 5 KPI summary requests.
+   - Subscriptions search debounces queries at 250ms.
+   - Cash sessions list defaults `fromKey` and `toKey` to `todayKey()`.
+   - Clear search restores immediate result set without lag.
+
+5. **R5: Atomic Shift Closing in Treasury**
+   - `computeSessionCash` executes inside `BEGIN IMMEDIATE` transaction write lock.
+   - Zero ledger drift: transactions committed prior to write lock are accurately reflected.
+   - Exact discrepancy calculation (`difference = counted - expected`).
+   - Discrepancy audits (`CASH_DISCREPANCY` and `CASH_SESSION_CLOSED`) recorded correctly.
+   - Negative expected balance or unclosed session errors handled safely.
+
+6. **R6: Payment Submit Lock & Batch Dues Settlement**
+   - Submit lock prevents duplicate payment submissions on rapid double-clicks.
+   - Parallel subscription balance fetching resolves balances concurrently.
+   - `settleMemberDuesBatch` settles multiple subscription and store debts in a single transaction.
+   - Batch dues settlement writes financial ledger entries atomically.
+   - Full rollback: if one debt settlement in batch fails, all previous settlements in the batch are rolled back.
+
+7. **R7: Department Access Clarity & Manager PIN Override**
+   - `assertDepartmentAccess` throws `errForbidden("errors.departmentAccessDenied", { memberDept, userDept })`.
+   - Manager PIN override grants cross-department access in-place.
+   - Manager username/password override verifies active user and role permissions.
+   - Invalid PIN or non-manager credentials rejected with clear unauthorized/forbidden errors.
+   - Every manager override logs `MANAGER_OVERRIDE` in `audit_log` with target details.
+
+8. **R8: Database Migration v66 & Package Engine Field**
+   - Migration `v66` applies cleanly to SQLite database.
+   - 5 composite indexes created with exact column signatures.
+   - `package.json` specifies `"engines": { "node": ">=22.5.0" }`.
+   - Query planner confirms index utilization for barcode, subscription, attendance, payment, and cash lookups.
+   - Schema migration version counter correctly reaches 66.
+
+9. **R9: Front Desk Keyboard Shortcuts (F1–F4)**
+   - F1 triggers search input focus and selects contents.
+   - F2 opens 1-click subscription renewal modal.
+   - F3 opens Quick Day Pass modal.
+   - F4 opens Payment / Settle dues modal.
+   - Hotkeys respect open modal state and prevent default browser actions.
 
 ---
 
-## 2. Feature Inventory to Test Mapping
-
-The test suite thoroughly maps and validates all 7 modernized subsystems specified in `ORIGINAL_REQUEST.md` and `PROJECT.md`:
-
-| Subsystem # | Subsystem Name | Covered Features & Requirements | Test Suite Group in E2E Suite |
-|-------------|----------------|---------------------------------|-------------------------------|
-| **Subsystem 1** | **المالية والخزينة الموحدة**<br>(Financial & Treasury Hub) | - F1.1 Treasury Hub Telemetry & Drawer Float<br>- F1.2 1-Click End of Shift / Daily Z-Report<br>- F1.3 Payment Recording & Ledger Uniqueness<br>- F1.4 Payment Refund & Voiding Double-Reversal Guard<br>- F1.5 Expense Categories & Cash Outflows<br>- F1.6 Finance Overview Collections & Net Cash<br>- F1.7 12-Hour AM/PM Treasury Time Formatting | `Tier 1.1: Financial & Treasury Hub Modernization`<br>(Tests: `F1.1` to `F1.7`) |
-| **Subsystem 2** | **المتجر ونقاط البيع السريعة والمخزون**<br>(Store, POS & Inventory) | - F2.1 Product Catalog & Low-Stock Alerts<br>- F2.2 Rapid POS Cash Sales & Stock Movements<br>- F2.3 Member Credit Sales & Open Debt Creation<br>- F2.4 Store Sales Returns & Restock Ledger Reversals<br>- F2.5 Supplier Purchase Restock Invoices<br>- F2.6 Store Telemetry, Stock Valuation & Best-Sellers | `Tier 1.2: Store, POS & Inventory Modernization`<br>(Tests: `F2.1` to `F2.6`) |
-| **Subsystem 3** | **الحصص والمدربون والتدريب الخاص**<br>(Classes, Trainers & Private Training) | - F3.1 Combat & Fitness Class Creation<br>- F3.2 Class Session Scheduling & Duplicate Guards<br>- F3.3 Session Booking & Capacity Ceiling Enforcement<br>- F3.4 Attendance Check-In with Session Consumption<br>- F3.5 Private Training (PT) Packages & Contracts<br>- F3.6 PT Session Countdown & Auto-Completion<br>- F3.7 Trainer Attendance Check-In/Check-Out Tracking | `Tier 1.3: Classes, Trainers & Private Training Hub`<br>(Tests: `F3.1` to `F3.7`) |
-| **Subsystem 4** | **الأعضاء والملف الرياضي الشامل**<br>(Members & Profile 360) | - F4.1 Member Roster & Department Filtering<br>- F4.2 Quick Status Toggle in Roster<br>- F4.3 Profile 360 Subscription Freeze<br>- F4.4 Unfreeze with Automatic Expiry Extension<br>- F4.5 Profile 360 1-Click Subscription Renewal<br>- F4.6 InBody Assessment History & BMI Math | `Tier 1.4: Members & Comprehensive Profile 360`<br>(Tests: `F4.1` to `F4.6`) |
-| **Subsystem 5** | **شاشة الاستقبال والحضور المباشر**<br>(Reception & Live Occupancy) | - F5.1 Barcode Check-In Happy Path & Verification<br>- F5.2 Check-In Denial Matrix (Unknown, Blocked, Inactive)<br>- F5.3 Duplicate Scan Window Prevention<br>- F5.4 Real-Time Live Occupancy Tracking<br>- F5.5 Front-Desk Check-Out Flow<br>- F5.6 Guest Quick Session / Day Pass Issuance | `Tier 1.5: Reception & Live Occupancy Hub`<br>(Tests: `F5.1` to `F5.6`) |
-| **Subsystem 6** | **المستخدمون والصلاحيات**<br>(Staff, Users & Permissions Matrix) | - F6.1 User Provisioning & Department Scoping<br>- F6.2 Department Security Isolation Enforcement<br>- F6.3 Role-Permissions Matrix Dynamic Updates<br>- F6.4 Owner Immutability & Self-Escalation Guard<br>- F6.5 Role Boundaries & `errForbidden` Rejection<br>- F6.6 Full 116 Permissions Matrix Inventory | `Tier 1.6: Staff, Users & Permissions Matrix`<br>(Tests: `F6.1` to `F6.6`) |
-| **Subsystem 7** | **التقارير وسجل العمليات الشامل**<br>(Reports & 211-Action Audit Log) | - F7.1 Executive Dashboard 5-Stream Revenue Aggregation<br>- F7.2 Income Statement (Gross Profit, COGS, Net Margin)<br>- F7.3 Receivables Summary & Aging Debts<br>- F7.4 211-Action Audit Trail Logging with Actors<br>- F7.5 Multi-Parameter Audit Search & Filtering<br>- F7.6 UTF-8 BOM CSV Export & Parsing Fidelity | `Tier 1.7: Reports & 211-Action Audit Log Hub`<br>(Tests: `F7.1` to `F7.6`) |
+### Tier 2: Boundary & Corner Cases
+1. **Zero & 3-Second Scanning Window**: Identical millisecond timestamp duplicate scans rejected even when `windowSeconds = 0`.
+2. **Same-Day vs Multi-Day Freeze Extension**: Precise date boundary math verification.
+3. **Batch Debt Overpayment & Invalid Debt ID**: Verifies complete transaction rollback when amount exceeds balance or debt ID is corrupt.
+4. **Manager Override Security Extremes**: Wrong PIN, empty PIN, wrong password, inactive manager account, non-manager staff trying to override.
+5. **Department Cross-Access Boundaries**: General department staff, men-only staff, women-only staff, and manager overrides across sections.
 
 ---
 
-## 3. Tier Breakdown and Coverage Metrics
-
-The test suite is structured into four progressive tiers totaling **60 automated test cases**:
-
-```
-=============================================================================
-                  TEST SUITE TIER BREAKDOWN (60 TESTS TOTAL)
-=============================================================================
-Tier 1: Feature Coverage (7 Subsystems)               -->  44 Tests (100% Pass)
-  - Subsystem 1: Financial & Treasury Hub             -->   7 Tests
-  - Subsystem 2: Store, POS & Inventory               -->   6 Tests
-  - Subsystem 3: Classes, Trainers & PT               -->   7 Tests
-  - Subsystem 4: Members & Profile 360                -->   6 Tests
-  - Subsystem 5: Reception & Live Occupancy           -->   6 Tests
-  - Subsystem 6: Staff & Permissions Matrix           -->   6 Tests
-  - Subsystem 7: Reports & Audit Log                  -->   6 Tests
-
-Tier 2: Boundary & Corner Cases                       -->   8 Tests (100% Pass)
-  - Empty Cash Drawers (0 Float / 0 Sales)            -->   1 Test
-  - Zero Amount / 100% Free Promotional Sale          -->   1 Test
-  - Negative Discrepancy in Cash Closing              -->   1 Test
-  - Strict Class Capacity Overflow                    -->   1 Test
-  - Zero Subscription Sessions Exhaustion             -->   1 Test
-  - Zero PT Package Sessions Exhaustion               -->   1 Test
-  - Empty Department Filter Response                  -->   1 Test
-  - Administrative Action Role Denial                 -->   1 Test
-
-Tier 3: Cross-Feature Combinations                    -->   5 Tests (100% Pass)
-  - Store Credit Sale -> Repayment -> Cash Ledger     -->   1 Test
-  - Session Subscription -> Class Attend -> Deduct    -->   1 Test
-  - Renewal -> Payment -> Financial Telemetry         -->   1 Test
-  - Frozen Subscription -> Check-In Auto-Unfreeze     -->   1 Test
-  - Supplier Restock -> Inventory Up -> POS Sale      -->   1 Test
-
-Tier 4: Real-World Workloads                          -->   3 Tests (100% Pass)
-  - Complete End-of-Day Shift Close Reconciliation    -->   1 Test
-  - Full New Member Lifecycle Journey                 -->   1 Test
-  - Complete Weekly Class Schedule Cycle              -->   1 Test
-=============================================================================
-Total Tests: 60  |  Passed: 60  |  Failed: 0  |  Pass Rate: 100.0%
-=============================================================================
-```
+### Tier 3: Cross-Feature Combinations
+1. **Frozen Card Swipe + Manager Override + Unfreeze + Immediate Check-in + Debt Settlement**: End-to-end multi-module operational workflow.
+2. **Concurrent Cash Closing & Batch Debt Settlement**: Closing cash drawer while dues settlements execute, guaranteeing zero discrepancy drift.
 
 ---
 
-## 4. How to Run the Tests
+### Tier 4: Real-World 7–10 PM Peak-Hours Workload Scenario
+- Simulates rapid sequential and interleaved actions across 50+ operations (30 check-ins, 10 store sales, 5 dues settlements, 3 overrides, and final shift close).
+- Confirms zero database corruption, zero session double-consumption, and zero cash ledger variance.
 
-### Single-File Suite Execution:
-```bash
-npx vitest run tests/e2e-subsystems-modernization.test.ts
-```
+---
 
-### Full Project Test Suite Execution:
+## 4. Test Execution & Verification Command
 ```bash
-npm test
-```
-
-### Backend Typecheck:
-```bash
-npm run typecheck:server
+npx vitest run tests/e2e-reception-peak-hours.test.ts
 ```

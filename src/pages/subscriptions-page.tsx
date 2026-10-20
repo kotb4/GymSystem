@@ -17,6 +17,7 @@ import {
   Trash2,
 } from "lucide-react";
 import { useAuth } from "@/contexts/auth-context";
+import { useDebounce } from "@/hooks/use-debounce";
 import { useT } from "@/i18n";
 import { useToast } from "@/components/ui/toast";
 import { describeError } from "@/utils/app-error";
@@ -77,7 +78,7 @@ export function SubscriptionsPage() {
   const [tab, setTab] = useState<"subs" | "plans">("subs");
   const [effective, setEffective] = useState<string>("all");
   const [search, setSearch] = useState("");
-  const [debounced, setDebounced] = useState("");
+  const debounced = useDebounce(search.trim(), 250);
   const [page, setPage] = useState(1);
   const [data, setData] = useState<{ items: SubscriptionWithMember[]; total: number }>({
     items: [],
@@ -112,14 +113,10 @@ export function SubscriptionsPage() {
   const [reloadTick, setReloadTick] = useState(0);
   const reload = () => setReloadTick((v) => v + 1);
 
-  // Debounce search
+  // Reset page when search changes
   useEffect(() => {
-    const timer = window.setTimeout(() => {
-      setDebounced(search.trim());
-      setPage(1);
-    }, 300);
-    return () => window.clearTimeout(timer);
-  }, [search]);
+    setPage(1);
+  }, [debounced]);
 
   // Load subscriptions list
   useEffect(() => {

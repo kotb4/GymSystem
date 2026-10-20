@@ -8,7 +8,6 @@ import { getCardByBarcode } from "./cards.service";
 import { getOccupancyDurationMinutes, readSetting, SETTING_KEYS } from "./settings.service";
 import { getMemberRowById } from "./members.service";
 import { activeTrialForMember } from "./trials.service";
-import { unfreezeSubscription } from "./subscriptions.service";
 import { applyEarnRule, loyaltyUsableCreditMinor } from "./loyalty.service";
 
 import { getLocalBranchId } from "@/core/branch";
@@ -31,7 +30,8 @@ export type CheckInDenialReason =
   | "NO_ACTIVE_SUBSCRIPTION"
   | "NO_SESSIONS_LEFT"
   | "DAY_NOT_ALLOWED"
-  | "BRANCH_NOT_ALLOWED";
+  | "BRANCH_NOT_ALLOWED"
+  | "FROZEN";
 
 export type CheckInResult =
   | {
@@ -197,7 +197,8 @@ export async function recordCheckIn(
 
   const today = todayKey();
 
-  // Auto-unfreeze: if no active subscription, check for a suspended (frozen) one in-date-window
+  // If no active subscription, check if there is a suspended (frozen) one in-date-window.
+  // Note: automatic silent unfreezing is disabled so the receptionist can inspect or confirm.
   let subscription = findActiveSubscription(db, member.id, today);
   if (!subscription) {
     const frozenSub = db.first<{ id: string; end_date: string; frozen_at: string | null }>(
@@ -205,57 +206,79 @@ export async function recordCheckIn(
       [member.id, today, today],
     );
     if (frozenSub) {
-      // Use the centralized unfreeze logic with auto-unfreeze flag
-      await unfreezeSubscription(db, actor, frozenSub.id, { isAutoUnfreeze: true });
-      subscription = findActiveSubscription(db, member.id, today);
+      return {
+        kind: "denied",
+        reason: "FROZEN",
+        barcode,
+        memberId: member.id,
+        memberName: member.full_name,
+        memberCode: member.member_code,
+        photoFileId: member.photo_file_id,
+      };
     }
   }
+
   if (!subscription) {
     // No paid subscription: a live trial window is a targeted check-in
     // authority (business rule: trial users may attend during the trial).
     const trial = activeTrialForMember(db, member.id, today);
     if (trial) {
-      const stampNow = nowStamp();
       const windowSeconds = duplicateWindowSeconds(db);
-      const lastVisit = db.first<AttendanceRow>(
-        "SELECT * FROM attendance WHERE deleted_at IS NULL AND member_id = ? ORDER BY checkin_at DESC LIMIT 1",
-        [member.id],
-      );
-      if (lastVisit) {
-        const secondsAgo = secondsBetweenStamps(stampNow, lastVisit.checkin_at);
-        if (secondsAgo < windowSeconds) {
-          return {
-            kind: "duplicate",
-            secondsAgo,
-            memberName: member.full_name,
+      let duplicateTrialResult: CheckInResult | null = null;
+      const attendanceId = crypto.randomUUID();
+      let txStamp = nowStamp();
+      try {
+        db.transaction(() => {
+          txStamp = nowStamp();
+          const lastVisit = db.first<AttendanceRow>(
+            "SELECT * FROM attendance WHERE deleted_at IS NULL AND member_id = ? ORDER BY checkin_at DESC LIMIT 1",
+            [member.id],
+          );
+          if (lastVisit) {
+            const secondsAgo = secondsBetweenStamps(txStamp, lastVisit.checkin_at);
+            if (secondsAgo < windowSeconds || lastVisit.checkin_at === txStamp) {
+              duplicateTrialResult = {
+                kind: "duplicate",
+                secondsAgo: Math.max(0, secondsAgo),
+                memberId: member.id,
+                memberName: member.full_name,
+                memberCode: member.member_code,
+                photoFileId: member.photo_file_id,
+              };
+              throw CHECKIN_DUPLICATE_SENTINEL;
+            }
+          }
+          db.run(
+            "INSERT INTO attendance (id, member_id, card_id, subscription_id, checkin_at, created_by, device_identifier, notes)\nVALUES (?, ?, ?, NULL, ?, ?, ?, ?)",
+            [
+              attendanceId,
+              member.id,
+              card.id,
+              txStamp,
+              actor.userId,
+              input.deviceIdentifier ?? null,
+              `trial:${trial.id}`,
+            ],
+          );
+          recordAudit(db, actor, "CHECKIN_RECORDED", "attendance", attendanceId, {
             memberCode: member.member_code,
-          };
+            barcode,
+            trialId: trial.id,
+          });
+          applyEarnRule(db, actor, member.id, "checkin", "attendance", attendanceId, { reason: "checkin:trial" });
+        });
+      } catch (error) {
+        if (error === CHECKIN_DUPLICATE_SENTINEL) {
+          // rollback already happened; swallow and report as a duplicate scan
+        } else {
+          throw error;
         }
       }
-      const attendanceId = crypto.randomUUID();
-      db.transaction(() => {
-        db.run(
-          "INSERT INTO attendance (id, member_id, card_id, subscription_id, checkin_at, created_by, device_identifier, notes)\nVALUES (?, ?, ?, NULL, ?, ?, ?, ?)",
-          [
-            attendanceId,
-            member.id,
-            card.id,
-            stampNow,
-            actor.userId,
-            input.deviceIdentifier ?? null,
-            `trial:${trial.id}`,
-          ],
-        );
-        recordAudit(db, actor, "CHECKIN_RECORDED", "attendance", attendanceId, {
-          memberCode: member.member_code,
-          barcode,
-          trialId: trial.id,
-        });
-        applyEarnRule(db, actor, member.id, "checkin", "attendance", attendanceId, { reason: "checkin:trial" });
-      });
+      if (duplicateTrialResult) return duplicateTrialResult;
       return {
         kind: "success",
         attendanceId,
+        memberId: member.id,
         memberName: member.full_name,
         memberCode: member.member_code,
         photoFileId: member.photo_file_id,
@@ -269,7 +292,10 @@ export async function recordCheckIn(
       kind: "denied",
       reason: "NO_ACTIVE_SUBSCRIPTION",
       barcode,
+      memberId: member.id,
       memberName: member.full_name,
+      memberCode: member.member_code,
+      photoFileId: member.photo_file_id,
     };
   }
 
@@ -287,7 +313,10 @@ export async function recordCheckIn(
           kind: "denied",
           reason: "DAY_NOT_ALLOWED",
           barcode,
+          memberId: member.id,
           memberName: member.full_name,
+          memberCode: member.member_code,
+          photoFileId: member.photo_file_id,
         };
       }
     } catch {
@@ -305,11 +334,13 @@ export async function recordCheckIn(
       kind: "denied",
       reason: "NO_SESSIONS_LEFT",
       barcode,
+      memberId: member.id,
       memberName: member.full_name,
+      memberCode: member.member_code,
+      photoFileId: member.photo_file_id,
     };
   }
 
-  const stampNow = nowStamp();
   const windowSeconds = duplicateWindowSeconds(db);
 
   // The duplicate-window check (read last visit + compare) is performed INSIDE
@@ -318,22 +349,26 @@ export async function recordCheckIn(
   // double-scan must not consume two session credits or record two identical
   // check-ins.
   let duplicateResult: CheckInResult | null = null;
-
   const attendanceId = crypto.randomUUID();
+  let currentTxStamp = nowStamp();
+
   try {
     db.transaction(() => {
+      currentTxStamp = nowStamp();
       const lastVisit = db.first<AttendanceRow>(
         "SELECT * FROM attendance WHERE deleted_at IS NULL AND member_id = ? ORDER BY checkin_at DESC LIMIT 1",
         [member.id],
       );
       if (lastVisit) {
-        const secondsAgo = secondsBetweenStamps(stampNow, lastVisit.checkin_at);
-        if (secondsAgo < windowSeconds) {
+        const secondsAgo = secondsBetweenStamps(currentTxStamp, lastVisit.checkin_at);
+        if (secondsAgo < windowSeconds || lastVisit.checkin_at === currentTxStamp) {
           duplicateResult = {
             kind: "duplicate",
-            secondsAgo,
+            secondsAgo: Math.max(0, secondsAgo),
+            memberId: member.id,
             memberName: member.full_name,
             memberCode: member.member_code,
+            photoFileId: member.photo_file_id,
           };
           throw CHECKIN_DUPLICATE_SENTINEL;
         }
@@ -346,12 +381,12 @@ export async function recordCheckIn(
           member.id,
           card.id,
           subscription.id,
-          stampNow,
+          currentTxStamp,
           actor.userId,
           input.deviceIdentifier ?? null,
         ],
       );
-      assignDocNo(db, "attendance", attendanceId, stampNow, actor);
+      assignDocNo(db, "attendance", attendanceId, currentTxStamp, actor);
       if (planKind === "sessions" && sessionsTotal != null) consumeSession(db, subscription.id);
       recordAudit(db, actor, "CHECKIN_RECORDED", "attendance", attendanceId, {
         memberCode: member.member_code,

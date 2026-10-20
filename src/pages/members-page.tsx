@@ -13,6 +13,7 @@ import {
   AlertTriangle,
 } from "lucide-react";
 import { useAuth } from "@/contexts/auth-context";
+import { useDebounce } from "@/hooks/use-debounce";
 import { useT } from "@/i18n";
 import { appConfig } from "@/config/app.config";
 import { api } from "@/api";
@@ -67,7 +68,7 @@ export function MembersPage() {
   const [searchParams, setSearchParams] = useSearchParams();
 
   const [term, setTerm] = useState("");
-  const [debounced, setDebounced] = useState("");
+  const debounced = useDebounce(term.trim(), 250);
   const [status, setStatus] = useState<string>("all");
   const [smart, setSmart] = useState<SmartFilter>("all");
   const [deptFilter, setDeptFilter] = useState<"all" | DepartmentScope>("all");
@@ -136,12 +137,8 @@ export function MembersPage() {
   }, [actor, deptFilter, reloadTick]);
 
   useEffect(() => {
-    const timer = window.setTimeout(() => {
-      setDebounced(term.trim());
-      setPage(1);
-    }, 300);
-    return () => window.clearTimeout(timer);
-  }, [term]);
+    setPage(1);
+  }, [debounced]);
 
   useEffect(() => {
     if (!actor) return;

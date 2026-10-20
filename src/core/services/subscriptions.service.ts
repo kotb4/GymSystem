@@ -863,17 +863,16 @@ export async function unfreezeSubscription(
 
   const today = todayKey();
 
-  // Actual frozen days: from freeze start_date to today (capped at planned
-  // duration). A same-day freeze/unfreeze (unfreeze date == start date) grants
-  // NO extension — otherwise a freeze followed by an immediate unfreeze would
-  // inflate the subscription end date by one day, repeatable for free days.
+  // Actual frozen days: from freeze start_date to today (capped at planned duration).
+  // diffDaysKeys(openFreeze.start_date, today) gives the exact elapsed days (0 for same-day).
   const actualFrozenDays = openFreeze
-    ? today === openFreeze.start_date
-      ? 0
-      : Math.max(0, Math.min(
-          diffDaysKeys(openFreeze.start_date, today) + 1,
+    ? Math.max(
+        0,
+        Math.min(
+          diffDaysKeys(openFreeze.start_date, today),
           Number(openFreeze.duration_days ?? 0)
-        ))
+        )
+      )
     : 0;
 
   await db.transaction(async () => {

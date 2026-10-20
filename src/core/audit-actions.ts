@@ -210,6 +210,7 @@ export const AUDIT_ACTIONS = [
   "MEMBER_MESSAGE_SENT",
   "CLASS_ROSTER_SAVED",
   "TRAINER_SESSION_PAID",
+  "MANAGER_OVERRIDE",
 ] as const;
 
 export type AuditAction = (typeof AUDIT_ACTIONS)[number];

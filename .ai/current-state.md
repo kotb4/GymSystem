@@ -1,7 +1,7 @@
 # Current Development State
 
-> **Last Updated:** 2026-10-18  
-> **Status:** All unit & stress tests passing (905/905 tests across 90 suites, 100% green). TypeScript clean (client + server, 0 errors). Full RPC consistency passed. i18n coverage 100% passed (3/3). Production executable `dist-exe/GymGate.exe` freshly compiled. Database migrations v1..v65. TASK-264 completed.
+> **Last Updated:** 2026-10-20  
+> **Status:** All unit & stress tests passing (1,006/1,006 tests across 94 suites, 100% green). TypeScript clean (client + server, 0 errors). Production executable `dist-exe/GymGate.exe` freshly compiled. Database migrations v1..v66. TASK-265 & TASK-266 completed.
 
 ---
 
@@ -12,13 +12,73 @@ If you are a new AI agent continuing this project, **read this first**:
 - **Backend:** Node.js ≥24 with native `node:sqlite` (synchronous, WAL mode). Listens on `0.0.0.0:8890`. Single process owns the SQLite database.
 - **Frontend:** React 19 + TypeScript + Tailwind CSS v4, built with Vite to `dist/`, served statically by the Node backend.
 - **Single Source of Truth:** `%LOCALAPPDATA%\GymGate\Database\gym.db` (with automatic, seamless fallback to `%LOCALAPPDATA%\GymSystem\Database\gym.db` to protect existing user data). No business data in browser localStorage/IndexedDB.
-- **Current Database Version:** Migration `v65` (`src/db/migrations.ts`). Append-only, never alter existing migrations.
-- **Current Business Services:** 58 services in `src/core/services/` (backend-only). Frontend calls via `api.*` (`POST /api/rpc`).
+- **Current Database Version:** Migration `v66` (`src/db/migrations.ts`). Append-only, never alter existing migrations.
+- **Current Business Services:** 59 services in `src/core/services/` (backend-only). Frontend calls via `api.*` (`POST /api/rpc`).
 - **Owner Mandate (Rule 16):** Always run `npm run build:exe` after completing tasks to produce the updated `dist-exe/GymGate.exe`.
 
 ---
 
-## 2. Recent Completed Milestones (TASK-224 .. TASK-264)
+## 2. Recent Completed Milestones (TASK-224 .. TASK-266)
+
+### TASK-266: فحص مكثف تفاعلي لموظف الاستقبال وإطلاق سكريبت المحاكاة المرئية (Done)
+- **طلب المالك والهدف التشغيلي:**
+  - إجراء فحص مكثف لدورة عمل موظف الاستقبال على أرض الواقع مع إبقاء البيانات الوهمية في قاعدة البيانات وتزويد المالك بالحسابات وتوفير وسيلة تشغيل مرئية مباشرة أمامه في متصفح Brave.
+- **الإجراءات المنفذة:**
+  - تفعيل رخصة النظام باسم `جيم الأبطال فيتنس` وربطها بالـ HWID الحقيقي للجهاز (`GYM-479F-3465-5B89-AFE3`).
+  - إنشاء وتثبيت حساب المدير `owner` بكلمة المرور `Password123!`.
+  - إنشاء العضو `كابتن أحمد خالد الشناوي` (`B1-MEM-000001` - `01012345678`) والعضو `كابتن سيف الدين محمود` (`01099887766`).
+  - إصدار تذاكر يومية (Day Pass) سريعة للزائر `محمود الزائر` و`عمر طارق` وتحصيل النقدية وقيدها في `financial_ledger`.
+  - فتح وردية نقدية بعهدة افتتاجية `500.00 ج.م`.
+  - إنشاء سكريبت فحص مرئي متكامل `D:\Systems\Gym\run-live-visual-audit.cjs` مدعوم بشريط إشعارات نيون لحظي في المتصفح.
+  - إنشاء ملف تشغيل مباشر بنقرة واحدة على سطح المكتب `C:\Users\KOTB\Desktop\Run-Live-Audit.bat` لفتح المتصفح مباشرة في الجلسة التفاعلية لشاشة المالك.
+
+### TASK-265: تعزيزات فترات الذروة المسائية (7–10 مساءً) للريسبشن والخزينة وقاعدة البيانات (R1–R9) (Done)
+- **طلب المالك والهدف التشغيلي:**
+  - تحصين النظام وتطوير استجابته لفترات الذروة المسائية المكثفة (7:00 إلى 10:00 مساءً) والتي تشهد تدفق مئات المشتركين وتزاحم طابور الاستقبال، تسليم ورديات الكاشير، سداد الديون، ومسح الباركود المتتالي السريع مع القضاء التام على بطء الواجهة أو تجميد الشاشة أو استهلاك الحصص المزدوج أو التراجع في المعاملات المالية.
+- **الإجراءات المنفذة والتعزيزات المعتمدة (R1–R9):**
+  1. **R1 — تمييز قراءة الباركود السريعة وحصانة الفوكس وتبريد المسح (`reception-tab.tsx` + `barcode-input.ts`):**
+     - تمييز التدفق السريع لقارئ الباركود الفيزيائي بحساب الفارق الزمني بين النقرات (`< 50ms`) المنتهية بـ Enter، حتى لو كان المؤشر داخل حقول إدخال نصية عادية مع تنظيف الأحرف المتسربة فوراً (`cleansing leaked keystrokes`).
+     - وسم حقل بحث الريسبشن بـ `data-scanner-input="true"` واستعادة التركيز التلقائي عليه فور إغلاق أي نافذة منبثقة أو تنبيه (`prevModalOpenRef` بمؤقت 60ms).
+     - تطبيق قفل تبريد من جانب العميل لمدة 3 ثوانٍ (`SCAN_COOLDOWN_MS = 3000`) لمنع إطلاق عمليات مسح متزامنة أو مكررة لنفس المشترك.
+     - معالجة وتطبيع لغات لوحة المفاتيح والأرقام العربية والمشرقية تلقائياً (`normalizeBarcodeString`).
+  2. **R2 — ذرية تسجيل الحضور وحارس منع التكرار ومعاملات باقات الحصص (`attendance.service.ts`):**
+     - نقل فحص الحضور المكرر داخل معاملة قاعدة البيانات الذرية `db.transaction()` (`BEGIN IMMEDIATE` SQLite write lock) باستخدام الحارس الثابت المنيع `CHECKIN_DUPLICATE_SENTINEL`.
+     - إذا تكرر مسح الكارت خلال نافذة التكرار (`checkin_duplicate_window_seconds`) يتم إرجاع استجابة مكرر فوراً والتراجع التلقائي عن أي تعديل.
+     - تضمين استهلاك حصص الباقات (`consumeSession`) واشتراكات اليوم الواحد والتجارب داخل نفس المعاملة الذرية لمنع الخصم المزدوج للحصص عند السحب السريع المتتالي.
+  3. **R3 — نافذة قرار الاشتراكات المجمدة وتصحيح معادلة تمديد التجميد (`frozen-decision-modal.tsx` + `subscriptions.service.ts`):**
+     - إيقاف الفك التلقائي الصامت للاشتراكات المجمدة عند مسح الكارت، وإرجاع سبب الرفض الصريح `reason: "FROZEN"`.
+     - فتح نافذة قرار تجميد تفاعلية سريعة تدعم لوحة المفاتيح بالكامل: الضغط على **Enter** لفك التجميد وتسجيل الحضور فوراً، أو **Escape** للإغلاق وتفقد الملف دون فك التجميد.
+     - تصحيح الحساب الرياضي الدقيق لأيام التجميد في `unfreezeSubscription` باستخدام `diffDaysKeys(openFreeze.start_date, today)` دون زيادة يوم إضافي غير مبرر (`+ 1`)؛ مما يضمن أن فك التجميد في نفس يوم التجميد يمدد الاشتراك بـ 0 أيام بالضبط.
+  4. **R4 — تخميد استعلامات البحث وفصل مؤشرات الأداء وحصر تاريخ الخزينة (`members-page.tsx`, `cash-page.tsx`, `use-debounce.ts`):**
+     - توحيد تخميد البحث عند 250ms عبر الخطاف المخصص `useDebounce` في شاشات الأعضاء، الاشتراكات، والخزينة لمنع إغراق الخادم بطلبات البحث عند كل نقرة زر.
+     - فصل طلبات بطاقات مؤشرات الأداء الخمسة (KPIs: الإجمالي، النشط، غير النشط، المنتهي، المؤرشف) عن استعلام البحث المجدول في صفحة الأعضاء؛ لتعمل فقط عند تبديل الأقسام وتخفيف العبء عن المعالج وقاعدة البيانات.
+     - ضبط فلاتر البحث في صفحة الخزينة `filterFrom` و `filterTo` لتبدأ افتراضياً بتاريخ اليوم الحالي `todayKey()` بدلاً من مسح السجل التاريخي الكامل للخزينة عند فتح الصفحة.
+  5. **R5 — إغلاق الوردية الذري وحساب النقدية داخل قفل المعاملة (`cash-session.service.ts`):**
+     - نقل دالة حساب نقدية الوردية `computeSessionCash` لتنفذ بالكامل داخل معاملة `db.transaction(async () => { ... })` (`BEGIN IMMEDIATE` write lock) في `closeCashSession`.
+     - حساب الفارق والعجز بدقة ومقارنته بدفتر الأستاذ المالي `financial_ledger` وتحديث حالة الوردية إلى مغلقة وتوثيق سجل تدقيق `CASH_DISCREPANCY` في معاملة واحدة لا تسمح بحدوث أي انزياح أو قيود مالية تائهة.
+  6. **R6 — قفل منع التكرار لسداد المدفوعات وتجميع سداد المديونيات ذرياً (`payment-form-modal.tsx`, `debts.service.ts`, `settle-member-dues-modal.tsx`):**
+     - وضع قفل حماية لمنع الضغط المكرر على زر السداد (`disabled={submitting}`) وشارة تحميل تفاعلية، مع جلب أرصدة الاشتراكات والمديونيات بالتوازي عبر `Promise.all` لتسريع فتح النافذة.
+     - إضافة دالة السداد المجمعة الذرية `settleMemberDuesBatch` في `debts.service.ts` وواجهة `SettleMemberDuesModal` لمعالجة كافة مستحقات العضو (الاشتراكات، المتجر، والتدريب الخاص) دفعة واحدة داخل معاملة ذرية تضمن التراجع الكامل عند فشل أي بند.
+  7. **R7 — وضوح رسائل رفض الأقسام ونظام تجاوز المدير بالرمز السري (`department.ts`, `manager-override.service.ts`, `manager-override-modal.tsx`):**
+     - تخصيص رسالة الرفض عند تضارب الأقسام بمعاملات دقيقة `errForbidden("errors.departmentAccessDenied", { memberDept, userDept })` مع ترجمة عربية شارحة تُظهر قسم المشترك وقسم الموظف وإمكانية الاستئذان من المدير.
+     - إنشاء خدمة ونظام التجاوز الإداري `manager-override.service.ts` ونافذة `ManagerOverrideModal` التي تتيح إدخال رمز PIN للمدير المكون من 4 إلى 6 أرقام أو اسم المستخدم وكلمة المرور المشفرة بـ Argon2id لإتمام العملية العاجلة فوراً مع تسجيل تدقيق رسمي `MANAGER_OVERRIDE`.
+  8. **R8 — ترقية قاعدة البيانات v66 وفهارس الذروة ومحرك Node (`migrations.ts`, `package.json`):**
+     - إضافة الهجرة التراكمية `v66` في `src/db/migrations.ts` لإنشاء 5 فهارس مركبة عالية السرعة لحركة وقت الذروة:
+       * `idx_cards_barcode_status` على `cards(barcode_value, status)`.
+       * `idx_subs_member_status_dates` على `member_subscriptions(member_id, status, start_date, end_date)`.
+       * `idx_attendance_member_checkin` على `attendance(member_id, checkin_at DESC)`.
+       * `idx_payments_sub_status` على `payments(subscription_id, status)`.
+       * `idx_cash_sessions_box_opened` على `cash_sessions(box, opened_at DESC)`.
+     - إضافة قيد محرك التشغيل `"engines": { "node": ">=22.5.0" }` في `package.json`.
+  9. **R9 — اختصارات لوحة المفاتيح السريعة لموظفي الاستقبال (`reception-tab.tsx`):**
+     - تفعيل مفاتيح الوظائف السريعة: **F1** (التركيز الفوري على حقل مسح الباركود)، **F2** (فتح نافذة التجديد السريع)، **F3** (إصدار تذكرة يوم واحد)، **F4** (سداد دفعة أو تسوية مديونية)، مع كتمها تلقائياً عند فتح أي نافذة منبثقة.
+- **مقاييس التحقق وضمان الجودة المعتمدة:**
+  - **الاختبارات الآلية الشاملة:** نجاح 1,006 اختباراً من أصل 1,006 عبر 94 ملف اختبار بنسبة 100% خضراء (`npm test`).
+  - **جناح اختبارات الذروة المخصص (`tests/e2e-reception-peak-hours.test.ts`):** 61/61 اختباراً ناجحاً شملت اختبارات المستويات 1 و 2 و 3 و 4 (محاكاة تزاحم 7–10 مساءً).
+  - **اختبارات المنافسة والضغط (`tests/challenger-treasury-concurrency.test.ts` و `tests/reception.adversarial-stress.test.ts`):** 27/27 اختباراً ناجحاً لحصانة التزامن وإغلاق الورديات المتوازي.
+  - **سلامة الأنواع:** اجتياز فحص TypeScript للواجهة والخادم بصفر أخطاء (`npm run typecheck` و `npm run typecheck:server`).
+  - **تطابق التوثيق:** خلو التوثيق من أي فروقات (`npm run sync:docs`: 0 discrepancies).
+  - **الملف التنفيذي:** تجميع وبناء ملف `dist-exe/GymGate.exe` بحجم ~100 ميجابايت بنجاح وجاهز للنشر المباشر.
 
 ### TASK-264: التدقيق الأمني والتحصين الشامل لواجهات RPC ومفاتيح المزامنة وبوابة المشتركين والجلسات (Done)
 - **طلب المالك:**
@@ -2881,13 +2941,13 @@ All commands verified passing on Windows:
 ```bash
 npm run typecheck         # Client TypeScript check (0 errors)
 npm run typecheck:server  # Server TypeScript check (0 errors)
-npm test                  # Vitest suite (621 tests passing across 54 files)
+npm test                  # Vitest suite (1,006 tests passing across 94 files, 100% green)
 npm run build             # Full client (vite) + server (esbuild) build
-npm run build:exe         # Packaged desktop EXE (dist-exe/GymSystem.exe)
+npm run build:exe         # Packaged desktop EXE (dist-exe/GymGate.exe)
 npm run sync:docs         # Value-level documentation auto-sync
 npm run build:fonts       # Regenerate static Cairo PDF fonts (needs Python+fontTools)
 node scripts/pdf-e2e.mjs  # E2E: PDF receipt against the built server bundle
-node scripts/pdf-exe-e2e.mjs # E2E: PDF receipt against the packaged GymSystem.exe
+node scripts/pdf-exe-e2e.mjs # E2E: PDF receipt against the packaged GymGate.exe
 ```
 
 ---
@@ -2900,7 +2960,7 @@ node scripts/pdf-exe-e2e.mjs # E2E: PDF receipt against the packaged GymSystem.e
   - ØªØ­Ø°ÙŠØ± Ù…Ù†Ù‡Ø¬ÙŠ: ÙÙŠ Ù‡Ø°Ù‡ Ø§Ù„Ø¬Ù„Ø³Ø© ÙƒØ§Ù†Øª Ø£Ø¯Ø§Ø© Ø§Ù„Ù‚Ø±Ø§Ø¡Ø© ØªØ¹ÙŠØ¯ Ù…Ø­ØªÙˆÙ‰ **Ù‚Ø¯ÙŠÙ…Ø§Ù‹ ÙˆÙ…Ø¶Ù„Ù„Ø§Ù‹** Ù„Ù…Ù„ÙØ§Øª ÙƒØ§Ù†Øª Ù…Ø¹Ø¯ÙŽÙ‘Ù„Ø© Ø¨Ø§Ù„ÙØ¹Ù„ ÙÙŠ `HEAD`. **Git Ù‡Ùˆ Ø§Ù„Ù…ØµØ¯Ø± Ø§Ù„ÙˆØ­ÙŠØ¯ Ø§Ù„Ù…ÙˆØ«ÙˆÙ‚** Ù„Ù„ØªØ­Ù‚Ù‚ Ù…Ù† Ø­Ø§Ù„Ø© Ø£ÙŠ Ù…Ù„Ù.
 - Ø§Ù„ÙƒØ´Ùƒ Ø§Ù„ØªÙ„Ù‚Ø§Ø¦ÙŠ (TASK-102 + TASK-103) Ù…ÙƒØªÙ…Ù„ ÙˆÙ…Ø³ØªÙ‚Ø±ØŒ ÙˆÙŠØ¹Ù…Ù„ Ù…Ø¹ ÙƒÙ„ Ù…Ù† Ø§Ù„ÙƒØ§Ù…ÙŠØ±Ø§ ÙˆÙ‚Ø§Ø±Ø¦ Ø§Ù„Ø¨Ø§Ø±ÙƒÙˆØ¯ Ø§Ù„ÙÙŠØ²ÙŠØ§Ø¦ÙŠ Ø­ØªÙ‰ Ø¹Ù†Ø¯ Ø¶Ø¨Ø· Windows Ø¹Ù„Ù‰ Ø§Ù„Ù„ØºØ© Ø§Ù„Ø¹Ø±Ø¨ÙŠØ©.
 - Multi-branch synchronization and branch tracking is fully stable.
-- All 621 unit tests pass and the desktop executables are ready.
+- All 1,006 unit & integration tests pass across 94 suites (100% green) and the production desktop executable `dist-exe/GymGate.exe` is ready.
 - If the owner requests new features (e.g. thermal receipt printer integration, specialized barcode printing, or advanced multi-branch financial aggregations), proceed following the conventions in `AGENTS.md`.
 
 

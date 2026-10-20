@@ -469,3 +469,82 @@ export function payMemberDebt(
     };
   });
 }
+
+export interface SettleDuesItemInput {
+  debtType: "subscription" | "store" | "store_debt" | "private_training";
+  debtId: string;
+  amountMinor: number;
+}
+
+export interface SettleMemberDuesBatchInput {
+  memberId: string;
+  items: SettleDuesItemInput[];
+  methodCode: string;
+  referenceNo?: string | null;
+  notes?: string | null;
+}
+
+export interface SettleMemberDuesBatchResult {
+  settledCount: number;
+  totalPaidMinor: number;
+  items: Array<{
+    debtId: string;
+    debtType: string;
+    paidMinor: number;
+    remainingMinor: number;
+  }>;
+}
+
+export function settleMemberDuesBatch(
+  db: Db,
+  actor: ServiceActor,
+  input: SettleMemberDuesBatchInput,
+): SettleMemberDuesBatchResult {
+  requirePermission(actor, "debts.manage");
+
+  if (!input.memberId) throw errNotFound("errors.memberNotFound");
+  if (!input.methodCode) throw errValidation("errors.quickSession.methodRequired");
+  if (!input.items || input.items.length === 0) throw errValidation("errors.debt.amountInvalid");
+
+  const member = db.first<{ id: string; department: string | null }>(
+    "SELECT id, department FROM members WHERE id = ?",
+    [input.memberId],
+  );
+  if (!member) throw errNotFound("errors.memberNotFound");
+  assertDepartmentAccess(actor, member.department);
+
+  return db.transaction(() => {
+    let totalPaidMinor = 0;
+    const settledItems: Array<{ debtId: string; debtType: string; paidMinor: number; remainingMinor: number }> = [];
+
+    for (const item of input.items) {
+      if (item.amountMinor <= 0) continue;
+      const normalizedType = item.debtType === "store_debt" ? "store" : item.debtType;
+      const res = payMemberDebt(db, actor, {
+        debtType: normalizedType,
+        debtId: item.debtId,
+        amountMinor: item.amountMinor,
+        methodCode: input.methodCode,
+        notes: input.notes?.trim() || undefined,
+      });
+
+      totalPaidMinor += item.amountMinor;
+      settledItems.push({
+        debtId: item.debtId,
+        debtType: normalizedType,
+        paidMinor: res.paidMinor,
+        remainingMinor: res.remainingMinor,
+      });
+    }
+
+    if (settledItems.length === 0) {
+      throw errValidation("errors.debt.amountInvalid");
+    }
+
+    return {
+      settledCount: settledItems.length,
+      totalPaidMinor,
+      items: settledItems,
+    };
+  });
+}

@@ -100,6 +100,13 @@ export function attachGlobalBarcodeScanner(
   let lastKeyTime = 0;
   let firstKeyTime = 0;
 
+  const BURST_INTERVAL_MS = 50;
+  let burstBuffer = "";
+  let burstRaw = "";
+  let lastBurstKeyTime = 0;
+  let burstIntervals: number[] = [];
+  let burstTarget: HTMLElement | null = null;
+
   const isTypingTarget = (target: EventTarget | null): boolean => {
     if (!(target instanceof HTMLElement)) return false;
     // Allow elements with data-scanner-input="true" to participate in global scan capture
@@ -114,34 +121,127 @@ export function attachGlobalBarcodeScanner(
   };
 
   const onKeyDown = (event: KeyboardEvent) => {
-    if (isTypingTarget(event.target)) {
+    const now = performance.now();
+    const isEnter = event.key === "Enter" || event.code === "Enter" || event.code === "NumpadEnter";
+
+    if (isEnter) {
+      const enterInterval = lastBurstKeyTime > 0 ? now - lastBurstKeyTime : 999;
+      const isBurst =
+        !event.repeat &&
+        burstBuffer.length >= minLength &&
+        burstIntervals.length >= 2 &&
+        burstIntervals.every((int) => int < BURST_INTERVAL_MS) &&
+        enterInterval < 120;
+
+      if (isBurst) {
+        event.preventDefault();
+        event.stopPropagation();
+
+        // Clean up leaked characters from ordinary typing inputs
+        if (
+          burstTarget &&
+          (burstTarget instanceof HTMLInputElement || burstTarget instanceof HTMLTextAreaElement)
+        ) {
+          if (burstTarget.dataset.scannerInput !== "true") {
+            const val = burstTarget.value;
+            let matchedLen = 0;
+            if (burstRaw && val.endsWith(burstRaw)) {
+              matchedLen = burstRaw.length;
+            } else if (burstBuffer && val.endsWith(burstBuffer)) {
+              matchedLen = burstBuffer.length;
+            } else {
+              for (let len = Math.min(val.length, Math.max(burstRaw.length, burstBuffer.length)); len > 0; len--) {
+                const tail = val.slice(-len);
+                if ((burstRaw && burstRaw.includes(tail)) || (burstBuffer && burstBuffer.includes(tail))) {
+                  matchedLen = len;
+                  break;
+                }
+              }
+            }
+            if (matchedLen > 0) {
+              burstTarget.value = val.slice(0, val.length - matchedLen);
+              burstTarget.dispatchEvent(new Event("input", { bubbles: true }));
+            }
+          }
+        }
+
+        const candidate = stripAffixes(burstBuffer, prefix, suffix);
+        burstBuffer = "";
+        burstRaw = "";
+        burstIntervals = [];
+        lastBurstKeyTime = 0;
+        burstTarget = null;
+        buffer = "";
+
+        if (candidate.length >= minLength) {
+          handler(normalizeBarcodeString(candidate));
+        }
+        return;
+      }
+
+      // If not a hardware burst, handle regular scan if target is not a typing element
+      if (!isTypingTarget(event.target)) {
+        const candidate = buffer;
+        buffer = "";
+        burstBuffer = "";
+        burstRaw = "";
+        burstIntervals = [];
+        lastBurstKeyTime = 0;
+        burstTarget = null;
+        const cleaned = stripAffixes(candidate, prefix, suffix);
+        if (cleaned.length >= minLength) {
+          event.preventDefault();
+          handler(normalizeBarcodeString(cleaned));
+        }
+        return;
+      }
+
+      burstBuffer = "";
+      burstRaw = "";
+      burstIntervals = [];
+      lastBurstKeyTime = 0;
+      burstTarget = null;
       buffer = "";
       return;
     }
-    if (event.key === "Enter" || event.code === "Enter" || event.code === "NumpadEnter") {
-      const candidate = buffer;
+
+    if (event.repeat) {
+      burstBuffer = "";
+      burstRaw = "";
+      burstIntervals = [];
+      lastBurstKeyTime = 0;
+      burstTarget = null;
       buffer = "";
-      const cleaned = stripAffixes(candidate, prefix, suffix);
-      if (cleaned.length >= minLength) {
-        event.preventDefault();
-        handler(normalizeBarcodeString(cleaned));
-      }
       return;
     }
 
     const char = resolveScannerChar(event);
     if (char) {
-      const now = performance.now();
-      if (now - lastKeyTime > maxKeyIntervalMs) {
-        buffer = "";
-        firstKeyTime = now;
-      } else if (now - firstKeyTime > scanTimeoutMs) {
-        buffer = "";
-        firstKeyTime = now;
+      const interval = lastBurstKeyTime > 0 ? now - lastBurstKeyTime : 999;
+      if (lastBurstKeyTime > 0 && interval < BURST_INTERVAL_MS) {
+        burstBuffer += char;
+        burstRaw += event.key;
+        burstIntervals.push(interval);
+        lastBurstKeyTime = now;
+      } else {
+        burstBuffer = char;
+        burstRaw = event.key;
+        burstIntervals = [];
+        lastBurstKeyTime = now;
+        burstTarget = event.target instanceof HTMLElement ? event.target : null;
       }
-      lastKeyTime = now;
-      buffer += char;
-      if (buffer.length > 128) buffer = buffer.slice(-128);
+
+      if (!isTypingTarget(event.target)) {
+        if (now - lastKeyTime > maxKeyIntervalMs || now - firstKeyTime > scanTimeoutMs) {
+          buffer = "";
+          firstKeyTime = now;
+        }
+        lastKeyTime = now;
+        buffer += char;
+        if (buffer.length > 128) buffer = buffer.slice(-128);
+      } else {
+        buffer = "";
+      }
     } else if (
       event.key !== "Shift" &&
       event.key !== "Alt" &&
@@ -149,6 +249,11 @@ export function attachGlobalBarcodeScanner(
       event.key !== "CapsLock"
     ) {
       buffer = "";
+      burstBuffer = "";
+      burstRaw = "";
+      burstIntervals = [];
+      lastBurstKeyTime = 0;
+      burstTarget = null;
     }
   };
 

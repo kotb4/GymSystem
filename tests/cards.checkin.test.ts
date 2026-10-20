@@ -254,6 +254,46 @@ it("surfaces outstanding money at check-in", async () => {
     expect(third.kind).toBe("duplicate");
   });
 
+  it("denies check-in for frozen subscriptions without auto-unfreezing", async () => {
+    const member = await activeMemberWithSub("مجمد-دخول");
+    const sub = db.first<{ id: string; end_date: string }>(
+      "SELECT id, end_date FROM member_subscriptions WHERE member_id = ?",
+      [member.id],
+    )!;
+    const { freezeSubscription } = await import("@/core/services/subscriptions.service");
+    await freezeSubscription(db, owner, sub.id, { endDate: sub.end_date, reason: "سفر" });
+    await assignCardByBarcode(db, reception, { barcodeValue: "GYM-FRZ-01", memberId: member.id });
+
+    const result = await recordCheckIn(db, reception, { barcode: "GYM-FRZ-01" });
+    expect(result).toMatchObject({
+      kind: "denied",
+      reason: "FROZEN",
+      memberId: member.id,
+    });
+
+    const subAfter = db.first<{ status: string }>(
+      "SELECT status FROM member_subscriptions WHERE id = ?",
+      [sub.id],
+    )!;
+    expect(subAfter.status).toBe("suspended");
+  });
+
+  it("flags duplicate scans for trial members within duplicate window", async () => {
+    const { createTrial } = await import("@/core/services/trials.service");
+    const member = await createMember(db, owner, { fullName: "تجربة-مكرر" });
+    await createTrial(db, owner, {
+      trialType: "day_1",
+      memberId: member.id,
+    });
+    await assignCardByBarcode(db, reception, { barcodeValue: "GYM-TRL-01", memberId: member.id });
+
+    const first = await recordCheckIn(db, reception, { barcode: "GYM-TRL-01" });
+    expect(first.kind).toBe("success");
+
+    const second = await recordCheckIn(db, reception, { barcode: "GYM-TRL-01" });
+    expect(second.kind).toBe("duplicate");
+  });
+
   it("double scanning a session-plan member within the window consumes only ONE session", async () => {
     const member = await createMember(db, owner, { fullName: "حصص-مكرر" });
     const plan = await createPlan(db, owner, {
@@ -413,6 +453,84 @@ it("surfaces outstanding money at check-in", async () => {
     const barcodes = list.items.map((i) => i.barcodeValue);
     expect(barcodes).toContain("GYM-LST-001");
     expect(barcodes).toContain("GYM-BLK-001");
+  });
+});
+
+describe("barcode hardware scanner burst detection", () => {
+  it("normalizes Arabic keyboard layout scan codes to standard English", async () => {
+    const { normalizeBarcodeString } = await import("@/core/barcode/barcode-input");
+    expect(normalizeBarcodeString("لا1-ةثة-000001")).toBe("B1-MEM-000001");
+  });
+
+  it("detects rapid keystrokes burst (<50ms) ending in Enter even inside typing target", async () => {
+    const { attachGlobalBarcodeScanner } = await import("@/core/barcode/barcode-input");
+    const scanned: string[] = [];
+    const listeners: Record<string, ((e: any) => void)[]> = {};
+    const mockWindow = {
+      addEventListener: (type: string, fn: any) => {
+        listeners[type] = listeners[type] || [];
+        listeners[type].push(fn);
+      },
+      removeEventListener: (type: string, fn: any) => {
+        listeners[type] = (listeners[type] || []).filter((f) => f !== fn);
+      },
+    };
+    (globalThis as any).window = mockWindow;
+
+    // Mock HTMLInputElement typing target
+    class MockInputElement {
+      tagName = "INPUT";
+      dataset: Record<string, string> = {};
+      value = "ExistingText";
+      dispatched: any[] = [];
+      dispatchEvent(e: any) {
+        this.dispatched.push(e);
+        return true;
+      }
+    }
+    (globalThis as any).HTMLInputElement = MockInputElement;
+    (globalThis as any).HTMLElement = MockInputElement;
+
+    const detach = attachGlobalBarcodeScanner((code) => {
+      scanned.push(code);
+    }, { minLength: 4 });
+
+    const inputElement = new MockInputElement();
+
+    const fireKey = (key: string, code: string, target: any) => {
+      let prevented = false;
+      let stopped = false;
+      const evt = {
+        key,
+        code,
+        target,
+        repeat: false,
+        preventDefault: () => { prevented = true; },
+        stopPropagation: () => { stopped = true; },
+      };
+      for (const listener of listeners["keydown"] || []) {
+        listener(evt);
+      }
+      return { prevented, stopped };
+    };
+
+    // Simulate hardware scanner sending "MEM1" with rapid intervals into input element
+    inputElement.value += "M";
+    fireKey("M", "KeyM", inputElement);
+    inputElement.value += "E";
+    fireKey("E", "KeyE", inputElement);
+    inputElement.value += "M";
+    fireKey("M", "KeyM", inputElement);
+    inputElement.value += "1";
+    fireKey("1", "Digit1", inputElement);
+
+    const enterRes = fireKey("Enter", "Enter", inputElement);
+    expect(enterRes.prevented).toBe(true);
+    expect(scanned).toContain("MEM1");
+    // Leaked characters from burst must be cleared from the input value
+    expect(inputElement.value).toBe("ExistingText");
+
+    detach();
   });
 });
 

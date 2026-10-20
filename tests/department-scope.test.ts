@@ -75,7 +75,11 @@ describe("department scoping beyond members service (audit F-04 / ADR-004)", () 
         const plan = await createPlan(db, owner, { name: "مشترك", durationDays: 7, price: 100 });
         return cs(db, menReception, { memberId: women.id, planId: plan.id });
       })(),
-    ).rejects.toMatchObject({ code: "FORBIDDEN" });
+    ).rejects.toMatchObject({
+      code: "FORBIDDEN",
+      messageKey: "errors.departmentAccessDenied",
+      params: { memberDept: "women", userDept: "men" },
+    });
 
     await expect(
       recordPayment(db, menReception, {
@@ -84,13 +88,25 @@ describe("department scoping beyond members service (audit F-04 / ADR-004)", () 
         paidAmountMinor: 10_000,
         methodCode: "cash",
       }),
-    ).rejects.toMatchObject({ code: "FORBIDDEN" });
+    ).rejects.toMatchObject({
+      code: "FORBIDDEN",
+      messageKey: "errors.departmentAccessDenied",
+      params: { memberDept: "women", userDept: "men" },
+    });
 
     expect(() => listMemberSubscriptions(db, menReception, women.id)).toThrow(
-      expect.objectContaining({ code: "FORBIDDEN" }),
+      expect.objectContaining({
+        code: "FORBIDDEN",
+        messageKey: "errors.departmentAccessDenied",
+        params: { memberDept: "women", userDept: "men" },
+      }),
     );
     expect(() => getMemberStoreDebtTotal(db, menReception, women.id)).toThrow(
-      expect.objectContaining({ code: "FORBIDDEN" }),
+      expect.objectContaining({
+        code: "FORBIDDEN",
+        messageKey: "errors.departmentAccessDenied",
+        params: { memberDept: "women", userDept: "men" },
+      }),
     );
     expect(() => listAssessments(db, menReception, women.id)).toThrow(
       expect.objectContaining({ code: "FORBIDDEN" }),

@@ -2442,6 +2442,29 @@ CREATE INDEX IF NOT EXISTS idx_backups_created ON backups_log(created_at);`,
         }
       },
     },
+    {
+      version: 66,
+      statements: [],
+      callback: (db: Db) => {
+        const tableExists = (table: string) =>
+          db.count("SELECT COUNT(*) FROM sqlite_master WHERE type = 'table' AND name = ?", [table]) > 0;
+        if (tableExists("cards")) {
+          db.exec("CREATE INDEX IF NOT EXISTS idx_cards_barcode_status ON cards(barcode_value, status)");
+        }
+        if (tableExists("member_subscriptions")) {
+          db.exec("CREATE INDEX IF NOT EXISTS idx_subs_member_status_dates ON member_subscriptions(member_id, status, start_date, end_date)");
+        }
+        if (tableExists("attendance")) {
+          db.exec("CREATE INDEX IF NOT EXISTS idx_attendance_member_checkin ON attendance(member_id, checkin_at DESC)");
+        }
+        if (tableExists("payments")) {
+          db.exec("CREATE INDEX IF NOT EXISTS idx_payments_sub_status ON payments(subscription_id, status)");
+        }
+        if (tableExists("cash_sessions")) {
+          db.exec("CREATE INDEX IF NOT EXISTS idx_cash_sessions_box_opened ON cash_sessions(box, opened_at DESC)");
+        }
+      },
+    },
   ];
 }
 

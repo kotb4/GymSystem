@@ -224,25 +224,33 @@ export function SettleMemberDuesModal({
     setError(null);
 
     try {
-      for (const p of validPayments) {
-        if (p.type === "subscription") {
-          await api.payments.record({
-            memberId: member.id,
-            subscriptionId: p.id,
-            baseAmountMinor: p.remainingMinor,
-            paidAmountMinor: p.amountMinor,
-            methodCode,
-            referenceNo: referenceNo || null,
-            notes: notes ? `${notes} (تسديد مديونية)` : null,
-          });
-        } else if (p.type === "store_debt") {
-          await api.store.repayDebt({
-            debtId: p.id,
-            amountMinor: p.amountMinor,
-            methodCode,
-          });
-        }
-      }
+      const itemsToSettle = validPayments.map((p) => ({
+        debtType: p.type === "store_debt" ? ("store" as const) : ("subscription" as const),
+        debtId: p.id,
+        amountMinor: p.amountMinor,
+      }));
+
+      const debtsApi = api.debts as typeof api.debts & {
+        settleBatch: (input: {
+          memberId: string;
+          items: Array<{
+            debtType: "subscription" | "store" | "private_training";
+            debtId: string;
+            amountMinor: number;
+          }>;
+          methodCode: string;
+          referenceNo?: string | null;
+          notes?: string | null;
+        }) => Promise<unknown>;
+      };
+
+      await debtsApi.settleBatch({
+        memberId: member.id,
+        items: itemsToSettle,
+        methodCode,
+        referenceNo: referenceNo || null,
+        notes: notes ? `${notes} (تسديد مديونية)` : null,
+      });
 
       toast("success", t("pay.settleSuccessToast"));
       onSaved();

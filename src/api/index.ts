@@ -80,6 +80,35 @@ import type {
 import type { QuickSessionInput, QuickSessionRow } from "@/core/services/quick-session.service";
 import type { UnifiedDebtItem } from "@/core/services/debts.service";
 import type {
+  ManagerOverrideInput,
+  ManagerOverrideResult,
+} from "@/core/services/manager-override.service";
+
+export interface SettleDuesItemInput {
+  debtType: "subscription" | "store" | "store_debt" | "private_training";
+  debtId: string;
+  amountMinor: number;
+}
+
+export interface SettleMemberDuesBatchInput {
+  memberId: string;
+  items: SettleDuesItemInput[];
+  methodCode: string;
+  referenceNo?: string | null;
+  notes?: string | null;
+}
+
+export interface SettleMemberDuesBatchResult {
+  settledCount: number;
+  totalPaidMinor: number;
+  items: Array<{
+    debtId: string;
+    debtType: string;
+    paidMinor: number;
+    remainingMinor: number;
+  }>;
+}
+import type {
   SupplierInput,
   SupplierRow,
   PurchaseInvoiceInput,
@@ -1878,6 +1907,8 @@ export const api = {
       rpc<{ items: UnifiedDebtItem[]; total: number; totalDebtMinor: number }>("debts", "list", [filter]),
     pay: (input: { debtType: "subscription" | "store" | "private_training"; debtId: string; amountMinor: number; methodCode: string; notes?: string }) =>
       rpc<{ success: boolean; paidMinor: number; remainingMinor: number }>("debts", "pay", [input]),
+    settleBatch: (input: SettleMemberDuesBatchInput) =>
+      rpc<SettleMemberDuesBatchResult>("debts", "settleBatch", [input]),
   },
   purchases: {
     createSupplier: (input: SupplierInput) =>
@@ -1975,6 +2006,14 @@ export const api = {
       rpc<void>("beltGradings", "deleteGrading", [gradingId]),
     buildParentMessage: (data: { memberName: string; className: string; date?: string; time?: string; sessionsRemaining: number | null; gymName?: string }) =>
       rpc<string>("beltGradings", "buildParentAttendanceMessage", [data]),
+  },
+  managerOverride: {
+    verify: (input: ManagerOverrideInput) =>
+      rpc<ManagerOverrideResult>("managerOverride", "verify", [input]),
+    setPin: (pin: string) =>
+      rpc<void>("managerOverride", "setPin", [pin]),
+    hasPin: () =>
+      rpc<boolean>("managerOverride", "hasPin", []),
   },
 };
 
@@ -2333,5 +2372,11 @@ export type {
 export type {
   LiveOccupant,
 } from "@/core/services/attendance.service";
+
+export type {
+  ManagerOverrideInput,
+  ManagerOverrideResult,
+} from "@/core/services/manager-override.service";
+
 
 

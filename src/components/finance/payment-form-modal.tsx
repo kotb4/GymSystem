@@ -81,15 +81,20 @@ export function PaymentFormModal({ open, onClose, onSaved, presetMember }: Payme
           priceMinor: Math.round((s as { price: number }).price * 100),
           effective: (s as { effectiveStatus?: string }).effectiveStatus ?? "",
         }));
+        const balanceResults = await Promise.all(
+          mapped.map(async (item) => {
+            try {
+              const bal = await api.payments.subscriptionBalance(item.id);
+              return { id: item.id, remainingMinor: bal.remainingMinor };
+            } catch {
+              return { id: item.id, remainingMinor: item.remainingMinor };
+            }
+          }),
+        );
+        if (!alive) return;
+        const balMap = new Map(balanceResults.map((r) => [r.id, r.remainingMinor]));
         for (const item of mapped) {
-          if (!alive) return;
-          try {
-            item.remainingMinor = (await api.payments.subscriptionBalance(item.id)).remainingMinor;
-          } catch {
-            if (!alive) return;
-            setSubs([]);
-            return;
-          }
+          item.remainingMinor = balMap.get(item.id) ?? item.remainingMinor;
         }
         if (alive) {
           setSubs(mapped);
@@ -155,7 +160,7 @@ export function PaymentFormModal({ open, onClose, onSaved, presetMember }: Payme
 
   const onSubmit = async (e?: FormEvent, sendWhatsApp = false) => {
     if (e) e.preventDefault();
-    if (!actor || !selected) return;
+    if (!actor || !selected || submitting) return;
     setSubmitting(true);
     setError(null);
     try {

@@ -23,7 +23,9 @@ import {
   Clock,
   MonitorPlay,
   Zap,
+  Snowflake,
 } from "lucide-react";
+import { FrozenDecisionModal } from "./frozen-decision-modal";
 import { ReceptionKioskPanel } from "./reception-kiosk-panel";
 import { QuickDayPassModal } from "./quick-day-pass-modal";
 import { LiveOccupantsPanel } from "./live-occupants-panel";
@@ -150,6 +152,80 @@ export function ReceptionTab() {
   const [photoSaving, setPhotoSaving] = useState(false);
   const [previewPhotoUrl, setPreviewPhotoUrl] = useState<string | null>(null);
 
+  const [frozenModalData, setFrozenModalData] = useState<{
+    member: { id: string; fullName: string; memberCode: string; photoFileId?: string | null };
+    subscription: { id: string; planName: string | null; endDate: string; startDate?: string };
+    freeze: { startDate: string; durationDays?: number; notes?: string | null };
+  } | null>(null);
+  const [frozenModalOpen, setFrozenModalOpen] = useState(false);
+
+  const SCAN_COOLDOWN_MS = 3000;
+  const lastScannedCodeRef = useRef<string | null>(null);
+  const lastScanTimeRef = useRef<number>(0);
+
+  const isAnyModalOpen = Boolean(
+    subModalOpen ||
+    payModalOpen ||
+    qrModalOpen ||
+    cameraOpen ||
+    barcodeScannerOpen ||
+    whatsAppOpen ||
+    dayPassOpen ||
+    memberFormOpen ||
+    previewPhotoUrl ||
+    confirmDeleteRecentRow ||
+    frozenModalOpen
+  );
+
+  const prevModalOpenRef = useRef(false);
+  useEffect(() => {
+    if (prevModalOpenRef.current && !isAnyModalOpen) {
+      const timer = window.setTimeout(() => {
+        if (!kioskMode) {
+          inputRef.current?.focus();
+        }
+      }, 60);
+      return () => window.clearTimeout(timer);
+    }
+    prevModalOpenRef.current = isAnyModalOpen;
+  }, [isAnyModalOpen, kioskMode]);
+
+  useEffect(() => {
+    const onKeyDown = (e: KeyboardEvent) => {
+      if (e.key === "F1") {
+        e.preventDefault();
+        if (!isAnyModalOpen) {
+          inputRef.current?.focus();
+          inputRef.current?.select();
+        }
+        return;
+      }
+
+      if (isAnyModalOpen) return;
+
+      if (e.key === "F2") {
+        e.preventDefault();
+        if (selected?.member) {
+          setSubModalOpen(true);
+        } else {
+          toast("info", "يرجى تحديد أو مسح عضو أولاً لتجديد الاشتراك");
+        }
+      } else if (e.key === "F3") {
+        e.preventDefault();
+        setDayPassOpen(true);
+      } else if (e.key === "F4") {
+        e.preventDefault();
+        if (selected?.member) {
+          setPayModalOpen(true);
+        } else {
+          toast("info", "يرجى تحديد أو مسح عضو أولاً لتسجيل دفعة أو تسوية مستحقات");
+        }
+      }
+    };
+    window.addEventListener("keydown", onKeyDown);
+    return () => window.removeEventListener("keydown", onKeyDown);
+  }, [isAnyModalOpen, selected, toast]);
+
   const handleCapturePhoto = async (file: File) => {
     if (!selected?.member || !actor) return;
     setPhotoSaving(true);
@@ -246,6 +322,36 @@ export function ReceptionTab() {
         const lookup = await api.reception.lookup(input);
         setSelected(lookup);
         if (lookup.member && !input.memberId) setTerm(lookup.member.memberCode);
+
+        // If subscription is frozen, automatically load frozen details and trigger FrozenDecisionModal
+        if (lookup.member && lookup.eligibility?.reason === "FROZEN") {
+          try {
+            const subs = await api.subscriptions.listForMember(lookup.member.id);
+            const frozenSub = subs.find((s) => s.status === "suspended");
+            if (frozenSub) {
+              const freezes = await api.subscriptions.freezes(frozenSub.id);
+              const openFreeze = freezes.find((f) => f.actualResumeDate === null) ?? freezes[0];
+              const today = todayKey();
+              setFrozenModalData({
+                member: lookup.member,
+                subscription: {
+                  id: frozenSub.id,
+                  planName: frozenSub.planName,
+                  endDate: frozenSub.endDate,
+                  startDate: frozenSub.startDate,
+                },
+                freeze: {
+                  startDate: openFreeze?.startDate ?? today,
+                  durationDays: openFreeze?.durationDays,
+                  notes: openFreeze?.notes,
+                },
+              });
+              setFrozenModalOpen(true);
+            }
+          } catch {
+            // ignore loading error for modal; StatusPanel still displays frozen state
+          }
+        }
       } catch (err) {
         setErrorText(describeError(err, t));
       } finally {
@@ -258,13 +364,20 @@ export function ReceptionTab() {
   );
 
   useConfiguredScanner((barcode) => {
-    if (barcode.trim() !== "") {
-      if (kioskMode) {
-        setExternalKioskBarcode(barcode.trim());
-      } else {
-        setTerm(barcode);
-        void applyLookup({ barcode });
-      }
+    const clean = barcode.trim();
+    if (clean === "") return;
+    const now = Date.now();
+    if (lastScannedCodeRef.current === clean && now - lastScanTimeRef.current < SCAN_COOLDOWN_MS) {
+      return;
+    }
+    lastScannedCodeRef.current = clean;
+    lastScanTimeRef.current = now;
+
+    if (kioskMode) {
+      setExternalKioskBarcode(clean);
+    } else {
+      setTerm(clean);
+      void applyLookup({ barcode: clean });
     }
   });
 
@@ -305,10 +418,16 @@ export function ReceptionTab() {
   };
 
   const handleCameraScan = (barcode: string) => {
-    if (barcode.trim() !== "") {
-      setTerm(barcode.trim());
-      void applyLookup({ barcode: barcode.trim() });
+    const clean = barcode.trim();
+    if (clean === "") return;
+    const now = Date.now();
+    if (lastScannedCodeRef.current === clean && now - lastScanTimeRef.current < SCAN_COOLDOWN_MS) {
+      return;
     }
+    lastScannedCodeRef.current = clean;
+    lastScanTimeRef.current = now;
+    setTerm(clean);
+    void applyLookup({ barcode: clean });
   };
 
   const onSubmit = (e: React.FormEvent) => {
@@ -316,6 +435,12 @@ export function ReceptionTab() {
     const value = term.trim();
     if (value === "") return;
     if (selected?.member && value === selected.member.memberCode) return;
+    const now = Date.now();
+    if (lastScannedCodeRef.current === value && now - lastScanTimeRef.current < SCAN_COOLDOWN_MS) {
+      return;
+    }
+    lastScannedCodeRef.current = value;
+    lastScanTimeRef.current = now;
     void applyLookup({ barcode: value });
   };
 
@@ -334,6 +459,8 @@ export function ReceptionTab() {
     setSubModalOpen(false);
     setPayModalOpen(false);
     setQrModalOpen(false);
+    setFrozenModalOpen(false);
+    setFrozenModalData(null);
     inputRef.current?.focus();
   };
 
@@ -631,6 +758,7 @@ export function ReceptionTab() {
                       icon={<Search className="size-4" />}
                       disabled={looking}
                       autoFocus
+                      data-scanner-input="true"
                     />
                   </div>
                   <Button
@@ -702,6 +830,35 @@ export function ReceptionTab() {
             onPayDebt={() => setPayModalOpen(true)}
             onTakePhoto={() => setCameraOpen(true)}
             onPreviewPhoto={(url) => setPreviewPhotoUrl(url)}
+            onOpenFrozenModal={async () => {
+              if (!selected.member) return;
+              try {
+                const subs = await api.subscriptions.listForMember(selected.member.id);
+                const frozenSub = subs.find((s) => s.status === "suspended");
+                if (frozenSub) {
+                  const freezes = await api.subscriptions.freezes(frozenSub.id);
+                  const openFreeze = freezes.find((f) => f.actualResumeDate === null) ?? freezes[0];
+                  const today = todayKey();
+                  setFrozenModalData({
+                    member: selected.member,
+                    subscription: {
+                      id: frozenSub.id,
+                      planName: frozenSub.planName,
+                      endDate: frozenSub.endDate,
+                      startDate: frozenSub.startDate,
+                    },
+                    freeze: {
+                      startDate: openFreeze?.startDate ?? today,
+                      durationDays: openFreeze?.durationDays,
+                      notes: openFreeze?.notes,
+                    },
+                  });
+                  setFrozenModalOpen(true);
+                }
+              } catch {
+                // ignore
+              }
+            }}
             onAttendanceChanged={() => {
               setTick((p) => p + 1);
               if (selected.member) void applyLookup({ memberId: selected.member.id });
@@ -978,6 +1135,23 @@ export function ReceptionTab() {
           </div>
         </Modal>
       )}
+
+      {frozenModalOpen && frozenModalData && (
+        <FrozenDecisionModal
+          open={frozenModalOpen}
+          onClose={() => setFrozenModalOpen(false)}
+          member={frozenModalData.member}
+          subscription={frozenModalData.subscription}
+          freeze={frozenModalData.freeze}
+          onSuccess={(result) => {
+            setSubmitted(result);
+            setTick((p) => p + 1);
+            if (frozenModalData.member) {
+              void applyLookup({ memberId: frozenModalData.member.id });
+            }
+          }}
+        />
+      )}
     </div>
     </div>
   );
@@ -1039,6 +1213,7 @@ function StatusPanel({
   onPayDebt,
   onTakePhoto,
   onPreviewPhoto,
+  onOpenFrozenModal,
   onAttendanceChanged,
 }: {
   lookup: ReceptionLookup;
@@ -1052,6 +1227,7 @@ function StatusPanel({
   onPayDebt: () => void;
   onTakePhoto: () => void;
   onPreviewPhoto: (url: string) => void;
+  onOpenFrozenModal?: () => void;
   onAttendanceChanged?: () => void;
 }) {
   const t = useT();
@@ -1378,10 +1554,22 @@ function StatusPanel({
               ? t(`reception.reasons.${elig.reason}`)
               : t("reception.statusInvalid")}
         </p>
-        <Button size="lg" onClick={onCheckIn} loading={checking} disabled={checking || !valid}>
-          {!checking && <CheckCircle2 className="size-4" />}
-          {t("reception.checkin")}
-        </Button>
+        {elig?.reason === "FROZEN" && onOpenFrozenModal ? (
+          <Button
+            size="lg"
+            variant="primary"
+            onClick={onOpenFrozenModal}
+            className="border-cyan-400 bg-cyan-600/30 text-cyan-200 hover:bg-cyan-600/50 font-bold gap-2"
+          >
+            <Snowflake className="size-4" />
+            <span>فك التجميد وتسجيل الحضور (Enter)</span>
+          </Button>
+        ) : (
+          <Button size="lg" onClick={onCheckIn} loading={checking} disabled={checking || !valid}>
+            {!checking && <CheckCircle2 className="size-4" />}
+            {t("reception.checkin")}
+          </Button>
+        )}
       </div>
     </div>
   );

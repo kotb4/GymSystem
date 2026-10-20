@@ -186,6 +186,8 @@ describe("package CRUD + validation", () => {
     updateSetting(db, owner, "checkin_duplicate_window_seconds", "0");
     const ok1 = await recordCheckIn(db, owner, { barcode: card.barcodeValue });
     expect(ok1.kind).toBe("success");
+    // Advance previous check-in timestamp to simulate separate check-in interval and avoid duplicate protection
+    db.run("UPDATE attendance SET checkin_at = datetime(checkin_at, '-5 minutes') WHERE member_id = ?", [member.id]);
     const ok2 = await recordCheckIn(db, owner, { barcode: card.barcodeValue });
     expect(ok2.kind).toBe("success");
     expect(ok2).toMatchObject({ sessionsRemaining: null });
@@ -325,8 +327,12 @@ describe("package subscription snapshot + check-in", () => {
 
     const ok1 = await recordCheckIn(db, owner, { barcode: card.barcodeValue });
     expect(ok1.kind).toBe("success");
+    // Advance previous check-in timestamp to simulate separate check-in interval and avoid duplicate protection
+    db.run("UPDATE attendance SET checkin_at = datetime(checkin_at, '-5 minutes') WHERE member_id = ?", [member.id]);
     const ok2 = await recordCheckIn(db, owner, { barcode: card.barcodeValue });
     expect(ok2.kind).toBe("success");
+    // Advance previous check-in timestamp again before third check-in
+    db.run("UPDATE attendance SET checkin_at = datetime(checkin_at, '-5 minutes') WHERE member_id = ?", [member.id]);
     const denied = await recordCheckIn(db, owner, { barcode: card.barcodeValue });
     expect(denied).toMatchObject({ kind: "denied", reason: "NO_SESSIONS_LEFT" });
   });
