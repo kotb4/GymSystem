@@ -32,6 +32,7 @@ export const SETTING_KEYS = {
   inactiveDays: "inactive_days",
   checkoutEnabled: "attendance_checkout_enabled",
   occupancyDurationMinutes: "attendance_occupancy_duration_minutes",
+  autoCheckoutOverdue: "attendance_auto_checkout_overdue",
   freezeExtendsExpiry: "freeze_extends_expiry",
   whatsappEnabled: "whatsapp_enabled",
   whatsappApiUrl: "whatsapp_api_url",
@@ -263,6 +264,12 @@ const SPECS: Record<string, KeySpec> = {
     },
   },
   [SETTING_KEYS.occupancyDurationMinutes]: { validate: (v) => String(intInRange(v, 15, 720)) },
+  [SETTING_KEYS.autoCheckoutOverdue]: {
+    validate: (v) => {
+      if (v !== "1" && v !== "0") throw errValidation("errors.settingBoolInvalid");
+      return v;
+    },
+  },
   [SETTING_KEYS.freezeExtendsExpiry]: {
     validate: (v) => {
       if (v !== "1" && v !== "0") throw errValidation("errors.settingBoolInvalid");
@@ -638,6 +645,10 @@ export function isCheckoutEnabled(db: Db): boolean {
 
 export function getOccupancyDurationMinutes(db: Db): number {
   return toInt(readSetting(db, SETTING_KEYS.occupancyDurationMinutes), 120, 15, 720);
+}
+
+export function isAutoCheckoutOverdueEnabled(db: Db): boolean {
+  return toBool(readSetting(db, SETTING_KEYS.autoCheckoutOverdue), false);
 }
 
 export function freezeExtendsExpiry(db: Db): boolean {

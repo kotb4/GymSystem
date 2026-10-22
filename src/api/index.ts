@@ -154,6 +154,9 @@ import type {
   FinanceOverview,
   LedgerEntry,
   LedgerListQuery,
+  PaymentMethodsQuery,
+  PaymentMethodSummaryItem,
+  PaymentMethodsBreakdownResult,
 } from "@/core/services/finance.service";
 import type { PeriodReport, PeriodReportQuery } from "@/core/services/financial-report.service";
 import type { StaffActivityReport } from "@/core/services/staff-activity.service";
@@ -451,6 +454,8 @@ const cashApi = {
     rpc<CashierPerformanceItem[]>("cash", "getCashierPerformanceSummary", [range]),
   withdrawByOwner: (input: { amountMinor: number; note?: string | null; box?: "gym" | "store" }) =>
     rpc<{ expenseId: string; amountMinor: number; expectedRemainingMinor: number }>("cash", "withdrawByOwner", [input]),
+  depositToDrawer: (input: { amountMinor: number; note?: string | null; box?: "gym" | "store" }) =>
+    rpc<{ depositId: string; amountMinor: number; expectedNewMinor: number }>("cash", "depositToDrawer", [input]),
   resolveGap: (input: { sessionId: string; note: string; categoryId?: string }) =>
     rpc<{ session: CashSession; expenseId: string }>("cash", "resolveInterShiftGap", [input]),
 };
@@ -479,6 +484,8 @@ const dashboardApi = {
 };
 
 const financeApi = {
+  paymentMethodsBreakdown: (query: PaymentMethodsQuery = {}) =>
+    rpc<PaymentMethodsBreakdownResult>("finance", "getPaymentMethodsBreakdown", [query]),
   overview: (todayKeyStr: string, monthStartKey: string) =>
     rpc<FinanceOverview>("finance", "getFinanceOverview", [todayKeyStr, monthStartKey]),
   outstandingForMember: (memberId: string) =>
@@ -2379,4 +2386,5 @@ export type {
 } from "@/core/services/manager-override.service";
 
 
-
+
+export type { PaymentMethodsQuery, PaymentMethodSummaryItem, PaymentMethodsBreakdownResult };

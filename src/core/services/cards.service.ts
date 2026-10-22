@@ -1,6 +1,7 @@
 import { errConflict, errNotFound, errValidation } from "@/core/errors";
 import { requirePermission, type ServiceActor } from "@/core/permissions";
 import { nowStamp } from "@/core/dates";
+import { getLocalBranchPrefix } from "@/core/branch";
 import type { Db, Row } from "@/db/engine";
 import { recordAudit } from "./audit.service";
 import { getMemberRowById } from "./members.service";
@@ -134,8 +135,10 @@ export async function createVirtualCard(
 }
 
 export function nextBarcodePreview(db: Db): string {
+  const branchPrefix = getLocalBranchPrefix(db);
   const current = Number(db.scalar("SELECT value FROM counters WHERE name = 'card_barcode'") ?? 100);
-  return `GYM-${String(current + 1).padStart(6, "0")}`;
+  const numStr = String(current + 1).padStart(6, "0");
+  return branchPrefix ? `${branchPrefix}-CRD-${numStr}` : `CRD-${numStr}`;
 }
 
 export async function registerCard(

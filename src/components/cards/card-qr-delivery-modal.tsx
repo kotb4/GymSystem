@@ -197,7 +197,7 @@ export function CardQrDeliveryModal({ open, memberName, memberPhone, barcodeValu
           url = res.url;
           setPortalUrl(url);
         }
-      } catch {}
+      } catch (err) { console.error("Failed to load portal URL:", err); }
     }
     if (!url) {
       toast("error", "جارٍ تجهيز الرابط المشفر... يرجى الانتظار ثانية والمحاولة مجدداً");

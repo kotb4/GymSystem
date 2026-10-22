@@ -1,6 +1,5 @@
 import fs from "node:fs";
 import os from "node:os";
-import { requirePermission } from "../../src/core/permissions";
 import type { Db } from "../../src/db/engine";
 import type { ServiceActor } from "../../src/core/permissions";
 import { errForbidden } from "../../src/core/errors";
@@ -35,7 +34,10 @@ import { p, a, defineService, type Fn } from "./helpers";
 export const dev = defineService({
   getOverrideDate: p((() => getDevOverrideDate()) as Fn),
   setOverrideDate: a((((_db: Db, actor: ServiceActor, date: string | null) => {
-    requirePermission(actor, "settings.edit");
+    if (!isDeveloperActor(actor)) throw errForbidden("errors.developerOnly");
+    if (process.env.NODE_ENV === "production" && process.env.ALLOW_DEV_DATE_OVERRIDE !== "1") {
+      throw errForbidden("errors.developerOnly");
+    }
     setDevOverrideDate(date);
     return getDevOverrideDate();
   }) as Fn)),

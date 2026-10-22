@@ -12,7 +12,7 @@ import {
   type PublicMember,
 } from "@/api";
 import { formatMinor } from "@/core/money";
-import { todayKey } from "@/core/dates";
+import { todayKey, dateKey } from "@/core/dates";
 import { formatTime } from "@/services/format";
 import { Card, CardHeader } from "@/components/ui/card";
 import { StatCard } from "@/components/ui/stat-card";
@@ -181,7 +181,7 @@ export function PrivateTrainingPage() {
       // Calculate end date based on duration days
       const d = new Date(startDate || todayKey());
       d.setDate(d.getDate() + pkg.duration_days);
-      setEndDate(d.toISOString().slice(0, 10));
+      setEndDate(dateKey(d));
     }
   };
 
@@ -198,7 +198,7 @@ export function PrivateTrainingPage() {
 
     const d = new Date();
     d.setDate(d.getDate() + 30);
-    setEndDate(d.toISOString().slice(0, 10));
+    setEndDate(dateKey(d));
 
     setSubNotes("");
     setNewSubModalOpen(true);

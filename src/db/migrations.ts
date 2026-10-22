@@ -2465,6 +2465,12 @@ CREATE INDEX IF NOT EXISTS idx_backups_created ON backups_log(created_at);`,
         }
       },
     },
+    {
+      version: 67,
+      statements: [
+        "UPDATE payment_methods SET is_active = 0, label_ar = 'تحويل بنكي' WHERE code = 'transfer'",
+      ],
+    },
   ];
 }
 

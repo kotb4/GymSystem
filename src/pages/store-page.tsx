@@ -818,11 +818,12 @@ function PosTab({ onDone, onSaleCompleted }: { onDone: () => void; onSaleComplet
               onChange={(e) => setMethodCode(e.target.value)}
               options={
                 methods.length > 0
-                  ? methods.map((m) => ({ value: m.code, label: m.labelAr }))
+                  ? methods.filter((m) => m.code !== "transfer").map((m) => ({ value: m.code, label: m.labelAr }))
                   : [
                       { value: "cash", label: "نقدي (خزينة المتجر)" },
                       { value: "bank_card", label: "بطاقة بنكية / فيزا" },
-                      { value: "transfer", label: "تحويل / محفظة إلكترونية" },
+                      { value: "instapay", label: "انستاباي (InstaPay)" },
+                      { value: "wallet", label: "محفظة إلكترونية" },
                       { value: "other", label: "أخرى" },
                     ]
               }
@@ -1960,11 +1961,12 @@ function DebtsTab({ highlightRowKey }: { highlightRowKey?: string | null }) {
               onChange={(e) => setMethodCode(e.target.value)}
               options={
                 methods.length > 0
-                  ? methods.map((m) => ({ value: m.code, label: m.labelAr }))
+                  ? methods.filter((m) => m.code !== "transfer").map((m) => ({ value: m.code, label: m.labelAr }))
                   : [
                       { value: "cash", label: "نقدي (خزينة المتجر)" },
                       { value: "bank_card", label: "بطاقة بنكية" },
-                      { value: "transfer", label: "تحويل / محفظة" },
+                      { value: "instapay", label: "انستاباي" },
+                      { value: "wallet", label: "محفظة إلكترونية" },
                     ]
               }
             />

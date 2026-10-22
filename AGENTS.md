@@ -118,14 +118,14 @@ src/
     dates.ts money.ts       Shared primitives (date keys, minor units)
   db/
     engine.ts               Db wrapper: run/all/first/scalar/count/transaction/onDirty
-    migrations.ts           Versioned migrations v1..v66 (applied at every boot)
+    migrations.ts           Versioned migrations v1..v67 (applied at every boot)
     seed.ts                 Optional demo seeding
   pages/                    36 route pages
   components/               ui/ layout/ members/ finance/ subscriptions/ cards/ users/ charts/
   contexts/auth-context.tsx Session state + hasPermission()
   routes/                   Route table + permission-gated NAV_ROUTES
   i18n/ar.ts                Arabic dictionary (flat-key lookup)
-tests/                      Vitest suites (94 files, node env), createTestDb() helper
+tests/                      Vitest suites (97 files, node env), createTestDb() helper
 scripts/                    build-server.mjs, e2e-smoke.ps1, e2e-audit.ps1,
                             check-rpc-consistency.cjs, windows/start-gymsystem.bat
 ```
@@ -171,9 +171,10 @@ Members (+trash/restore/purge, photos), Plans & Subscriptions (time/sessions/ope
 
 - **Technology:** SQLite via `node:sqlite`, synchronous, WAL mode. One writer process (the backend). NEVER open the live DB from tooling while the server runs.
 - **Access layer:** all SQL goes through `src/db/engine.ts` (`Db`). Raw `db.run/all/first/scalar/count/insert/exec` — no ORM. Server uses `NodeSqliteDriver`; tests use their own driver via `createTestDb()`.
-- **Migrations:** append-only array in `src/db/migrations.ts` (currently v1..v66). Each runs once, tracked in `schema_migrations`, applied inside a transaction at boot. To change schema you MUST add a new version entry. Never edit old migrations; never write destructive statements without explicit human approval.
+- **Migrations:** append-only array in `src/db/migrations.ts` (currently v1..v67). Each runs once, tracked in `schema_migrations`, applied inside a transaction at boot. To change schema you MUST add a new version entry. Never edit old migrations; never write destructive statements without explicit human approval.
 - **Integrity:** heavy use of CHECK constraints (money non-negative, status enums, `net = base - discount` style arithmetic), UNIQUE indexes (partial unique phone/barcode), FKs with referential enforcement ON. Money columns are `*_minor` INTEGER (piastres; 100 = 1 EGP). Dates are `YYYY-MM-DD` keys; timestamps ISO strings.
 - **Transactions:** any multi-statement invariant MUST run inside `db.transaction(() => {...})` (payments, cancels, purge, salary payment, store sale, backup adopt…). Follow that rule for new features.
+- **Transaction Invariant (No External Async I/O):** NEVER await non-database asynchronous I/O (network fetch, password hashing, file streaming, timers, WhatsApp gateway dispatch) inside `db.transaction(...)`. The synchronous SQLite writer holds an exclusive lock; awaiting async I/O permits interleaved queries on the single connection and stalls the server. Perform all preparation/hashing BEFORE the transaction, and all network/file I/O AFTER the transaction commits.
 - **financial_ledger:** append-only cash truth with `UNIQUE(ref_table, ref_id, entry_type)`. Exactly one ledger entry per logical event; reversals must check existence first (double-reversal guard exists in payments/subscriptions services — keep it).
 - **Deletion policy:** members are SOFT-deleted (`deleted_at/deleted_by/deletion_reason`), restorable, and hard-purge cascades 17+ child tables in FK-safe order inside one transaction. Never break historical references casually.
 - **Seed/demo:** demo seeding only when explicitly enabled by env var and only when `settings.demo_seeded` is unset.

@@ -52,7 +52,7 @@ export function RenewModal({ sub, member, open, onClose, onDone }: RenewModalPro
       .then((list) => {
         if (Array.isArray(list) && list.length > 0) setMethods(list);
       })
-      .catch(() => {});
+      .catch((err) => console.error("Failed to load payment methods:", err));
   }, [open, sub.price]);
 
   const baseMinor = toMinor(priceMajor.trim() === "" ? "0" : priceMajor);

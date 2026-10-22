@@ -1,4 +1,4 @@
-import { nowStamp } from "@/core/dates";
+import { nowStamp, todayKey } from "@/core/dates";
 import { errValidation } from "@/core/errors";
 import { requirePermission, type ServiceActor } from "@/core/permissions";
 import type { Db } from "@/db/engine";
@@ -229,6 +229,142 @@ function methodBreakdown(db: Db, fromStamp: string, toStamp: string): MethodBrea
     inflowMinor: Number(r.inflow),
     outflowMinor: Number(r.outflow),
   }));
+}
+
+export interface PaymentMethodsQuery {
+  fromKey?: string;
+  toKey?: string;
+  box?: "all" | "gym" | "store";
+}
+
+export interface PaymentMethodSummaryItem {
+  code: string;
+  labelAr: string;
+  inflowMinor: number;
+  outflowMinor: number;
+  netMinor: number;
+  count: number;
+  percentage: number;
+}
+
+export interface PaymentMethodsBreakdownResult {
+  methods: PaymentMethodSummaryItem[];
+  totalInflowMinor: number;
+  totalOutflowMinor: number;
+  totalNetMinor: number;
+  totalCount: number;
+  fromKey: string;
+  toKey: string;
+  box: "all" | "gym" | "store";
+}
+
+export function getPaymentMethodsBreakdown(
+  db: Db,
+  actor: ServiceActor,
+  query: PaymentMethodsQuery = {},
+): PaymentMethodsBreakdownResult {
+  requirePermission(actor, "payments.view");
+
+  const today = todayKey();
+  const fromKey = query.fromKey && query.fromKey.trim() !== "" ? query.fromKey.trim() : today;
+  const toKey = query.toKey && query.toKey.trim() !== "" ? query.toKey.trim() : today;
+  const box = query.box && query.box !== "all" ? query.box : "all";
+
+  const fromStamp = `${fromKey} 00:00:00`;
+  const toStamp = `${toKey} 23:59:59`;
+
+  const boxClause = box !== "all" ? " AND l.box = ?" : "";
+  const boxParams = box !== "all" ? [box] : [];
+
+  const rows = db.all<{
+    method_code: string;
+    label_ar: string | null;
+    inflow: number;
+    outflow: number;
+    cnt: number;
+  }>(
+    `SELECT
+       l.method_code,
+       pm.label_ar,
+       COALESCE(SUM(CASE WHEN l.direction = 1 THEN l.amount_minor ELSE 0 END), 0) AS inflow,
+       COALESCE(SUM(CASE WHEN l.direction = -1 THEN l.amount_minor ELSE 0 END), 0) AS outflow,
+       COUNT(*) AS cnt
+     FROM financial_ledger l
+     LEFT JOIN payment_methods pm ON pm.code = l.method_code
+     LEFT JOIN payments _lp ON l.ref_table = 'payments' AND l.ref_id = _lp.id
+     LEFT JOIN member_subscriptions _ls ON _lp.subscription_id = _ls.id AND _ls.status = 'cancelled'
+     LEFT JOIN payment_refunds _lr ON l.ref_table = 'payment_refunds' AND l.ref_id = _lr.id
+     LEFT JOIN payments _lpr ON _lr.payment_id = _lpr.id
+     LEFT JOIN member_subscriptions _lsr ON _lpr.subscription_id = _lsr.id AND _lsr.status = 'cancelled'
+     WHERE l.occurred_at >= ? AND l.occurred_at <= ?${boxClause} AND _ls.id IS NULL AND _lsr.id IS NULL
+     GROUP BY l.method_code
+     ORDER BY inflow DESC, cnt DESC`,
+    [fromStamp, toStamp, ...boxParams],
+  );
+
+  const allMethods = db.all<{ code: string; label_ar: string }>(
+    "SELECT code, label_ar FROM payment_methods WHERE is_active = 1 ORDER BY sort_order ASC",
+  );
+
+  let totalInflowMinor = 0;
+  let totalOutflowMinor = 0;
+  let totalCount = 0;
+
+  for (const r of rows) {
+    totalInflowMinor += Number(r.inflow ?? 0);
+    totalOutflowMinor += Number(r.outflow ?? 0);
+    totalCount += Number(r.cnt ?? 0);
+  }
+
+  const map = new Map<string, { labelAr: string; inflow: number; outflow: number; count: number }>();
+  for (const m of allMethods) {
+    map.set(m.code, { labelAr: m.label_ar, inflow: 0, outflow: 0, count: 0 });
+  }
+
+  for (const r of rows) {
+    const existing = map.get(r.method_code);
+    const inflow = Number(r.inflow ?? 0);
+    const outflow = Number(r.outflow ?? 0);
+    const count = Number(r.cnt ?? 0);
+    if (existing) {
+      existing.inflow = inflow;
+      existing.outflow = outflow;
+      existing.count = count;
+      if (r.label_ar) existing.labelAr = r.label_ar;
+    } else {
+      map.set(r.method_code, {
+        labelAr: r.label_ar ?? r.method_code,
+        inflow,
+        outflow,
+        count,
+      });
+    }
+  }
+
+  const methods: PaymentMethodSummaryItem[] = Array.from(map.entries()).map(([code, data]) => {
+    const netMinor = data.inflow - data.outflow;
+    const percentage = totalInflowMinor > 0 ? Math.round((data.inflow / totalInflowMinor) * 1000) / 10 : 0;
+    return {
+      code,
+      labelAr: data.labelAr,
+      inflowMinor: data.inflow,
+      outflowMinor: data.outflow,
+      netMinor,
+      count: data.count,
+      percentage,
+    };
+  });
+
+  return {
+    methods,
+    totalInflowMinor,
+    totalOutflowMinor,
+    totalNetMinor: totalInflowMinor - totalOutflowMinor,
+    totalCount,
+    fromKey,
+    toKey,
+    box,
+  };
 }
 
 export function getFinanceOverview(

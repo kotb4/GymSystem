@@ -438,7 +438,7 @@ function EmployeesTab({ onDataChanged }: { onDataChanged?: () => void }) {
       r.userId ? "نعم" : "لا",
       r.isActive ? "نشط" : "غير نشط",
     ]);
-    downloadCsvWithBom(`دليل_فريق_العمل_${new Date().toISOString().slice(0, 10)}`, headers, dataRows);
+    downloadCsvWithBom(`دليل_فريق_العمل_${todayKey()}`, headers, dataRows);
   };
 
   const columns: Column<PublicEmployee>[] = [

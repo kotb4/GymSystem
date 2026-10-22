@@ -321,8 +321,8 @@ export function createPurchaseInvoice(
       db.run(
         `INSERT INTO financial_ledger (
           entry_type, ref_table, ref_id, method_code, direction,
-          amount_minor, occurred_at, created_by, created_at
-        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+          amount_minor, occurred_at, created_by, created_at, box
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
         [
           "expense",
           "purchase_invoices",
@@ -330,9 +330,10 @@ export function createPurchaseInvoice(
           input.methodCode || "cash",
           -1,
           input.paidAmountMinor,
-          `${invoiceDate} ${stamp.slice(11)}`,
+          stamp,
           actor.userId,
           stamp,
+          "gym",
         ],
       );
     }
@@ -500,8 +501,8 @@ export function payPurchaseInvoiceDebt(
     db.run(
       `INSERT INTO financial_ledger (
         entry_type, ref_table, ref_id, method_code, direction,
-        amount_minor, occurred_at, created_by, created_at
-      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+        amount_minor, occurred_at, created_by, created_at, box
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
       [
         "expense",
         "purchase_invoices",
@@ -512,6 +513,7 @@ export function payPurchaseInvoiceDebt(
         stamp,
         actor.userId,
         stamp,
+          "gym",
       ],
     );
 

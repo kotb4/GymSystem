@@ -4,7 +4,6 @@ import {
   Save,
   Upload,
   Trash2,
-  Percent,
   Printer,
   Building2,
   Phone,
@@ -178,10 +177,10 @@ export function ReceiptTemplateTab() {
         { key: SETTING_KEYS.receiptShowLogo, value: showLogo ? "1" : "0" },
         { key: SETTING_KEYS.receiptLogoData, value: logoData },
         { key: SETTING_KEYS.receiptLogoWidth, value: String(parsedLogoWidth) },
-        { key: SETTING_KEYS.receiptShowTax, value: showTax ? "1" : "0" },
+        { key: SETTING_KEYS.receiptShowTax, value: "0" },
         {
           key: SETTING_KEYS.receiptTaxPercent,
-          value: String(Math.max(0, Math.min(100, parseInt(taxPercent, 10) || 0))),
+          value: "0",
         },
         { key: SETTING_KEYS.receiptShowQr, value: showQr ? "1" : "0" },
         { key: SETTING_KEYS.receiptFooterText, value: footerText.trim() },
@@ -611,59 +610,13 @@ export function ReceiptTemplateTab() {
             </div>
           </Card>
 
-          {/* Card 3: Tax & QR Verification */}
+          {/* Card 3: QR Verification */}
           <Card>
             <CardHeader
               title={t("settings.receiptTaxSection")}
-              description="تفعيل ضريبة القيمة المضافة ورمز الاستجابة السريعة للتحقق"
+              description="تفعيل رمز الاستجابة السريعة (QR Code) على الفاتورة للتحقق السريع"
             />
             <div className="space-y-5 p-5">
-              {/* Show Tax Toggle */}
-              <div className="flex items-center justify-between rounded-xl border border-line bg-surface/60 p-3.5">
-                <div className="space-y-0.5">
-                  <span className="text-sm font-semibold text-ink">
-                    {t("settings.receiptShowTax")}
-                  </span>
-                  <p className="text-xs text-subtle">
-                    {t("settings.receiptShowTaxHint")}
-                  </p>
-                </div>
-                <input
-                  type="checkbox"
-                  checked={showTax}
-                  disabled={!canEdit}
-                  onChange={(e) => setShowTax(e.target.checked)}
-                  className="h-5 w-5 rounded border-line accent-primary cursor-pointer"
-                />
-              </div>
-
-              {/* Tax Percentage */}
-              {showTax && (
-                <div className="animate-fade-in space-y-1.5">
-                  <label className="flex items-center gap-1.5 text-xs font-semibold text-subtle">
-                    <Percent className="h-3.5 w-3.5 text-primary" />
-                    <span>{t("settings.receiptTaxPercent")}</span>
-                  </label>
-                  <div className="relative max-w-xs">
-                    <Input
-                      type="number"
-                      min={0}
-                      max={100}
-                      value={taxPercent}
-                      disabled={!canEdit}
-                      onChange={(e) => setTaxPercent(e.target.value)}
-                      className="pe-8"
-                    />
-                    <span className="absolute start-3 top-1/2 -translate-y-1/2 text-xs font-bold text-subtle">
-                      %
-                    </span>
-                  </div>
-                  <p className="text-[11px] text-faint">
-                    {t("settings.receiptTaxPercentHint")}
-                  </p>
-                </div>
-              )}
-
               {/* Show QR Code Toggle */}
               <div className="flex items-center justify-between rounded-xl border border-line bg-surface/60 p-3.5">
                 <div className="space-y-0.5">
@@ -947,8 +900,9 @@ function ReceiptPaperContent({
     const termsList = terms
       ? terms
           .split("\n")
+          .map((t) => t.trim())
           .filter(Boolean)
-          .slice(0, 4)
+          .slice(0, 8)
       : [];
 
     return (

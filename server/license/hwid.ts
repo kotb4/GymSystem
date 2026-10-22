@@ -6,14 +6,20 @@ import crypto from "node:crypto";
  * Dependency-free hardware fingerprint for the offline license.
  *
  * Primary stable input on Windows: the machine-unique `MachineGuid` under
- * `HKEY_LOCAL_MACHINE\SOFTWARE\Microsoft\Cryptography`, read via `reg query`.
- * `MachineGuid` is the SOLE backbone of the fingerprint: it survives
- * NIC/CPU/hostname renames, differs between physical machines, and alone is
+ * `HKEY_LOCAL_MACHINE\\SOFTWARE\\Microsoft\\Cryptography`, read via `reg query`.
+ * On Windows, MachineGuid is the SOLE input: it survives NIC/CPU/hostname
+ * renames, VPN adapter changes (Tailscale, OpenVPN, etc.), and alone is
  * enough to fail a copy of the app/DB onto another PC.
- * Hostname is deliberately EXCLUDED (it changes on rename / DNS / domain
- * join and was the top source of false "device changed" support tickets).
- * MACs stay as a secondary, non-essential input. Non-Windows builds fall back
- * to `node:os` stable identifiers (MACs + platform/arch), best-effort only.
+ *
+ * MACs are deliberately excluded on Windows because:
+ *   1. The same physical NIC may appear multiple times (once per IP address),
+ *      making the MAC count unstable across Windows/driver updates.
+ *   2. VPN clients (Tailscale, OpenVPN, WireGuard, etc.) add virtual adapters
+ *      unpredictably, changing the MAC list between boots.
+ * Both issues were the #1 source of false "device changed" support tickets.
+ *
+ * Non-Windows builds fall back to `node:os` unique MACs + platform/arch
+ * (best-effort; no MachineGuid equivalent exists cross-platform).
  *
  * The HWID is SHA-256 over a canonical JSON list of identifiers, truncated to
  * `GYM-XXXX-XXXX-XXXX-XXXX`.
@@ -36,22 +42,26 @@ function machineGuid(osPlatform: NodeJS.Platform): string | null {
 
 function macAddresses(): string[] {
   const nets = os.networkInterfaces();
-  const macs: string[] = [];
+  const seen = new Set<string>();
   for (const key of Object.keys(nets)) {
     for (const n of nets[key] ?? []) {
-      if (!n.internal && n.mac && n.mac !== "00:00:00:00:00:00") macs.push(n.mac);
+      if (!n.internal && n.mac && n.mac !== "00:00:00:00:00:00") seen.add(n.mac);
     }
   }
-  return macs.sort();
+  return [...seen].sort();
 }
 
 export function computeHwId(pf: NodeJS.Platform = os.platform()): string {
-  const identifiers: (string | null)[] = [];
-  identifiers.push(machineGuid(pf));
-  identifiers.push(pf);
-  identifiers.push(os.arch());
-  identifiers.push(...macAddresses());
-  const canonical = JSON.stringify(identifiers.filter(Boolean));
+  const mg = machineGuid(pf);
+  let identifiers: string[];
+  if (mg) {
+    // Windows: MachineGuid only — stable across NIC renames, VPN changes, driver updates.
+    identifiers = [mg, pf, os.arch()];
+  } else {
+    // Non-Windows: best-effort fingerprint using unique MACs + platform + arch.
+    identifiers = [pf, os.arch(), ...macAddresses()];
+  }
+  const canonical = JSON.stringify(identifiers);
   const digest = crypto.createHash("sha256").update(canonical).digest("hex").toUpperCase();
   // GYM-XXXX-XXXX-XXXX-XXXX : 16 hex chars
   const hex = digest.padEnd(16, "0").slice(0, 16);

@@ -128,7 +128,7 @@ export function MemberFormModal({ open, onClose, onSaved, member }: MemberFormMo
             try {
               const portal = await api.memberPortal.getUrl(finalMember.id, window.location.origin);
               if (portal?.url) portalUrl = portal.url;
-            } catch {}
+            } catch (err) { console.warn("Could not fetch portal URL for member welcome:", err); }
 
             const welcomeText = [
               `👋 أهلاً بك يا ${finalMember.fullName} في النادي!`,

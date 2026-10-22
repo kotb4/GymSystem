@@ -23,8 +23,11 @@ import {
   TrendingUp,
   Users,
   Clock3,
+  ShoppingBag,
 } from "lucide-react";
 import { CashSessionsPanel } from "@/pages/cash-page";
+import { PaymentMethodsBreakdownRibbon } from "@/components/finance/payment-methods-breakdown-ribbon";
+import { TreasuryStoreTab } from "@/components/treasury/treasury-store-tab";
 import {
   api,
   type CashierPerformanceItem,
@@ -38,15 +41,17 @@ import { downloadCsvWithBom } from "@/utils/csv-helper";
 import { FinanceHubHeader } from "@/components/finance/finance-hub-header";
 import { cn } from "@/utils/cn";
 
-type TreasuryTab = "sessions" | "ledger" | "cashiers";
+type TreasuryTab = "sessions" | "store" | "ledger" | "cashiers";
 
 export function TreasuryPage() {
   const t = useT();
   const { hasPermission } = useAuth();
   const [activeTab, setActiveTab] = useState<TreasuryTab>("sessions");
+  const [selectedMethod, setSelectedMethod] = useState<string | null>(null);
 
   const canView = hasPermission("payments.view");
   const canViewReports = hasPermission("reports.view");
+  const canViewStore = hasPermission("store.view");
 
   if (!canView) {
     return (
@@ -58,6 +63,11 @@ export function TreasuryPage() {
 
   const subTabs = [
     { value: "sessions", label: "الورديات اليومية وتقفيل الوردية (Z-Report)", icon: Clock3 },
+    ...(canViewStore
+      ? [
+          { value: "store", label: "مبيعات وأرباح المتجر والبار", icon: ShoppingBag },
+        ]
+      : []),
     ...(canViewReports
       ? [
           { value: "ledger", label: "سجل القيود المحاسبي المباشر", icon: ReceiptText },
@@ -78,6 +88,17 @@ export function TreasuryPage() {
 
       {/* Finance Hub Navigation & Live Telemetry Strip */}
       <FinanceHubHeader currentSection="treasury" />
+
+      {/* Real-time Payment Methods Distribution Ribbon (كاش، انستاباي، فيزا، محفظة...) */}
+      <PaymentMethodsBreakdownRibbon
+        selectedMethod={selectedMethod}
+        onSelectMethod={(method) => {
+          setSelectedMethod(method);
+          if (method && activeTab !== "ledger" && activeTab !== "store") {
+            setActiveTab("ledger");
+          }
+        }}
+      />
 
       {/* Glass Capsule Sub-Tabs */}
       <div className="flex flex-wrap items-center gap-2 rounded-full border border-panel-border/50 bg-panel/60 p-2 backdrop-blur-xl shadow-lg shadow-black/20">
@@ -111,11 +132,21 @@ export function TreasuryPage() {
         </section>
       )}
 
-      {/* Tab 2: Live Financial Ledger (سجل القيود وحركات الخزينة المباشرة) */}
+      {/* Tab 2: Store & Bar Hub (مبيعات وأرباح المتجر والبار) */}
+      {canViewStore && activeTab === "store" && (
+        <section className="space-y-4">
+          <TreasuryStoreTab />
+        </section>
+      )}
+
+      {/* Tab 3: Live Financial Ledger (سجل القيود وحركات الخزينة المباشرة) */}
       {canViewReports && activeTab === "ledger" && (
         <section className="space-y-4">
           <p className="text-xs text-subtle">{t("treasury.ledgerDesc")}</p>
-          <TreasuryLedgerPanel />
+          <TreasuryLedgerPanel
+            selectedMethod={selectedMethod}
+            onSelectMethod={setSelectedMethod}
+          />
         </section>
       )}
 
@@ -130,8 +161,13 @@ export function TreasuryPage() {
   );
 }
 
-/** Component for Tab 2: Financial Ledger Entries */
-function TreasuryLedgerPanel() {
+interface TreasuryLedgerPanelProps {
+  selectedMethod?: string | null;
+  onSelectMethod?: (method: string | null) => void;
+}
+
+/** Component for Tab 3: Financial Ledger Entries */
+function TreasuryLedgerPanel({ selectedMethod, onSelectMethod }: TreasuryLedgerPanelProps = {}) {
   const [items, setItems] = useState<LedgerEntry[]>([]);
   const [total, setTotal] = useState(0);
   const [totalInMinor, setTotalInMinor] = useState(0);
@@ -145,7 +181,23 @@ function TreasuryLedgerPanel() {
   const [box, setBox] = useState<"all" | "gym" | "store">("all");
   const [direction, setDirection] = useState<"all" | "1" | "-1">("all");
   const [entryType, setEntryType] = useState("all");
+  const [methodCode, setMethodCode] = useState(selectedMethod || "all");
   const { toast } = useToast();
+
+  useEffect(() => {
+    if (selectedMethod !== undefined) {
+      setMethodCode(selectedMethod || "all");
+      setPage(1);
+    }
+  }, [selectedMethod]);
+
+  const handleMethodChange = (val: string) => {
+    setMethodCode(val);
+    setPage(1);
+    if (onSelectMethod) {
+      onSelectMethod(val === "all" ? null : val);
+    }
+  };
 
   const onExportLedgerCsv = () => {
     if (items.length === 0) return;
@@ -208,6 +260,7 @@ function TreasuryLedgerPanel() {
         box,
         direction: direction === "all" ? "all" : (Number(direction) as 1 | -1),
         entryType: entryType !== "all" ? entryType : undefined,
+        methodCode: methodCode !== "all" ? methodCode : undefined,
       })
       .then((res) => {
         if (alive) {
@@ -223,7 +276,7 @@ function TreasuryLedgerPanel() {
     return () => {
       alive = false;
     };
-  }, [page, fromKey, toKey, createdBy, box, direction, entryType]);
+  }, [page, fromKey, toKey, createdBy, box, direction, entryType, methodCode]);
 
   const columns: Column<LedgerEntry>[] = [
     {
@@ -423,7 +476,7 @@ function TreasuryLedgerPanel() {
           }
         />
         <div className="border-b border-line/40 bg-subtle/5 p-4 space-y-3">
-          <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-5">
+          <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-6">
             <Select
               label="الموظف المسؤول"
               value={createdBy}
@@ -450,6 +503,20 @@ function TreasuryLedgerPanel() {
                     label: `${codePrefix}${u.fullName || u.username}${roleLabel}`,
                   };
                 }),
+              ]}
+            />
+            <Select
+              label="طريقة الدفع"
+              value={methodCode}
+              onChange={(e) => handleMethodChange(e.target.value)}
+              options={[
+                { value: "all", label: "جميع وسائل الدفع" },
+                { value: "cash", label: "💵 كاش / نقدي" },
+                { value: "instapay", label: "⚡ انستاباي (InstaPay)" },
+                { value: "wallet", label: "📱 محفظة إلكترونية" },
+                { value: "bank_card", label: "💳 فيزا / كارت بنكي" },
+                { value: "transfer", label: "🏛️ تحويل بنكي" },
+                { value: "other", label: "🏷️ أخرى" },
               ]}
             />
             <Select
@@ -515,6 +582,32 @@ function TreasuryLedgerPanel() {
                 }}
               />
             </div>
+          </div>
+
+          {/* Quick Filter Pills for Payment Methods */}
+          <div className="flex flex-wrap items-center gap-1.5 pt-2 border-t border-line/30">
+            <span className="text-[11px] font-bold text-subtle">طريقة الدفع:</span>
+            {[
+              { value: "all", label: "الكل" },
+              { value: "cash", label: "💵 كاش" },
+              { value: "instapay", label: "⚡ انستاباي" },
+              { value: "wallet", label: "📱 محفظة" },
+              { value: "bank_card", label: "💳 فيزا" },
+              { value: "transfer", label: "🏛️ تحويل" },
+            ].map((pill) => (
+              <button
+                key={pill.value}
+                type="button"
+                onClick={() => handleMethodChange(pill.value)}
+                className={`rounded-lg px-2.5 py-1 text-[11px] font-bold transition-colors ${
+                  methodCode === pill.value
+                    ? "bg-cyan-500/15 text-cyan-400 border border-cyan-500/40 shadow-xs shadow-cyan-500/20"
+                    : "bg-subtle/5 text-subtle border border-line/50 hover:bg-subtle/10"
+                }`}
+              >
+                {pill.label}
+              </button>
+            ))}
           </div>
 
           {/* Quick Filter Pills for entryType */}

@@ -45,6 +45,7 @@ import { SeriesChart, type SeriesDataset } from "@/components/charts/series-char
 import { ACCENT_TINTS, type Accent } from "@/components/ui/accent";
 import { BranchFilter } from "@/components/ui/branch-filter";
 import { Button } from "@/components/ui/button";
+import { SystemHealthCard } from "@/components/dashboard/system-health-card";
 
 type DashboardView = "pulse" | "finance" | "operations";
 type RangeKey = "today" | "7d" | "30d" | "month" | "year" | "custom";
@@ -244,6 +245,9 @@ export function DashboardPage() {
           />
         </div>
       </section>
+
+      {/* System Health & Operational Telemetry */}
+      <SystemHealthCard />
 
       {/* Smart View Navigation Tabs */}
       <div className="border-b border-white/[0.08] pb-3">

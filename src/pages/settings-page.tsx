@@ -846,6 +846,7 @@ function HardwareTabContent() {
           [SETTING_KEYS.scannerTimeoutMs]: all[SETTING_KEYS.scannerTimeoutMs] ?? "5000",
           [SETTING_KEYS.duplicateWindowSeconds]: all[SETTING_KEYS.duplicateWindowSeconds] ?? "45",
           [SETTING_KEYS.occupancyDurationMinutes]: all[SETTING_KEYS.occupancyDurationMinutes] ?? "120",
+          [SETTING_KEYS.autoCheckoutOverdue]: all[SETTING_KEYS.autoCheckoutOverdue] ?? "0",
           [SETTING_KEYS.soundEnabled]: all[SETTING_KEYS.soundEnabled] ?? "1",
         };
         setValues(loaded);
@@ -935,6 +936,7 @@ function HardwareTabContent() {
 
   const currentDup = values[SETTING_KEYS.duplicateWindowSeconds] ?? "45";
   const currentOccupancy = values[SETTING_KEYS.occupancyDurationMinutes] ?? "120";
+  const autoCheckoutOn = (values[SETTING_KEYS.autoCheckoutOverdue] ?? "0") === "1";
   const currentLength = values[SETTING_KEYS.scannerMinLength] ?? "4";
   const currentTimeout = values[SETTING_KEYS.scannerTimeoutMs] ?? "5000";
 
@@ -1072,6 +1074,45 @@ function HardwareTabContent() {
                     className="w-24 rounded-lg border border-line bg-card px-2.5 py-1 text-xs font-bold font-mono text-ink focus:border-emerald-500 focus:outline-none"
                   />
                   <span className="text-[11px] text-faint">دقيقة</span>
+                </div>
+
+                {/* Auto Checkout on Expiry Switch */}
+                <div className="pt-3 mt-3 border-t border-line/60">
+                  <button
+                    type="button"
+                    role="switch"
+                    aria-checked={autoCheckoutOn}
+                    disabled={!canEdit || submitting}
+                    onClick={() => setValue(SETTING_KEYS.autoCheckoutOverdue, autoCheckoutOn ? "0" : "1")}
+                    className={cn(
+                      "flex w-full items-center justify-between rounded-xl border border-line bg-card/60 px-3.5 py-2.5 text-xs font-semibold transition-all text-start",
+                      canEdit && "hover:border-line-strong"
+                    )}
+                  >
+                    <div className="space-y-0.5">
+                      <div className="flex items-center gap-2">
+                        <Clock className="size-3.5 text-emerald-400" />
+                        <span className="font-bold text-ink">{t("settings.autoCheckoutOverdue")}</span>
+                      </div>
+                      <p className="text-[11px] text-faint">
+                        {t("settings.autoCheckoutOverdueHint")}
+                      </p>
+                    </div>
+                    <span
+                      aria-hidden
+                      className={cn(
+                        "relative h-5 w-10 shrink-0 rounded-full transition-colors ms-3",
+                        autoCheckoutOn ? "bg-neon/70" : "bg-white/10"
+                      )}
+                    >
+                      <span
+                        className={cn(
+                          "absolute top-0.5 size-4 rounded-full bg-white shadow transition-all",
+                          autoCheckoutOn ? "start-0.5" : "start-[22px]"
+                        )}
+                      />
+                    </span>
+                  </button>
                 </div>
               </div>
 

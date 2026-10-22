@@ -15,7 +15,7 @@ import { useT } from "@/i18n";
 import { useToast } from "@/components/ui/toast";
 import { describeError } from "@/utils/app-error";
 import { api, type PublicMember, type Plan, type Trial, type TrialStats, type TrialStatus, type TrialType } from "@/api";
-import { todayKey } from "@/core/dates";
+import { todayKey, dateKey } from "@/core/dates";
 import { Card, CardHeader } from "@/components/ui/card";
 import { Badge, type BadgeVariant } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -260,7 +260,7 @@ function dateInputDefault(type: TrialType, start: string): string {
   if (n == null) return "";
   const d = new Date(start + "T00:00:00");
   d.setDate(d.getDate() + n);
-  return d.toISOString().slice(0, 10);
+  return dateKey(d);
 }
 
 function NewTrialModal({ open, onClose, onSaved }: { open: boolean; onClose: () => void; onSaved: () => void }) {

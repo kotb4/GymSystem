@@ -5,7 +5,7 @@ import type { Db, Row } from "@/db/engine";
 import { assignDocNo } from "./document-numbers.service";
 import { recordAudit } from "./audit.service";
 import { getCardByBarcode } from "./cards.service";
-import { getOccupancyDurationMinutes, readSetting, SETTING_KEYS } from "./settings.service";
+import { getOccupancyDurationMinutes, isAutoCheckoutOverdueEnabled, readSetting, SETTING_KEYS } from "./settings.service";
 import { getMemberRowById } from "./members.service";
 import { activeTrialForMember } from "./trials.service";
 import { applyEarnRule, loyaltyUsableCreditMinor } from "./loyalty.service";
@@ -249,6 +249,10 @@ export async function recordCheckIn(
             }
           }
           db.run(
+            "UPDATE attendance SET checkout_at = ? WHERE member_id = ? AND checkout_at IS NULL AND deleted_at IS NULL",
+            [txStamp, member.id],
+          );
+          db.run(
             "INSERT INTO attendance (id, member_id, card_id, subscription_id, checkin_at, created_by, device_identifier, notes)\nVALUES (?, ?, ?, NULL, ?, ?, ?, ?)",
             [
               attendanceId,
@@ -345,7 +349,7 @@ export async function recordCheckIn(
 
   // The duplicate-window check (read last visit + compare) is performed INSIDE
   // the write transaction (BEGIN IMMEDIATE) so two very quick scans for the same
-  // member serialize and can't both pass before either insert commits — a
+  // member serialize and can't both pass before either insert commits â€” a
   // double-scan must not consume two session credits or record two identical
   // check-ins.
   let duplicateResult: CheckInResult | null = null;
@@ -374,6 +378,10 @@ export async function recordCheckIn(
         }
       }
 
+      db.run(
+        "UPDATE attendance SET checkout_at = ? WHERE member_id = ? AND checkout_at IS NULL AND deleted_at IS NULL",
+        [currentTxStamp, member.id],
+      );
       db.run(
         "INSERT INTO attendance (id, member_id, card_id, subscription_id, checkin_at, created_by, device_identifier, notes)\nVALUES (?, ?, ?, ?, ?, ?, ?, NULL)",
         [
@@ -501,12 +509,39 @@ export interface LiveOccupant {
   branchId?: string | null;
 }
 
+export function sweepOverdueOccupants(db: Db): number {
+  if (!isAutoCheckoutOverdueEnabled(db)) return 0;
+  const now = new Date();
+  const durationMinutes = getOccupancyDurationMinutes(db);
+  const nowIso = nowStamp();
+
+  const openRows = db.all<{ id: string; checkin_at: string }>(
+    "SELECT id, checkin_at FROM attendance WHERE deleted_at IS NULL AND checkout_at IS NULL"
+  );
+  let swept = 0;
+  for (const row of openRows) {
+    const checkinDate = new Date(row.checkin_at.replace(" ", "T"));
+    const elapsedMs = now.getTime() - checkinDate.getTime();
+    if (elapsedMs >= durationMinutes * 60 * 1000) {
+      db.run("UPDATE attendance SET checkout_at = ? WHERE id = ? AND checkout_at IS NULL", [
+        nowIso,
+        row.id,
+      ]);
+      swept++;
+    }
+  }
+  return swept;
+}
+
 export function listLiveOccupants(
   db: Db,
   actor: ServiceActor,
   branchId?: string,
 ): { occupants: LiveOccupant[]; totalNow: number; durationMinutes: number } {
   requirePermission(actor, "checkin.view_history");
+  if (isAutoCheckoutOverdueEnabled(db)) {
+    sweepOverdueOccupants(db);
+  }
   const targetBranch = branchId && branchId !== "all" ? branchId : undefined;
   const branchClause = targetBranch ? " AND COALESCE(a.branch_id, 'main') = ?" : "";
   const branchParams = targetBranch ? [targetBranch] : [];
@@ -534,7 +569,7 @@ export function listLiveOccupants(
        m.member_code,
        m.phone,
        m.photo_file_id,
-       COALESCE(p.name, a.notes, 'حصة يومية') AS plan_name,
+       COALESCE(p.name, a.notes, 'Ø­ØµØ© ÙŠÙˆÙ…ÙŠØ©') AS plan_name,
        a.checkin_at,
        a.branch_id
      FROM attendance a
@@ -548,7 +583,23 @@ export function listLiveOccupants(
     [today, ...branchParams],
   );
 
-  const occupants: LiveOccupant[] = rows.map((r) => {
+  // Deduplicate occupants so one member cannot appear twice simultaneously.
+  // Auto-close any dangling duplicate older attendance rows in background.
+  const seenMemberIds = new Set<string>();
+  const uniqueRows: typeof rows = [];
+  for (const r of rows) {
+    if (seenMemberIds.has(r.member_id)) {
+      db.run("UPDATE attendance SET checkout_at = ? WHERE id = ? AND checkout_at IS NULL", [
+        nowStamp(),
+        r.attendance_id,
+      ]);
+      continue;
+    }
+    seenMemberIds.add(r.member_id);
+    uniqueRows.push(r);
+  }
+
+  const occupants: LiveOccupant[] = uniqueRows.map((r) => {
     const checkinDate = new Date(r.checkin_at.replace(" ", "T"));
     const elapsedMs = Math.max(0, now.getTime() - checkinDate.getTime());
     const minutesElapsed = Math.floor(elapsedMs / (60 * 1000));

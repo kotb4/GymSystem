@@ -11,5 +11,6 @@ export const cash = defineService({
   listCashSessions: a(cashSessionService.listCashSessions as Fn),
   getCashierPerformanceSummary: a(cashSessionService.getCashierPerformanceSummary as Fn),
   withdrawByOwner: a(cashSessionService.withdrawByOwner as Fn),
+  depositToDrawer: a(cashSessionService.depositToDrawer as Fn),
   resolveInterShiftGap: a(cashSessionService.resolveInterShiftGap as Fn),
 });

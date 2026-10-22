@@ -61,6 +61,15 @@ export function PurchasesPage() {
   const [storeProducts, setStoreProducts] = useState<Array<{ id: string; name: string; costMinor: number }>>([]);
   const [savingInvoice, setSavingInvoice] = useState(false);
 
+  // Quick Product modal inside Purchases
+  const [quickProductModalOpen, setQuickProductModalOpen] = useState(false);
+  const [quickProductTargetIndex, setQuickProductTargetIndex] = useState<number | null>(null);
+  const [quickProductName, setQuickProductName] = useState("");
+  const [quickProductPriceMajor, setQuickProductPriceMajor] = useState("");
+  const [quickProductCostMajor, setQuickProductCostMajor] = useState("");
+  const [quickProductBarcode, setQuickProductBarcode] = useState("");
+  const [savingQuickProduct, setSavingQuickProduct] = useState(false);
+
   // Pay Invoice Debt modal
   const [payModalTarget, setPayModalTarget] = useState<PurchaseInvoiceRow | null>(null);
   const [payDebtMajor, setPayDebtMajor] = useState("");
@@ -164,7 +173,68 @@ export function PurchasesPage() {
     setInvoiceItems(invoiceItems.filter((_, idx) => idx !== index));
   };
 
+  const handleOpenQuickProduct = (targetIndex?: number) => {
+    setQuickProductTargetIndex(targetIndex !== undefined ? targetIndex : invoiceItems.length - 1);
+    setQuickProductName("");
+    setQuickProductPriceMajor("");
+    setQuickProductCostMajor(targetIndex !== undefined && invoiceItems[targetIndex]?.unitCostMajor ? invoiceItems[targetIndex].unitCostMajor : "");
+    setQuickProductBarcode("");
+    setQuickProductModalOpen(true);
+  };
+
+  const handleSaveQuickProduct = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!quickProductName.trim()) {
+      toast("warning", "يرجى كتابة اسم المنتج");
+      return;
+    }
+    const priceMinor = Math.round(parseFloat(quickProductPriceMajor || "0") * 100);
+    const costMinor = Math.round(parseFloat(quickProductCostMajor || "0") * 100);
+    if (priceMinor < 0 || costMinor < 0) {
+      toast("warning", "الأسعار يجب أن تكون قيماً موجبة");
+      return;
+    }
+
+    setSavingQuickProduct(true);
+    try {
+      const created = await api.store.createProduct({
+        name: quickProductName.trim(),
+        priceMinor,
+        costMinor,
+        stockQty: 0,
+        barcode: quickProductBarcode.trim() || undefined,
+      });
+
+      const newProdEntry = { id: created.id, name: created.name, costMinor: created.costMinor };
+      setStoreProducts((prev) => [...prev, newProdEntry]);
+
+      const targetIdx =
+        quickProductTargetIndex !== null && quickProductTargetIndex >= 0 && quickProductTargetIndex < invoiceItems.length
+          ? quickProductTargetIndex
+          : invoiceItems.length - 1;
+
+      const updated = [...invoiceItems];
+      updated[targetIdx] = {
+        ...updated[targetIdx],
+        productId: created.id,
+        unitCostMajor: (created.costMinor / 100).toString(),
+      };
+      setInvoiceItems(updated);
+
+      toast("success", `تم إضافة المنتج (${created.name}) للمتجر واختياره بنجاح`);
+      setQuickProductModalOpen(false);
+    } catch (err) {
+      toast("error", describeError(err, t));
+    } finally {
+      setSavingQuickProduct(false);
+    }
+  };
+
   const handleProductSelect = (index: number, productId: string) => {
+    if (productId === "__new__") {
+      handleOpenQuickProduct(index);
+      return;
+    }
     const prod = storeProducts.find((p) => p.id === productId);
     const updated = [...invoiceItems];
     updated[index] = {
@@ -682,16 +752,28 @@ export function PurchasesPage() {
                   <ShoppingCart className="size-3.5 text-cyan-400" />
                   أصناف الفاتورة والكميات المشتراة
                 </span>
-                <Button
-                  type="button"
-                  size="sm"
-                  variant="secondary"
-                  onClick={handleAddInvoiceItem}
-                  className="h-6 text-xs gap-1"
-                >
-                  <Plus className="size-3" />
-                  إضافة صنف
-                </Button>
+                <div className="flex items-center gap-1.5">
+                  <Button
+                    type="button"
+                    size="sm"
+                    variant="ghost"
+                    onClick={() => handleOpenQuickProduct()}
+                    className="h-6 text-xs gap-1 border border-cyan-500/30 text-cyan-400 hover:bg-cyan-500/10"
+                  >
+                    <Plus className="size-3" />
+                    + منتج جديد للمتجر
+                  </Button>
+                  <Button
+                    type="button"
+                    size="sm"
+                    variant="secondary"
+                    onClick={handleAddInvoiceItem}
+                    className="h-6 text-xs gap-1"
+                  >
+                    <Plus className="size-3" />
+                    إضافة صنف
+                  </Button>
+                </div>
               </div>
 
               {invoiceItems.map((item, idx) => (
@@ -702,6 +784,7 @@ export function PurchasesPage() {
                       onChange={(e) => handleProductSelect(idx, e.target.value)}
                       options={[
                         { value: "", label: "-- اختر منتج المتجر --" },
+                        { value: "__new__", label: "✨ + إضافة منتج جديد لحظياً للمتجر..." },
                         ...storeProducts.map((p) => ({ value: p.id, label: p.name })),
                       ]}
                       className="text-xs"
@@ -832,6 +915,87 @@ export function PurchasesPage() {
       )}
 
       {/* Pay Debt Modal */}
+      {/* Quick New Product Modal */}
+      {quickProductModalOpen && (
+        <Modal
+          open={quickProductModalOpen}
+          onClose={() => setQuickProductModalOpen(false)}
+          title="إضافة منتج جديد للمتجر لحظياً"
+        >
+          <form onSubmit={handleSaveQuickProduct} className="space-y-4">
+            <div className="rounded-xl border border-cyan-500/30 bg-cyan-500/10 p-3 text-xs text-cyan-300">
+              سيتم إنشاء المنتج في المتجر برصيد مخزون أولي (0)، وستقوم فاتورة الشراء الحالية بإضافة الكمية المشتراة تلقائياً إلى المخزون.
+            </div>
+
+            <div>
+              <label className="text-xs font-medium text-muted block mb-1">اسم المنتج *</label>
+              <Input
+                value={quickProductName}
+                onChange={(e) => setQuickProductName(e.target.value)}
+                placeholder="مثال: واي بروتين جولد ستاندرد 2 كجم"
+                autoFocus
+                required
+              />
+            </div>
+
+            <div className="grid grid-cols-2 gap-3">
+              <div>
+                <label className="text-xs font-medium text-muted block mb-1">سعر التكلفة / الشراء (ج.م) *</label>
+                <Input
+                  type="number"
+                  min="0"
+                  step="0.5"
+                  value={quickProductCostMajor}
+                  onChange={(e) => setQuickProductCostMajor(e.target.value)}
+                  placeholder="مثال: 1500"
+                  required
+                />
+              </div>
+
+              <div>
+                <label className="text-xs font-medium text-muted block mb-1">سعر البيع للجمهور (ج.م) *</label>
+                <Input
+                  type="number"
+                  min="0"
+                  step="0.5"
+                  value={quickProductPriceMajor}
+                  onChange={(e) => setQuickProductPriceMajor(e.target.value)}
+                  placeholder="مثال: 1850"
+                  required
+                />
+              </div>
+            </div>
+
+            <div>
+              <label className="text-xs font-medium text-muted block mb-1">باركود المنتج (اختياري)</label>
+              <Input
+                value={quickProductBarcode}
+                onChange={(e) => setQuickProductBarcode(e.target.value)}
+                placeholder="امسح الباركود بجهاز المسح أو اكتبه"
+              />
+            </div>
+
+            <div className="flex justify-end gap-2 pt-4 border-t border-line">
+              <Button
+                type="button"
+                variant="ghost"
+                onClick={() => setQuickProductModalOpen(false)}
+                disabled={savingQuickProduct}
+              >
+                إلغاء
+              </Button>
+              <Button
+                type="submit"
+                className="bg-cyan-500 hover:bg-cyan-600 text-black font-semibold"
+                disabled={savingQuickProduct}
+              >
+                {savingQuickProduct ? "جارٍ الحفظ..." : "حفظ المنتج واختياره"}
+              </Button>
+            </div>
+          </form>
+        </Modal>
+      )}
+
       {payModalTarget && (
         <Modal
           open={!!payModalTarget}

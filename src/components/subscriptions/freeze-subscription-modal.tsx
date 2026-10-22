@@ -60,7 +60,8 @@ export function FreezeSubscriptionModal({
       try {
         const data = await api.subscriptions.freezes(sub.id);
         setHistory(data);
-      } catch {
+      } catch (err) {
+        console.error("Failed to load freeze history:", err);
       } finally {
         setLoadingHistory(false);
       }

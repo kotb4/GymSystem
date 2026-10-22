@@ -137,9 +137,25 @@ export function computeSessionCash(
   untilStamp: string,
   box: CashBox = "gym",
 ): SessionCashTotals {
+  let boxClause = " AND box = ?";
+  let boxParams: string[] = [box];
+
+  if (box === "gym") {
+    // If no dedicated store cash session was active during this window,
+    // operate as Unified Treasury: count all cash across Gym, Store & Bar into this single drawer.
+    const hasStoreSession = db.first(
+      "SELECT 1 FROM cash_sessions WHERE box = 'store' AND opened_at <= ? AND (closed_at IS NULL OR closed_at >= ?) LIMIT 1",
+      [untilStamp, openedAt],
+    );
+    if (!hasStoreSession) {
+      boxClause = " AND box IN ('gym', 'store')";
+      boxParams = [];
+    }
+  }
+
   const row = db.first<{ cash_in: number; cash_out: number }>(
-    `SELECT\n      COALESCE(SUM(CASE WHEN direction = 1 THEN amount_minor ELSE 0 END), 0) AS cash_in,\n      COALESCE(SUM(CASE WHEN direction = -1 THEN amount_minor ELSE 0 END), 0) AS cash_out\n    FROM financial_ledger\n    WHERE method_code = ? AND occurred_at >= ? AND occurred_at <= ? AND box = ?`,
-    [CASH_METHOD, openedAt, untilStamp, box],
+    `SELECT\n      COALESCE(SUM(CASE WHEN direction = 1 THEN amount_minor ELSE 0 END), 0) AS cash_in,\n      COALESCE(SUM(CASE WHEN direction = -1 THEN amount_minor ELSE 0 END), 0) AS cash_out\n    FROM financial_ledger\n    WHERE method_code = ? AND occurred_at >= ? AND occurred_at <= ?${boxClause}`,
+    [CASH_METHOD, openedAt, untilStamp, ...boxParams],
   );
   return {
     cashInMinor: Number(row?.cash_in ?? 0),
@@ -355,7 +371,12 @@ export async function closeCashSession(
     const expected =
       Number(row.opening_balance_minor) + totals.cashInMinor - totals.cashOutMinor;
     if (expected < 0) {
-      throw errValidation("errors.finance.negativeExpected");
+      if (!isOwnerOrDev) {
+        throw errValidation("errors.finance.negativeExpected");
+      }
+      if (!note || note.trim().length < 2) {
+        throw errValidation("errors.finance.negativeExpectedRequiresNote");
+      }
     }
     const difference = roundedCounted - expected;
 
@@ -423,7 +444,7 @@ export function getOpenSessionTotals(
     openingMinor,
     cashInMinor: totals.cashInMinor,
     cashOutMinor: totals.cashOutMinor,
-    expectedMinor: Math.max(0, openingMinor + totals.cashInMinor - totals.cashOutMinor),
+    expectedMinor: openingMinor + totals.cashInMinor - totals.cashOutMinor,
   };
 }
 
@@ -699,6 +720,67 @@ export async function withdrawByOwner(
     expectedRemainingMinor: expectedRemaining,
   };
 }
+
+export interface DrawerDepositInput {
+  amountMinor: number;
+  note?: string | null;
+  box?: CashBox;
+}
+
+export async function depositToDrawer(
+  db: Db,
+  actor: ServiceActor,
+  input: DrawerDepositInput,
+): Promise<{ depositId: string; amountMinor: number; expectedNewMinor: number }> {
+  requirePermission(actor, "cash.open");
+  const amountMinor = Math.round(input.amountMinor);
+  if (!Number.isFinite(amountMinor) || amountMinor <= 0) {
+    throw errValidation("errors.finance.invalidAmount");
+  }
+
+  const box: CashBox = input.box ?? "gym";
+  const openSession = getOpenCashSession(db, actor, box);
+  if (!openSession) {
+    throw errValidation("errors.finance.noOpenSessionToDeposit");
+  }
+
+  const depositId = crypto.randomUUID();
+  const stamp = nowStamp();
+  const note = input.note?.trim() || "إيداع عهدة نقدية بالدرج";
+
+  await db.transaction(async () => {
+    insertLedgerEntry(db, {
+      entryType: "payment",
+      refTable: "cash_sessions",
+      refId: depositId,
+      memberId: null,
+      methodCode: "cash",
+      direction: 1,
+      amountMinor,
+      occurredAt: stamp,
+      actor,
+      box,
+    });
+
+    recordAudit(db, actor, "CASH_DISCREPANCY", "cash_session", openSession.id, {
+      depositId,
+      amountMinor,
+      note,
+      isDrawerDeposit: true,
+      box,
+    });
+  });
+
+  const totals = computeSessionCash(db, openSession.openedAt, nowStamp(), box);
+  const expectedNewMinor = openSession.openingBalanceMinor + totals.cashInMinor - totals.cashOutMinor;
+
+  return {
+    depositId,
+    amountMinor,
+    expectedNewMinor,
+  };
+}
+
 
 export interface ResolveGapInput {
   sessionId: string;

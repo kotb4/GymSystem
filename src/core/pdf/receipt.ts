@@ -321,9 +321,15 @@ function paint(doc: PdfDoc, data: ReceiptData, qrBuffer: Buffer | null): void {
     curY += 34;
   }
 
+  // ── Footer layout calculations ──────────────────────────────────────────
+  const footerH = 88;
+  const footerY = pageHeight - PAGE_MARGIN - footerH - 12;
+
   // ── Terms & Rules block if present ──────────────────────────────────────
   if (data.terms && data.terms.length > 0) {
-    const termsCount = Math.min(3, data.terms.length);
+    const availableH = Math.max(40, footerY - curY - 15);
+    const maxTermsBySpace = Math.max(1, Math.floor((availableH - 22) / 13));
+    const termsCount = Math.min(data.terms.length, maxTermsBySpace, 8);
     const termsH = termsCount * 13 + 22;
     doc.roundedRect(tableX, curY, tableW, termsH, 6).fill("#f8fafc");
     doc.roundedRect(tableX, curY, tableW, termsH, 6).lineWidth(0.6).strokeColor(COLOR_LIGHT_BORDER).stroke();
@@ -346,9 +352,6 @@ function paint(doc: PdfDoc, data: ReceiptData, qrBuffer: Buffer | null): void {
   }
 
   // ── Footer with QR Code, Footer Text, and Gym Stamp ─────────────────────
-  const footerH = 88;
-  const footerY = pageHeight - PAGE_MARGIN - footerH - 12;
-
   doc.moveTo(left + 12, footerY).lineTo(right - 12, footerY).lineWidth(0.8).strokeColor(COLOR_LIGHT_BORDER).stroke();
 
   // QR Code on Left (only if enabled)

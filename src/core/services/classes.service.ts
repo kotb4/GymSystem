@@ -1,7 +1,7 @@
 import { errConflict, errNotFound, errValidation } from "@/core/errors";
 import { requirePermission, roleHasPermission, type ServiceActor } from "@/core/permissions";
 import type { Db, Row } from "@/db/engine";
-import { nowStamp, todayKey } from "@/core/dates";
+import { formatTime12, nowStamp, todayKey } from "@/core/dates";
 import { recordAudit } from "./audit.service";
 import { consumeSession } from "./attendance.service";
 import { assertDepartmentAccess, memberDepartmentById } from "./department";
@@ -50,7 +50,9 @@ export function formatScheduleText(slots: ClassScheduleSlot[]): string {
   return slots
     .map((s) => {
       const day = DOW_NAMES_AR[s.dayOfWeek] || `يوم ${s.dayOfWeek}`;
-      const time = s.endTime ? `${s.startTime} - ${s.endTime}` : s.startTime;
+      const startFmt = formatTime12(s.startTime);
+      const endFmt = s.endTime ? formatTime12(s.endTime) : "";
+      const time = endFmt ? `${startFmt} إلى ${endFmt}` : startFmt;
       return `${day} (${time})`;
     })
     .join("، ");

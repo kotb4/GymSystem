@@ -278,7 +278,7 @@ export function LeavesTab({ onDataChanged }: { onDataChanged?: () => void }) {
       r.reason ?? "",
       statusLabel(r.status),
     ]);
-    downloadCsvWithBom(`سجل_إجازات_الموظفين_${new Date().toISOString().slice(0, 10)}`, headers, dataRows);
+    downloadCsvWithBom(`سجل_إجازات_الموظفين_${todayKey()}`, headers, dataRows);
   };
 
   const leaveTypeLabel = (lt: LeaveType) =>
@@ -781,6 +781,12 @@ function AddAmountModal({ kind, employees, editTarget, onClose, onSaved }: {
   const [busy, setBusy] = useState(false);
   const [calculatingDues, setCalculatingDues] = useState(false);
 
+  useEffect(() => {
+    if (!form.employeeId && employees.length > 0) {
+      setForm((f) => ({ ...f, employeeId: employees[0].id }));
+    }
+  }, [employees, form.employeeId]);
+
   const autoFillTrainerDues = async () => {
     if (!form.employeeId) return;
     setCalculatingDues(true);
@@ -805,17 +811,29 @@ function AddAmountModal({ kind, employees, editTarget, onClose, onSaved }: {
   };
 
   const save = async () => {
+    const amountMinor = Math.round(Number(form.amountMajor || 0) * 100);
+    if (!form.employeeId) {
+      toast("warning", "يرجى اختيار الموظف أولاً");
+      return;
+    }
+    if (amountMinor <= 0 || !Number.isFinite(amountMinor)) {
+      toast("warning", "يرجى إدخال مبلغ صحيح أكبر من الصفر");
+      return;
+    }
+    if (form.reason.trim().length < 2) {
+      toast("warning", `يرجى كتابة سبب ${kind === "deduction" ? "الاستقطاع" : "الحافز"} (حرفان على الأقل)`);
+      return;
+    }
+
     setBusy(true);
     try {
-      const amountMinor = Math.round(Number(form.amountMajor || 0) * 100);
-      if (!form.employeeId || amountMinor <= 0 || form.reason.trim().length < 2) throw new Error("validation");
       if (isEdit && editTarget) {
-        const input = { id: editTarget.id, amountMinor, reason: form.reason, dateKey: form.dateKey };
+        const input = { id: editTarget.id, amountMinor, reason: form.reason.trim(), dateKey: form.dateKey };
         if (kind === "deduction") await api.employeesHr.updateDeduction(input);
         else await api.employeesHr.updateIncentive(input);
         toast("success", kind === "deduction" ? t("hr.deductionUpdated") : t("hr.incentiveUpdated"));
       } else {
-        const input = { employeeId: form.employeeId, amountMinor, reason: form.reason, dateKey: form.dateKey };
+        const input = { employeeId: form.employeeId, amountMinor, reason: form.reason.trim(), dateKey: form.dateKey };
         if (kind === "deduction") await api.employeesHr.addDeduction(input);
         else await api.employeesHr.addIncentive(input);
         toast("success", kind === "deduction" ? t("hr.deductionCreated") : t("hr.incentiveCreated"));
@@ -1019,11 +1037,29 @@ function AddAdvanceModal({ employees, defaultMonth, onClose, onSaved }: {
   });
   const [busy, setBusy] = useState(false);
 
+  useEffect(() => {
+    if (!form.employeeId && employees.length > 0) {
+      setForm((f) => ({ ...f, employeeId: employees[0].id }));
+    }
+  }, [employees, form.employeeId]);
+
   const save = async () => {
+    const amountMinor = Math.round(Number(form.amountMajor || 0) * 100);
+    if (!form.employeeId) {
+      toast("warning", "يرجى اختيار الموظف أولاً");
+      return;
+    }
+    if (amountMinor <= 0 || !Number.isFinite(amountMinor)) {
+      toast("warning", "يرجى إدخال مبلغ صحيح أكبر من الصفر");
+      return;
+    }
+    if (!form.deductionMonth) {
+      toast("warning", "يرجى تحديد شهر الخصم للسلفة");
+      return;
+    }
+
     setBusy(true);
     try {
-      const amountMinor = Math.round(Number(form.amountMajor || 0) * 100);
-      if (!form.employeeId || amountMinor <= 0 || !form.deductionMonth) throw new Error("validation");
       await api.employeesHr.addAdvance({
         employeeId: form.employeeId,
         amountMinor,

@@ -527,7 +527,7 @@ function LeadDetailModal({ leadId, onClose, onChanged }: { leadId: string | null
     api.quickSessions
       .list({ leadId, limit: 10 })
       .then((res) => setDayPasses(res.items))
-      .catch(() => {});
+      .catch((err) => console.error("Failed to load lead day passes:", err));
   }, [leadId]);
   useEffect(() => {
     if (!leadId) {

@@ -195,7 +195,7 @@ export function ReceptionKioskPanel({
         streamRef.current = stream;
         if (videoRef.current) {
           videoRef.current.srcObject = stream;
-          await videoRef.current.play().catch(() => {});
+          await videoRef.current.play().catch((err) => console.warn("Video play interrupted:", err));
           setReady(true);
         }
 

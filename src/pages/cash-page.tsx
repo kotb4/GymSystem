@@ -25,7 +25,7 @@ import type {
   CashSession,
 } from "@/core/services/cash-session.service";
 import { formatMinor, toMinor } from "@/core/money";
-import { todayKey } from "@/core/dates";
+import { todayKey, dateKey } from "@/core/dates";
 import { appConfig } from "@/config/app.config";
 import { formatDateShort, formatTime } from "@/services/format";
 import { Card, CardHeader } from "@/components/ui/card";
@@ -76,6 +76,11 @@ export function CashSessionsPanel() {
   const [withdrawNote, setWithdrawNote] = useState("");
   const [withdrawBusy, setWithdrawBusy] = useState(false);
   const [withdrawError, setWithdrawError] = useState<string | null>(null);
+  const [depositOpen, setDepositOpen] = useState(false);
+  const [depositAmount, setDepositAmount] = useState("");
+  const [depositNote, setDepositNote] = useState("");
+  const [depositBusy, setDepositBusy] = useState(false);
+  const [depositError, setDepositError] = useState<string | null>(null);
   const [calcOpen, setCalcOpen] = useState(false);
 
   // Deficit Resolution Modal State
@@ -98,7 +103,7 @@ export function CashSessionsPanel() {
   const canView = hasPermission("payments.view");
   const canViewReports = hasPermission("reports.view");
   const canViewUsers = hasPermission("users.view");
-  const activeBox: "gym" | "store" = filterBox === "store" ? "store" : "gym";
+  const activeBox: "gym" | "store" = "gym";
   const isOpener = Boolean(actor && openTotals && actor.userId === openTotals.session.openedById);
   const isOwner = Boolean(actor && actor.roleId === "owner");
   const canClose = isOpener || isOwner;
@@ -130,11 +135,33 @@ export function CashSessionsPanel() {
       s.countedClosingMinor != null ? (s.countedClosingMinor / 100).toFixed(2) : "—",
       s.differenceMinor != null ? (s.differenceMinor / 100).toFixed(2) : "—",
       s.status === "open" ? "مفتوحة" : "مغلقة",
-      s.box === "store" ? "المتجر" : "الجيم",
+      s.box === "store" ? "المتجر (سابقاً)" : "الخزينة الموحدة",
       s.closeNote ?? "—",
     ]);
-    downloadCsvWithBom(`سجل_ورديات_الخزينة_${new Date().toISOString().slice(0, 10)}`, headers, dataRows);
+    downloadCsvWithBom(`سجل_ورديات_الخزينة_${todayKey()}`, headers, dataRows);
     toast("success", "تم تصدير سجل الورديات إلى ملف إكسيل بنجاح");
+  };
+
+  const onDrawerDeposit = async () => {
+    if (!actor || !openTotals) return;
+    setDepositBusy(true);
+    setDepositError(null);
+    try {
+      await api.cash.depositToDrawer({
+        amountMinor: toMinor(depositAmount || "0"),
+        note: depositNote || null,
+        box: openTotals.session.box,
+      });
+      toast("success", t("cashPage.drawerDepositSuccess"));
+      setDepositOpen(false);
+      setDepositAmount("");
+      setDepositNote("");
+      reload();
+    } catch (err) {
+      setDepositError(describeError(err, t));
+    } finally {
+      setDepositBusy(false);
+    }
   };
 
   const onOwnerWithdraw = async () => {
@@ -586,36 +613,24 @@ export function CashSessionsPanel() {
           <p className="text-xs text-subtle mt-0.5">متابعة حركة النقدية، تسليم الدرج، وجرد العجز والزيادة بين الموظفين</p>
         </div>
         <div className="flex items-center gap-2">
-          <div className="inline-flex items-center rounded-xl border border-line bg-panel p-1 text-xs font-bold">
-            <button
-              type="button"
-              onClick={() => {
-                setFilterBox("gym");
-                setPage(1);
-              }}
-              className={`rounded-lg px-3 py-1.5 transition-colors cursor-pointer ${
-                activeBox === "gym"
-                  ? "bg-neon/15 text-neon border border-neon/40"
-                  : "text-subtle hover:text-foreground"
-              }`}
-            >
-              🏋️ صندوق الجيم
-            </button>
-            <button
-              type="button"
-              onClick={() => {
-                setFilterBox("store");
-                setPage(1);
-              }}
-              className={`rounded-lg px-3 py-1.5 transition-colors cursor-pointer ${
-                activeBox === "store"
-                  ? "bg-cyan/15 text-cyan border border-cyan/40"
-                  : "text-subtle hover:text-foreground"
-              }`}
-            >
-              🛒 صندوق المتجر
-            </button>
+          <div className="inline-flex items-center gap-2 rounded-xl border border-emerald-500/30 bg-emerald-500/10 px-3.5 py-1.5 text-xs font-bold text-emerald-400 shadow-sm">
+            <span className="size-2 rounded-full bg-emerald-400 animate-pulse" />
+            <span>الخزينة النقدية الموحدة (الجيم والمتجر والبار)</span>
           </div>
+        {openTotals ? (
+          <Button
+            type="button"
+            variant="secondary"
+            onClick={() => {
+              setDepositError(null);
+              setDepositOpen(true);
+            }}
+            className="border border-emerald-500/40 text-emerald-400 hover:bg-emerald-500/10 gap-2 font-bold"
+          >
+            <ArrowDownCircle className="size-4" />
+            {t("cashPage.drawerDepositBtn")}
+          </Button>
+        ) : null}
         {openTotals && isOwner ? (
           <Button
             type="button"
@@ -643,7 +658,7 @@ export function CashSessionsPanel() {
               accent="cyan"
             />
             <StatCard
-              title={t("cashPage.cardCashIn")}
+              title="المقبوضات النقدية (الجيم والمتجر)"
               value={formatMinor(openTotals.cashInMinor)}
               icon={<ArrowUpCircle className="size-5" />}
               accent="neon"
@@ -655,7 +670,7 @@ export function CashSessionsPanel() {
               accent="amber"
             />
             <StatCard
-              title={t("cashPage.cardExpected")}
+              title="الرصيد النقدي المتوقع بالدرج"
               value={formatMinor(openTotals.expectedMinor)}
               icon={<LockKeyhole className="size-5" />}
               accent="violet"
@@ -670,6 +685,17 @@ export function CashSessionsPanel() {
                   description={`${t("cashPage.sessionSince")} ${formatDateShort(new Date(openTotals.session.openedAt.replace(" ", "T")))} • ${formatTime(openTotals.session.openedAt)} · الموظف المستلم: ${openTotals.session.openedByName}`}
                 />
                 <form onSubmit={(e) => void onClose(e)} noValidate className="space-y-4 px-5 pb-5">
+                  {openTotals.expectedMinor < 0 && (
+                    <div className="rounded-xl border border-rose-500/40 bg-rose-500/10 p-3.5 text-xs text-rose-300 font-semibold space-y-1">
+                      <div className="flex items-center gap-2 font-bold text-rose-400">
+                        <AlertTriangle className="size-4 shrink-0" />
+                        <span>تنبيه: الرصيد المتوقع بالدرج سالب ({formatMinor(openTotals.expectedMinor)})</span>
+                      </div>
+                      <p>
+                        المصروفات النقدية المسجلة أكبر من المقبوضات. يمكنك إيداع عهدة بالدرج لتسوية الرصيد عبر زر «إيداع عهدة بالدرج» بالأعلى، أو كتابة تبرير الإغلاق في حقل الملاحظة للاعتماد.
+                      </p>
+                    </div>
+                  )}
                   {isOwner && !isOpener && (
                     <div className="rounded-xl border border-amber/30 bg-amber/10 px-3.5 py-2.5 text-[12px] font-bold text-amber flex items-center gap-2">
                       <ShieldAlert className="size-4 shrink-0" />
@@ -799,7 +825,7 @@ export function CashSessionsPanel() {
                 <div className="p-3.5 rounded-2xl border border-line bg-surface/50 flex flex-wrap items-center justify-between gap-3 shadow-sm">
                   <div className="space-y-1">
                     <span className="text-[11px] font-medium text-subtle block">
-                      الرصيد الفعلي المرحل من آخر وردية مغلقة ({lastClosedSession.box === "store" ? "صندوق المتجر" : "صندوق الجيم"}):
+                      الرصيد الفعلي المرحل من آخر وردية مغلقة (الخزينة الموحدة):
                     </span>
                     <div className="flex items-center gap-2">
                       <span className="text-xl font-black text-white tabnum">
@@ -930,9 +956,9 @@ export function CashSessionsPanel() {
                 size="sm"
                 onClick={() => {
                   const now = new Date();
-                  const sevenDaysAgo = new Date(now.getTime() - 7 * 86400000).toISOString().slice(0, 10);
+                  const sevenDaysAgo = dateKey(new Date(now.getTime() - 7 * 86400000));
                   setFilterFrom(sevenDaysAgo);
-                  setFilterTo(now.toISOString().slice(0, 10));
+                  setFilterTo(todayKey());
                   setPage(1);
                 }}
                 className="text-xs h-7 px-2.5"
@@ -1137,6 +1163,83 @@ export function CashSessionsPanel() {
           {withdrawError && (
             <p role="alert" className="rounded-xl border border-red/30 bg-red/10 px-3.5 py-2.5 text-[13px] font-semibold text-red">
               {withdrawError}
+            </p>
+          )}
+        </div>
+      </Modal>
+
+      <Modal
+        open={depositOpen}
+        onClose={() => setDepositOpen(false)}
+        title={t("cashPage.drawerDepositTitle")}
+        footer={
+          <div className="flex items-center justify-end gap-2">
+            <Button type="button" variant="ghost" onClick={() => setDepositOpen(false)} disabled={depositBusy}>
+              {t("common.cancel")}
+            </Button>
+            <Button
+              type="button"
+              className="bg-emerald-600 hover:bg-emerald-500 text-white font-bold gap-2"
+              loading={depositBusy}
+              disabled={depositBusy || !depositAmount || Number(depositAmount) <= 0}
+              onClick={() => void onDrawerDeposit()}
+            >
+              <ArrowDownCircle className="size-4" />
+              {t("cashPage.drawerDepositBtn")}
+            </Button>
+          </div>
+        }
+      >
+        <div className="space-y-4 py-2">
+          <p className="text-xs text-subtle leading-relaxed">
+            {t("cashPage.drawerDepositDesc")}
+          </p>
+          <div className="rounded-xl border border-emerald-500/30 bg-emerald-500/10 p-3.5 text-xs text-emerald-300 leading-relaxed font-semibold">
+            {t("cashPage.drawerDepositNotice")}
+          </div>
+          <div className="space-y-3">
+            <div className="flex items-center justify-between text-xs text-subtle px-1">
+              <span>النقدية المتوقعة بالدرج حالياً:</span>
+              <span dir="ltr" className={`font-extrabold ${openTotals && openTotals.expectedMinor < 0 ? "text-rose-400" : "text-foreground"}`}>
+                {formatMinor(openTotals?.expectedMinor ?? 0)}
+              </span>
+            </div>
+            <div className="flex items-center gap-1.5 pt-1">
+              <span className="text-[11px] text-faint">مبالغ سريعة:</span>
+              {[200, 500, 1000, 2000, 5000].map((amt) => (
+                <button
+                  key={amt}
+                  type="button"
+                  onClick={() => setDepositAmount(String(amt))}
+                  className="rounded-lg border border-line/60 bg-subtle/5 px-2 py-0.5 text-[11px] font-semibold text-subtle hover:border-emerald-400 hover:text-emerald-400 hover:bg-emerald-500/10 transition-colors"
+                >
+                  +{amt} ج.م
+                </button>
+              ))}
+            </div>
+            <Input
+              label={t("cashPage.drawerDepositAmount")}
+              type="number"
+              min={1}
+              step="1"
+              dir="ltr"
+              autoFocus
+              value={depositAmount}
+              onChange={(e) => setDepositAmount(e.target.value)}
+              disabled={depositBusy}
+              placeholder="مثال: 500"
+            />
+            <Input
+              label={t("cashPage.drawerDepositNote")}
+              placeholder={t("cashPage.drawerDepositNotePh")}
+              value={depositNote}
+              onChange={(e) => setDepositNote(e.target.value)}
+              disabled={depositBusy}
+            />
+          </div>
+          {depositError && (
+            <p role="alert" className="rounded-xl border border-red/30 bg-red/10 px-3.5 py-2.5 text-[13px] font-semibold text-red">
+              {depositError}
             </p>
           )}
         </div>

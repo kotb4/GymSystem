@@ -560,14 +560,14 @@ describe("advanced class academy, roster attendance, profits & coach payouts", (
     expect(cls.scheduleSlots[0].startTime).toBe("16:00");
     expect(cls.scheduleSlots[0].endTime).toBe("17:30");
 
-    expect(cls.scheduleText).toContain("الأحد (16:00 - 17:30)");
-    expect(cls.scheduleText).toContain("الثلاثاء (18:00 - 19:00)");
+    expect(cls.scheduleText).toContain("الأحد (04:00 م إلى 05:30 م)");
+    expect(cls.scheduleText).toContain("الثلاثاء (06:00 م إلى 07:00 م)");
 
     // Update schedule
     const updated = await updateClass(db, owner, cls.id, {
       scheduleSlots: [{ dayOfWeek: 5, startTime: "10:00" }],
     });
-    expect(updated.scheduleText).toBe("الجمعة (10:00)");
+    expect(updated.scheduleText).toBe("الجمعة (10:00 ص)");
   });
 
   it("executes direct class attendance and batch attendance with session deduction", async () => {

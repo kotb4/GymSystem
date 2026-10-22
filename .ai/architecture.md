@@ -41,7 +41,7 @@ Shared kernel (`src/core/`): `permissions.ts` (93 perms, 5 roles, DB-grant cache
 
 ## Database (`src/db/`)
 
-- `engine.ts`: `Db` class — run/all/first/scalar/count/insert/exec, re-entrant `transaction()` (BEGIN IMMEDIATE), `onDirty` listeners fired after COMMIT.
+- `engine.ts`: `Db` class — run/all/first/scalar/count/insert/exec, re-entrant `transaction()` (BEGIN IMMEDIATE), `onDirty` listeners fired after COMMIT. Invariant: never await external I/O inside a transaction.
 - `migrations.ts`: append-only v1..v41 applied at every boot inside transactions; tracked in `schema_migrations`.
 - `seed.ts`: optional demo data when `GYM_SEED_DEMO=1` (backend env var; the only trigger) and `settings.demo_seeded` unset.
 - Tests use an in-memory/file driver via `tests/helpers/test-db.ts` (`createTestDb()`).

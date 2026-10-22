@@ -121,4 +121,48 @@ describe("Live Gym Occupants & Dynamic Workout Countdown", () => {
     expect(live.durationMinutes).toBe(60);
     expect(live.occupants[0].durationMinutes).toBe(60);
   });
+
+  it("automatically checks out overdue occupants when autoCheckoutOverdue setting is enabled", async () => {
+    updateSetting(db, owner, SETTING_KEYS.occupancyDurationMinutes, "45");
+    updateSetting(db, owner, SETTING_KEYS.autoCheckoutOverdue, "1");
+
+    const member = await createMember(db, owner, {
+      fullName: "عمر كمال",
+      phone: "01077778888",
+      gender: "male",
+    });
+
+    const plan = await createPlan(db, owner, {
+      name: "باقة 45 دقيقة",
+      durationDays: 30,
+      price: 200,
+    });
+
+    await createSubscription(db, owner, {
+      memberId: member.id,
+      planId: plan.id,
+      startDate: todayKey(),
+      price: 200,
+    });
+
+    // Insert an attendance record from 60 minutes ago (exceeding 45 mins)
+    const now = new Date();
+    const pad = (n: number) => String(n).padStart(2, "0");
+    const today = `${now.getFullYear()}-${pad(now.getMonth() + 1)}-${pad(now.getDate())}`;
+    const checkinTimeAgo = `${today} ${pad(now.getHours() - 1)}:${pad(now.getMinutes())}:00`;
+
+    db.run(
+      "INSERT INTO attendance (id, member_id, checkin_at, created_by) VALUES (?, ?, ?, ?)",
+      ["att-auto-1", member.id, checkinTimeAgo, owner.userId]
+    );
+
+    // When listLiveOccupants is called, it should auto-checkout the overdue occupant
+    const live = listLiveOccupants(db, owner);
+    expect(live.totalNow).toBe(0);
+    expect(live.occupants).toHaveLength(0);
+
+    // Verify database record has checkout_at populated
+    const record = db.first<{ checkout_at: string | null }>("SELECT checkout_at FROM attendance WHERE id = 'att-auto-1'");
+    expect(record?.checkout_at).not.toBeNull();
+  });
 });

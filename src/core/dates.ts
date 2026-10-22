@@ -129,3 +129,47 @@ export function nextAnniversaryKey(dobKey: string, fromKey: string): string | nu
   }
   return dateKey(candidate);
 }
+
+/**
+ * Formats a time string (e.g. "18:00", "09:30", "14:15:00") or Date into 12-hour format with Arabic period:
+ * "18:00" -> "06:00 م"
+ * "09:30" -> "09:30 ص"
+ * "00:00" -> "12:00 ص"
+ * "12:00" -> "12:00 م"
+ */
+export function formatTime12(input: Date | string | number | null | undefined): string {
+  if (!input) return "—";
+  let hours = 0;
+  let minutes = 0;
+
+  if (input instanceof Date) {
+    if (isNaN(input.getTime())) return "—";
+    hours = input.getHours();
+    minutes = input.getMinutes();
+  } else if (typeof input === "number") {
+    const d = new Date(input);
+    if (isNaN(d.getTime())) return "—";
+    hours = d.getHours();
+    minutes = d.getMinutes();
+  } else if (typeof input === "string") {
+    const str = input.trim();
+    const timeMatch = str.match(/(?:^|\s|T)?(\d{1,2}):(\d{2})(?::\d{2})?/);
+    if (timeMatch) {
+      hours = parseInt(timeMatch[1], 10);
+      minutes = parseInt(timeMatch[2], 10);
+    } else {
+      const d = new Date(str);
+      if (isNaN(d.getTime())) return str;
+      hours = d.getHours();
+      minutes = d.getMinutes();
+    }
+  }
+
+  const period = hours >= 12 ? "م" : "ص";
+  let h12 = hours % 12;
+  if (h12 === 0) h12 = 12;
+  const hStr = h12.toString().padStart(2, "0");
+  const mStr = minutes.toString().padStart(2, "0");
+  return `${hStr}:${mStr} ${period}`;
+}
+

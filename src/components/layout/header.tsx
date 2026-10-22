@@ -215,7 +215,7 @@ export function Header({ onOpenMobileNav }: { onOpenMobileNav?: () => void } = {
           {t("nav.home")}
         </Link>
         <span className="text-xs font-bold text-slate-600 hidden sm:inline">/</span>
-        <h1 className="min-w-0 truncate text-sm sm:text-base font-black text-white tracking-wide bg-gradient-to-r from-white via-slate-100 to-slate-300 bg-clip-text">
+        <h1 className="min-w-0 truncate text-sm sm:text-base font-black text-white" style={{ color: '#ffffff' }}>
           {title}
         </h1>
       </div>
