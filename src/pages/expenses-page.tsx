@@ -25,7 +25,6 @@ import { BranchBadge } from "@/components/ui/branch-badge";
 import { VoucherActions } from "@/components/finance/voucher-actions";
 import { downloadCsvWithBom } from "@/utils/csv-helper";
 import { todayKey } from "@/core/dates";
-import { FinanceHubHeader } from "@/components/finance/finance-hub-header";
 
 export function ExpensesPage() {
   const t = useT();
@@ -296,9 +295,6 @@ export function ExpensesPage() {
           )}
         </div>
       </section>
-
-      {/* Finance Hub Navigation & Live Telemetry Strip */}
-      <FinanceHubHeader currentSection="expenses" />
 
       {/* 4 Professional KPI Stat Cards */}
       <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-4">

@@ -1129,9 +1129,9 @@ describe("E2E Reception Peak-Hours (7–10 PM) Operational & Architectural Suite
     // R8: Database Migration v66 & Package Engine Field
     // -----------------------------------------------------------------------
     describe("R8: Database Migration v66 Composite Indexes & Package Engines", () => {
-      it("R8.1: migration v66 applies successfully and brings schema version to 66", () => {
+      it("R8.1: migration v66 applies successfully and brings schema version to 66+", () => {
         const currentVersion = db.scalar("SELECT MAX(version) FROM schema_migrations");
-        expect(Number(currentVersion)).toBe(66);
+        expect(Number(currentVersion)).toBeGreaterThanOrEqual(66);
       });
 
       it("R8.2: idx_cards_barcode_status exists on cards(barcode_value, status)", () => {

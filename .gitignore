@@ -28,3 +28,5 @@ _*.mjs
 *.pdf
 .agents/
 incoming-updates/
+
+recordings/*.webm

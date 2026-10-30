@@ -6,11 +6,20 @@ const path = require("path");
 const RECORDINGS_DIR = path.resolve(__dirname, "../recordings");
 const OUTPUT_MP4 = path.join(RECORDINGS_DIR, "GymGate_Master_Commercial_Showcase.mp4");
 const DESKTOP_MP4 = "C:\\Users\\KOTB\\Desktop\\GymGate_Master_Commercial_Showcase.mp4";
-const VOICEOVER_WAV = "C:\\Users\\KOTB\\.gemini\\antigravity\\brain\\24544496-ce86-4841-8fcf-092d64789551\\.user_uploaded\\uploaded_media_1792550787235.wav";
+const VOICEOVER_WAV = "C:\\Users\\KOTB\\.gemini\\antigravity\\brain\\24544496-ce86-4841-8fcf-092d64789551\\.user_uploaded\\uploaded_media_1793170219503.wav";
+const SNAPSHOTS_DIR = "C:\\Users\\KOTB\\.gemini\\antigravity\\brain\\24544496-ce86-4841-8fcf-092d64789551";
 
 if (!fs.existsSync(RECORDINGS_DIR)) {
   fs.mkdirSync(RECORDINGS_DIR, { recursive: true });
 }
+
+// Clean old recordings
+try {
+  const oldWebms = fs.readdirSync(RECORDINGS_DIR).filter((f) => f.endsWith(".webm"));
+  for (const f of oldWebms) {
+    fs.unlinkSync(path.join(RECORDINGS_DIR, f));
+  }
+} catch (e) {}
 
 async function sleep(ms) {
   return new Promise((resolve) => setTimeout(resolve, ms));
@@ -21,7 +30,7 @@ let VIDEO_START_TIME = Date.now();
 async function syncToSecond(targetSec) {
   const elapsed = (Date.now() - VIDEO_START_TIME) / 1000;
   const waitMs = Math.round((targetSec - elapsed) * 1000);
-  if (waitMs > 10) {
+  if (waitMs > 15) {
     console.log(`⏱️ [SYNC] Current: ${elapsed.toFixed(1)}s -> Waiting ${(waitMs / 1000).toFixed(1)}s to reach ${targetSec.toFixed(1)}s`);
     await sleep(waitMs);
   } else {
@@ -210,16 +219,26 @@ async function animatedType(page, selector, text) {
   await sleep(100);
   await el.fill("");
   for (const char of text) {
-    await page.keyboard.type(char, { delay: 40 + Math.random() * 30 });
+    await page.keyboard.type(char, { delay: 35 + Math.random() * 25 });
   }
   await sleep(150);
 }
 
-async function runMasterShowcase() {
-  console.log("🌟 Seeding fresh realistic showcase data before recording...");
+async function captureSnapshot(page, name) {
+  try {
+    const filePath = path.join(SNAPSHOTS_DIR, `${name}.png`);
+    await page.screenshot({ path: filePath });
+    console.log(`📸 Saved snapshot: ${filePath}`);
+  } catch (e) {
+    console.warn(`Snapshot failed for ${name}:`, e.message);
+  }
+}
+
+async function runMasterCommercial() {
+  console.log("🌟 Seeding realistic showcase data before recording...");
   execSync("node scripts/seed-rich-showcase-data.cjs", { stdio: "inherit" });
 
-  console.log("🚀 Launching Edge for Full HD Master Video Recording (1920x1080)...");
+  console.log("🚀 Launching Edge for Full HD Master Commercial Recording (1920x1080)...");
   const browser = await chromium.launch({
     channel: "msedge",
     headless: true,
@@ -240,26 +259,25 @@ async function runMasterShowcase() {
 
   try {
     // =========================================================================
-    // المشهد 1: المقدمة ولوحة التحكم الذكية (00:00 – 00:33.4) [33.4s]
+    // المشهد 1: الصدمة وافتتاحية الأمان والأوفلاين التام (00:00 – 00:26.0) [26.0s]
     // =========================================================================
-    console.log("🎬 SCENE 1: Introduction & Smart Dashboard");
+    console.log("🎬 SCENE 1: Introduction & 100% Offline Power (00:00 - 00:26.0)");
     await page.goto("http://127.0.0.1:8890/#/login", { waitUntil: "networkidle" });
     await injectVisualHelpers(page);
-    await updateScene(page, "GymGate", "نظام إدارة الصالات الرياضية الذكي — تحكم كامل وراحة بال");
+    await updateScene(page, "GymGate", "نظام إدارة الصالات الرياضية الذكي — أمان تام واستقرار أوفلاين 100%");
 
-    // Move to username and type 'owner'
-    await sleep(1500);
+    await sleep(1200);
     const userInput = await page.$("input[autocomplete='username'], input[type='text']");
     if (userInput) {
-      await updateScene(page, "تسجيل الدخول", "دخول سريع ومحمي بأعلى معايير الأمان");
+      await updateScene(page, "تسجيل الدخول", "دخول سريع ومحمي بأعلى معايير التشفير والأمان");
       await animatedType(page, "input[autocomplete='username'], input[type='text']", "owner");
-      await sleep(400);
+      await sleep(300);
 
       const passInput = await page.$("input[type='password']");
       if (passInput) {
-        await animatedType(page, "input[type='password']", "owner1234");
+        await animatedType(page, "input[type='password']", "OwnerPassword123!");
       }
-      await sleep(400);
+      await sleep(300);
       await animatedClick(page, "button[type='submit']");
       await page.waitForNavigation({ waitUntil: "networkidle" }).catch(() => {});
       await sleep(1000);
@@ -269,37 +287,128 @@ async function runMasterShowcase() {
       await injectVisualHelpers(page);
     }
 
-    // Dashboard Overview (11.0s – 19.4s)
-    await updateScene(page, "لوحة التحكم", "نظرة شاملة ومؤشرات أداء حية — الإيرادات، الأرباح، والأعضاء النشطين");
-    await moveMouseSmoothly(page, 460, 240, 22);
-    await sleep(2500);
-    await moveMouseSmoothly(page, 820, 240, 22);
-    await sleep(2500);
-    await moveMouseSmoothly(page, 1180, 240, 22);
-    await sleep(2500);
+    // Dashboard Overview (10.0s – 26.0s)
+    await updateScene(page, "لوحة التحكم الحية", "نظرة شاملة ومؤشرات حية — الإيرادات، الأعضاء النشطين، ونسبة الإشغال");
+    await moveMouseSmoothly(page, 460, 240, 20);
+    await sleep(2200);
+    await moveMouseSmoothly(page, 820, 240, 20);
+    await sleep(2200);
+    await moveMouseSmoothly(page, 1180, 240, 20);
+    await sleep(2200);
 
-    // Scroll down to show analytics and system health (19.4s – 33.4s)
-    await smoothScroll(page, 400);
+    // Scroll to show system health & offline assurance
+    await smoothScroll(page, 380);
     await sleep(1000);
-    await moveMouseSmoothly(page, 720, 560, 20);
-    await sleep(3500);
-
-    // Highlight System Health Card
-    await updateScene(page, "صحة وأمان النظام", "مراقبة مستمرة، نسخ احتياطي محلي، واستقرار تام");
+    await updateScene(page, "أمان واستقرار محلي 100%", "يعمل بدون إنترنت نهائياً، قاعدة بياناتك مشفرة ومحفوظة على جهازك");
     await moveMouseSmoothly(page, 1420, 520, 22);
     await sleep(3000);
 
+    await captureSnapshot(page, "frame_scene1_dashboard_offline");
     await smoothScroll(page, 0);
-    await sleep(1000);
+    await sleep(800);
 
-    // Exact synchronization to Scene 2 start (33.4s)
-    await syncToSecond(33.4);
+    // Exact synchronization to Scene 2 (26.0s)
+    await syncToSecond(26.0);
 
     // =========================================================================
-    // المشهد 2: سرعة الاستقبال ومسح الباركود (00:33.4 – 01:03.9) [30.5s]
+    // المشهد 2: حماية فلوس الدرج وتقفيل الوردية الذكي Z-Report (00:26.0 – 00:52.0) [26.0s]
     // =========================================================================
-    console.log("🎬 SCENE 2: Reception & Barcode Scan");
-    await updateScene(page, "الاستقبال والحضور", "تسجيل حضور سريع في أجزاء من الثانية ومنع التكرار تلقائياً");
+    console.log("🎬 SCENE 2: Treasury & Cash Protection (Z-Report) (00:26.0 - 00:52.0)");
+    await updateScene(page, "حماية الخزينة والدرج", "⚡ تقفيل الوردية Z-Report — كشف العجز والزيادة لحظياً وبدون مليم تلاعب");
+
+    const treasuryLink = await page.$("a[href*='treasury'], nav a:has-text('الخزينة')");
+    if (treasuryLink) {
+      await animatedClick(page, treasuryLink);
+    } else {
+      await page.goto("http://127.0.0.1:8890/#/treasury", { waitUntil: "networkidle" });
+    }
+    await sleep(1400);
+    await injectVisualHelpers(page);
+
+    // Hover over cash summary
+    await moveMouseSmoothly(page, 480, 260, 20);
+    await sleep(2000);
+
+    // Click Z-Report button
+    const zReportBtn = await page.$("button:has-text('Z-Report'), button:has-text('تقفيل الوردية')");
+    if (zReportBtn) {
+      await animatedClick(page, zReportBtn);
+      await sleep(1500);
+      await injectVisualHelpers(page);
+
+      // Open Denomination Calculator
+      const calcToggle = await page.$("button:has-text('حاسبة'), button:has-text('عد الفئات')");
+      if (calcToggle) {
+        await animatedClick(page, calcToggle);
+        await sleep(1200);
+      }
+
+      // Type Counted Cash matching expected (7650) to show zero discrepancy
+      const countedInput = await page.$(".modal input[type='number'], [role='dialog'] input[type='number']");
+      if (countedInput) {
+        await updateScene(page, "مطابقة دقيقة بالقرش", "السيستم يحسب الرصيد المتوقع ويقارنه بالعد الفعلي لحظياً");
+        await animatedType(page, ".modal input[type='number'], [role='dialog'] input[type='number']", "7650");
+        await sleep(2500);
+      }
+
+      await captureSnapshot(page, "frame_scene2_z_report");
+
+      // Smooth hover over Close Shift button / Note
+      await moveMouseSmoothly(page, 960, 680, 22);
+      await sleep(3500);
+
+      // Close modal cleanly
+      await page.keyboard.press("Escape");
+      await sleep(1000);
+    }
+
+    // Exact synchronization to Scene 3 (52.0s)
+    await syncToSecond(52.0);
+
+    // =========================================================================
+    // المشهد 3: كارت العضوية الذكي على الواتساب (00:52.0 – 01:10.5) [18.5s]
+    // =========================================================================
+    console.log("🎬 SCENE 3: Smart WhatsApp QR Cards (00:52.0 - 01:10.5)");
+    await updateScene(page, "كروت الواتساب الرقمية", "إرسال كارت العضوية الذكي برمز QR فخم مباشرة على واتساب المشترك");
+
+    const cardsLink = await page.$("a[href*='cards'], nav a:has-text('الكروت')");
+    if (cardsLink) {
+      await animatedClick(page, cardsLink);
+    } else {
+      await page.goto("http://127.0.0.1:8890/#/cards", { waitUntil: "networkidle" });
+    }
+    await sleep(1400);
+    await injectVisualHelpers(page);
+
+    // Table search or hover first card
+    await moveMouseSmoothly(page, 520, 380, 20);
+    await sleep(1800);
+
+    // Open QR Delivery Modal for the member
+    const sendCardBtn = await page.$("table tbody tr button:has(svg.lucide-send), table tbody tr button[aria-label*='إرسال'], table tbody tr button[aria-label*='QR']");
+    if (sendCardBtn) {
+      await animatedClick(page, sendCardBtn);
+      await sleep(2000);
+      await injectVisualHelpers(page);
+
+      await updateScene(page, "كارت رقمي على الموبايل", "توفير آلاف الجنيهات في الكروت البلاستيكية ودخول فوري بمسح الـ QR");
+      await moveMouseSmoothly(page, 960, 500, 22);
+      await sleep(3500);
+
+      await captureSnapshot(page, "frame_scene3_whatsapp_card");
+
+      await page.keyboard.press("Escape");
+      await sleep(1000);
+    }
+
+    // Exact synchronization to Scene 4 (70.5s)
+    await syncToSecond(70.5);
+
+    // =========================================================================
+    // المشهد 4: سرعة الاستقبال وتذكرة اليوم الواحد Day Pass (01:10.5 – 01:31.5) [21.0s]
+    // =========================================================================
+    console.log("🎬 SCENE 4: Peak-Hours Reception & Day Pass (01:10.5 - 01:31.5)");
+    await updateScene(page, "سرعة الاستقبال والذروة", "تسجيل حضور فوري بالباركود وتذكرة الزائر السريع F3 بضغطة زر واحدة");
 
     const receptionLink = await page.$("a[href*='attendance'], nav a:has-text('الاستقبال')");
     if (receptionLink) {
@@ -307,74 +416,61 @@ async function runMasterShowcase() {
     } else {
       await page.goto("http://127.0.0.1:8890/#/attendance", { waitUntil: "networkidle" });
     }
-    await sleep(1500);
+    await sleep(1400);
     await injectVisualHelpers(page);
 
-    // Scanner input focus & scan (40.6s)
+    // Barcode scan check-in
     const barcodeInput = await page.$("input[data-scanner-input='true']");
     if (barcodeInput) {
       await animatedClick(page, barcodeInput);
-      await sleep(400);
-      await animatedType(page, "input[data-scanner-input='true']", "B1-CRD-000001");
       await sleep(300);
+      await animatedType(page, "input[data-scanner-input='true']", "B1-CRD-000001");
+      await sleep(200);
       await page.keyboard.press("Enter");
-      await sleep(2000);
+      await sleep(1800);
     }
 
-    // Green member card is displayed
-    await updateScene(page, "عضوية معتمدة", "ظهور فوري لبيانات العضو، الاشتراك الفعال، الرصيد، والصورة");
-    await moveMouseSmoothly(page, 650, 420, 22);
-    await sleep(4500);
+    // Green member verification badge
+    await updateScene(page, "عضوية سارية ومعتمدة", "ظهور فوري لبيانات المشترك، نوع الاشتراك، والرصيد بأجزاء من الثانية");
+    await moveMouseSmoothly(page, 650, 420, 20);
+    await sleep(2500);
 
-    // Scroll down to Live Occupants table
-    await updateScene(page, "المتواجدون حالياً", "متابعة دقيقة وفورية للمتدربين داخل الصالة الرياضية الآن");
-    await smoothScroll(page, 380);
-    await sleep(1000);
-    await moveMouseSmoothly(page, 750, 580, 20);
-    await sleep(4000);
+    // Click Day Pass (F3) button
+    await updateScene(page, "تذكرة Day Pass الفورية", "تسجيل الزائر السريع في ثوانٍ وإيداع النقدية في الخزينة فوراً");
+    const dayPassBtn = await page.$("button:has-text('Day Pass'), button:has-text('تذكرة يوم'), button:has-text('F3')");
+    if (dayPassBtn) {
+      await animatedClick(page, dayPassBtn);
+      await sleep(1200);
+      await injectVisualHelpers(page);
 
-    await smoothScroll(page, 0);
-    await sleep(1000);
+      // Type guest name
+      const guestInput = await page.$(".modal input[placeholder*='اسم'], [role='dialog'] input[placeholder*='اسم']");
+      if (guestInput) {
+        await animatedType(page, ".modal input[placeholder*='اسم'], [role='dialog'] input[placeholder*='اسم']", "أحمد مصطفى (زائر حر)");
+        await sleep(1000);
+      }
 
-    // Exact synchronization to Scene 3 start (63.9s)
-    await syncToSecond(63.9);
+      await captureSnapshot(page, "frame_scene4_daypass");
 
-    // =========================================================================
-    // المشهد 3: تذكرة اليوم الواحد السريعة (01:03.9 – 01:21.5) [17.6s]
-    // =========================================================================
-    console.log("🎬 SCENE 3: Quick Day Pass Ticket");
-    await updateScene(page, "تذكرة اليوم الواحد", "تسجيل الزائر السريع بضغطة زر واحدة (Day Pass) وتحصيل النقدية");
-
-    // Press F3 or click Day Pass button
-    await animatedClick(page, "button:has-text('Day Pass'), button:has-text('تذكرة يوم'), button:has-text('يومي')");
-    await sleep(1200);
-    await injectVisualHelpers(page);
-
-    // Type guest name
-    const guestInput = await page.$("input[placeholder*='اسم']");
-    if (guestInput) {
-      await animatedType(page, "input[placeholder*='اسم']", "محمود شريف (زائر)");
-      await sleep(800);
+      // Submit Day Pass
+      const submitDayPassBtn = await page.$(".modal button[type='submit'], [role='dialog'] button[type='submit']");
+      if (submitDayPassBtn) {
+        await animatedClick(page, submitDayPassBtn);
+        await sleep(1500);
+      } else {
+        await page.keyboard.press("Escape");
+        await sleep(800);
+      }
     }
 
-    // Submit Day Pass
-    const submitDayPassBtn = await page.$(".modal button[type='submit'], [role='dialog'] button[type='submit']");
-    if (submitDayPassBtn) {
-      await animatedClick(page, submitDayPassBtn);
-      await sleep(2000);
-    } else {
-      await page.keyboard.press("Escape");
-      await sleep(1000);
-    }
-
-    // Exact synchronization to Scene 4 start (81.5s)
-    await syncToSecond(81.5);
+    // Exact synchronization to Scene 5 (91.5s)
+    await syncToSecond(91.5);
 
     // =========================================================================
-    // المشهد 4: المشتركون، الاشتراكات، والتجميد الذكي (01:21.5 – 01:58.8) [37.3s]
+    // المشهد 5: ملفات المشتركين والتجميد الذكي (01:31.5 – 01:51.0) [19.5s]
     // =========================================================================
-    console.log("🎬 SCENE 4: Members Directory, Profiles & Subscriptions");
-    await updateScene(page, "إدارة المشتركين", "ملفات الأعضاء الرقمية — بحث بالاسم أو الهاتف والوصول لملف العضو");
+    console.log("🎬 SCENE 5: Member CRM & Smart Freeze (01:31.5 - 01:51.0)");
+    await updateScene(page, "إدارة المشتركين الشاملة", "ملف رقمي لكل عضو — سجل الحضور، قياسات الـ InBody، والتجميد الذكي");
 
     const membersLink = await page.$("a[href*='members'], nav a:has-text('المشتركون')");
     if (membersLink) {
@@ -382,57 +478,43 @@ async function runMasterShowcase() {
     } else {
       await page.goto("http://127.0.0.1:8890/#/members", { waitUntil: "networkidle" });
     }
-    await sleep(1500);
+    await sleep(1400);
     await injectVisualHelpers(page);
 
     // Table search
     const searchInput = await page.$("input[placeholder*='بحث'], input[type='search'], input[type='text']");
     if (searchInput) {
       await animatedType(page, "input[placeholder*='بحث'], input[type='search'], input[type='text']", "الشناوي");
-      await sleep(1200);
+      await sleep(1000);
     }
 
     // Click member profile link
     const memberLink = await page.$("table a:has-text('الشناوي'), a[href*='members/mem-01']");
     if (memberLink) {
       await animatedClick(page, memberLink);
-      await sleep(2000);
+      await sleep(1800);
       await injectVisualHelpers(page);
 
       // Scroll inside profile to show InBody and History
-      await updateScene(page, "ملف العضو الشامل", "سجل الحضور، المدفوعات، الباقات الفعالة، وقياسات InBody");
+      await updateScene(page, "ملف العضو الشامل والتجميد", "نظام التجميد الذكي (Smart Freeze) يمدد تاريخ الانتهاء تلقائياً وبدقة");
       await smoothScroll(page, 320);
-      await sleep(2500);
+      await sleep(2200);
       await moveMouseSmoothly(page, 680, 480, 20);
-      await sleep(2000);
+      await sleep(2500);
+
+      await captureSnapshot(page, "frame_scene5_member_profile");
+
       await smoothScroll(page, 0);
-      await sleep(1000);
+      await sleep(800);
     }
 
-    // Navigate to Subscriptions
-    await updateScene(page, "باقات الاشتراكات والتجميد", "باقات مرنة ونظام التجميد الذكي بقرار فوري يحمي الأيام");
-    const subsLink = await page.$("a[href*='subscriptions'], nav a:has-text('الاشتراكات')");
-    if (subsLink) {
-      await animatedClick(page, subsLink);
-    } else {
-      await page.goto("http://127.0.0.1:8890/#/subscriptions", { waitUntil: "networkidle" });
-    }
-    await sleep(1500);
-    await injectVisualHelpers(page);
-
-    // Glide across subscription packages
-    await moveMouseSmoothly(page, 460, 360, 20);
-    await sleep(2500);
-    await moveMouseSmoothly(page, 880, 360, 20);
-    await sleep(2500);
-
-    // Exact synchronization to Scene 5 start (118.8s)
-    await syncToSecond(118.8);
+    // Exact synchronization to Scene 6 (111.0s)
+    await syncToSecond(111.0);
 
     // =========================================================================
-    // المشهد 5: متجر المكملات ونقاط البيع السريعة POS (01:58.8 – 02:28.0) [29.2s]
+    // المشهد 6: متجر المكملات ونقاط البيع السريعة POS (01:51.0 – 02:08.2) [17.2s]
     // =========================================================================
-    console.log("🎬 SCENE 5: Store POS & Debt Handling");
+    console.log("🎬 SCENE 6: Store POS & Member Accounts (01:51.0 - 02:08.2)");
     await updateScene(page, "متجر المكملات POS", "نقطة بيع سريعة للمكملات والبار — بيع نقدي أو آجل على حساب المشترك");
 
     const storeLink = await page.$("a[href*='store'], nav a:has-text('المتجر')");
@@ -441,153 +523,161 @@ async function runMasterShowcase() {
     } else {
       await page.goto("http://127.0.0.1:8890/#/store", { waitUntil: "networkidle" });
     }
-    await sleep(1500);
+    await sleep(1400);
     await injectVisualHelpers(page);
 
     // Click product 1 (Protein bar)
-    const product1 = await page.$("button:has-text('بروتين bar'), button:has-text('بروتين بار'), button:has-text('جولد ستاندرد')");
+    const product1 = await page.$("button:has-text('بروتين بار'), button:has-text('بار'), button:has-text('جولد ستاندرد')");
     if (product1) {
       await animatedClick(page, product1);
-      await sleep(1200);
+      await sleep(1000);
     }
 
     // Click product 2 (Energy drink)
     const product2 = await page.$("button:has-text('مشروب طاقة'), button:has-text('مياه معدنية'), button:has-text('كرياتين')");
     if (product2) {
       await animatedClick(page, product2);
-      await sleep(1500);
+      await sleep(1200);
     }
 
     // Show Cart and checkout options
     await updateScene(page, "سلة المشتريات والائتمان", "خصم لحظي من المخزون، ودعم البيع الآجل بحساب المشترك وسداد فوري");
-    await moveMouseSmoothly(page, 1420, 380, 22);
-    await sleep(4000);
+    await moveMouseSmoothly(page, 1420, 380, 20);
+    await sleep(2500);
     await moveMouseSmoothly(page, 1420, 620, 20);
-    await sleep(3500);
-
-    // Exact synchronization to Scene 6 start (148.0s)
-    await syncToSecond(148.0);
-
-    // =========================================================================
-    // المشهد 6: الخزينة والورديات وحماية الفلوس (02:28.0 – 02:57.3) [29.3s]
-    // =========================================================================
-    console.log("🎬 SCENE 6: Treasury & Shift Handover");
-    await updateScene(page, "الخزينة والورديات", "حماية أموال الصالة — إغلاق الورديات بالثانية ومطابقة العهدة النقدية");
-
-    const treasuryLink = await page.$("a[href*='treasury'], a[href*='cash'], nav a:has-text('الخزينة')");
-    if (treasuryLink) {
-      await animatedClick(page, treasuryLink);
-    } else {
-      await page.goto("http://127.0.0.1:8890/#/treasury", { waitUntil: "networkidle" });
-    }
-    await sleep(1500);
-    await injectVisualHelpers(page);
-
-    // Hover over current cash summary
-    await moveMouseSmoothly(page, 480, 260, 20);
     await sleep(2500);
 
-    // Scroll to ledger transactions
-    await updateScene(page, "دفتر الأستاذ المالي المشفر", "تسجيل محاسبي صارم غير قابل للتعديل لكل حركة نقدية");
-    await smoothScroll(page, 340);
-    await sleep(1500);
-    await moveMouseSmoothly(page, 780, 480, 20);
-    await sleep(4500);
+    await captureSnapshot(page, "frame_scene6_store_pos");
+
+    // Exact synchronization to Scene 7 (128.2s)
+    await syncToSecond(128.2);
+
+    // =========================================================================
+    // المشهد 7: التقارير المالية وصافي الأرباح المبسطة (02:08.2 – 02:27.8) [19.6s]
+    // =========================================================================
+    console.log("🎬 SCENE 7: Clean Financial Intelligence & Net Profit (02:08.2 - 02:27.8)");
+    await updateScene(page, "التقارير المالية وصافي الأرباح", "رؤية مالية واضحة بنظرة واحدة — الإيرادات، المصروفات، وصافي أرباحك الصافية");
+
+    const reportsLink = await page.$("a[href*='reports'], nav a:has-text('التقارير')");
+    if (reportsLink) {
+      await animatedClick(page, reportsLink);
+    } else {
+      await page.goto("http://127.0.0.1:8890/#/reports", { waitUntil: "networkidle" });
+    }
+    await sleep(1400);
+    await injectVisualHelpers(page);
+
+    // Hover over 4 clean KPI Cards
+    await moveMouseSmoothly(page, 460, 260, 20);
+    await sleep(2000);
+    await moveMouseSmoothly(page, 820, 260, 20);
+    await sleep(2000);
+    await moveMouseSmoothly(page, 1180, 260, 20);
+    await sleep(2000);
+
+    // Scroll to Monthly P&L table & chart
+    await updateScene(page, "الخلاصة المالية وتصدير إكسيل", "بدون جداول معقدة ولا لخبطة محاسبية — كل مليم واضح قدام عينيك");
+    await smoothScroll(page, 360);
+    await sleep(2000);
+    await moveMouseSmoothly(page, 780, 520, 20);
+    await sleep(2500);
+
+    await captureSnapshot(page, "frame_scene7_financial_reports");
 
     await smoothScroll(page, 0);
-    await sleep(1500);
+    await sleep(800);
 
-    // Exact synchronization to Scene 7 start (177.3s)
-    await syncToSecond(177.3);
-
-    // =========================================================================
-    // المشهد 7: كروت الواتساب الرقمية وقوة العمل أوفلاين (02:57.3 – 03:27.6) [30.3s]
-    // =========================================================================
-    console.log("🎬 SCENE 7: Digital WhatsApp Cards & 100% Offline Power");
-    await updateScene(page, "كروت الواتساب الرقمية", "إرسال كارت رقمي ذكي برمز QR للمشترك عبر واتساب تلقائياً");
-
-    const cardsLink = await page.$("a[href*='cards'], nav a:has-text('الكروت')");
-    if (cardsLink) {
-      await animatedClick(page, cardsLink);
-    } else {
-      await page.goto("http://127.0.0.1:8890/#/cards", { waitUntil: "networkidle" });
-    }
-    await sleep(1500);
-    await injectVisualHelpers(page);
-
-    // Open QR Delivery Modal
-    const sendCardBtn = await page.$("table tbody tr button:has(svg.lucide-send), table tbody tr button[aria-label*='إرسال'], table tbody tr button[aria-label*='QR']");
-    if (sendCardBtn) {
-      await animatedClick(page, sendCardBtn);
-      await sleep(4000);
-      await page.keyboard.press("Escape");
-      await sleep(1200);
-    }
-
-    // Navigate to Settings to show Offline Architecture & Backup
-    await updateScene(page, "أمان واستقرار أوفلاين 100%", "يعمل بدون إنترنت تماماً، وقاعدة بياناتك مشفرة ومحفوظة بنسخ فوري");
-    const settingsLink = await page.$("a[href*='settings'], nav a:has-text('الإعدادات')");
-    if (settingsLink) {
-      await animatedClick(page, settingsLink);
-    } else {
-      await page.goto("http://127.0.0.1:8890/#/settings", { waitUntil: "networkidle" });
-    }
-    await sleep(1500);
-    await injectVisualHelpers(page);
-
-    // Scroll to Backup Section
-    await smoothScroll(page, 380);
-    await sleep(1500);
-    await moveMouseSmoothly(page, 820, 520, 20);
-    await sleep(3500);
-
-    // Exact synchronization to Scene 8 start (207.6s)
-    await syncToSecond(207.6);
+    // Exact synchronization to Scene 8 start (147.8s)
+    await syncToSecond(147.8);
 
     // =========================================================================
-    // المشهد 8: الشاشة الختامية الأنيقة (03:27.6 – 03:43.6) [16.0s]
+    // المشهد 8: الشاشة الختامية الأنيقة وهوية الشركة الأم (02:27.8 – 02:54.64) [26.84s]
     // =========================================================================
-    console.log("🎬 SCENE 8: Outro & Brand Signature");
+    console.log("🎬 SCENE 8: Grand Outro & Parent Company Signature (02:27.8 - 02:54.64)");
     await page.evaluate(() => {
       document.body.innerHTML = `
-        <div style="display:flex;flex-direction:column;align-items:center;justify-content:center;height:100vh;background:radial-gradient(circle at center, #0e172a 0%, #070a13 100%);color:white;font-family:'Cairo',system-ui,sans-serif;direction:rtl;text-align:center;padding:40px;position:relative;overflow:hidden;">
-          <div style="position:absolute;width:600px;height:600px;background:rgba(56, 189, 248, 0.08);border-radius:50%;filter:blur(120px);pointer-events:none;"></div>
-          <div style="position:absolute;bottom:-100px;width:700px;height:400px;background:rgba(129, 140, 248, 0.08);border-radius:50%;filter:blur(140px);pointer-events:none;"></div>
+        <div style="display:flex;flex-direction:column;align-items:center;justify-content:center;height:100vh;background:radial-gradient(ellipse at 50% 40%, #0d1b3e 0%, #060914 100%);color:white;font-family:'Cairo',system-ui,sans-serif;direction:rtl;text-align:center;padding:40px;position:relative;overflow:hidden;box-sizing:border-box;">
           
-          <div style="display:inline-flex;align-items:center;gap:10px;background:rgba(56, 189, 248, 0.12);border:1.5px solid rgba(56, 189, 248, 0.35);padding:10px 28px;border-radius:9999px;font-size:17px;color:#38bdf8;font-weight:800;margin-bottom:28px;letter-spacing:0.8px;box-shadow:0 0 35px rgba(56, 189, 248, 0.25);">
-            ⚡ النظام الأذكى والأقوى لإدارة الصالات الرياضية
+          <!-- Ambient glowing background lights -->
+          <div style="position:absolute;top:-50px;width:750px;height:750px;background:rgba(56, 189, 248, 0.12);border-radius:50%;filter:blur(140px);pointer-events:none;"></div>
+          <div style="position:absolute;bottom:-120px;width:800px;height:500px;background:rgba(99, 102, 241, 0.14);border-radius:50%;filter:blur(150px);pointer-events:none;"></div>
+          <div style="position:absolute;left:-80px;top:200px;width:400px;height:400px;background:rgba(34, 197, 94, 0.08);border-radius:50%;filter:blur(120px);pointer-events:none;"></div>
+
+          <!-- Top Brand Signature Pill -->
+          <div style="display:inline-flex;align-items:center;gap:12px;background:linear-gradient(135deg, rgba(56, 189, 248, 0.15), rgba(99, 102, 241, 0.15));border:1.5px solid rgba(56, 189, 248, 0.4);padding:10px 32px;border-radius:9999px;font-size:18px;color:#38bdf8;font-weight:800;margin-bottom:20px;letter-spacing:0.8px;box-shadow:0 0 35px rgba(56, 189, 248, 0.25);">
+            <span>⚡ تطوير وبرمجة:</span>
+            <span style="color:#ffffff;font-weight:900;">شركة قُطب للحلول الرقمية</span>
+            <span style="color:#818cf8;font-size:15px;letter-spacing:1px;font-family:sans-serif;">(KOTB Digital Solutions)</span>
           </div>
-          
-          <h1 style="font-size:92px;font-weight:900;margin:0 0 16px 0;background:linear-gradient(135deg, #38bdf8 0%, #818cf8 50%, #c084fc 100%);-webkit-background-clip:text;-webkit-text-fill-color:transparent;text-shadow:0 15px 40px rgba(0,0,0,0.8);letter-spacing:1.5px;">
+
+          <!-- Master Title -->
+          <h1 style="font-size:96px;font-weight:900;margin:0 0 10px 0;background:linear-gradient(135deg, #38bdf8 0%, #818cf8 45%, #c084fc 80%, #34d399 100%);-webkit-background-clip:text;-webkit-text-fill-color:transparent;text-shadow:0 20px 50px rgba(0,0,0,0.85);letter-spacing:2px;line-height:1.1;">
             GymGate
           </h1>
-          
-          <p style="font-size:26px;color:#cbd5e1;margin:0 0 36px 0;max-width:850px;line-height:1.6;font-weight:600;">
-            بوابتك لإدارة رياضية ذكية، حماية أرباحك، وراحة بالك على مدار الساعة.
+
+          <p style="font-size:25px;color:#cbd5e1;margin:0 0 32px 0;max-width:920px;line-height:1.5;font-weight:700;">
+            بوابتك لإدارة رياضية ذكية، حماية أرباحك وخزينتك، وراحة بالك على مدار الساعة.
           </p>
-          
-          <div style="display:flex;gap:20px;margin-bottom:44px;flex-wrap:wrap;justify-content:center;">
-            <div style="background:rgba(255,255,255,0.05);border:1px solid rgba(255,255,255,0.12);padding:14px 26px;border-radius:14px;font-size:18px;color:#f8fafc;font-weight:700;backdrop-blur:10px;box-shadow:0 10px 25px rgba(0,0,0,0.4);">
-              ⚡ يعمل أوفلاين 100% بدون إنترنت
+
+          <!-- 4 Core Value Cards -->
+          <div style="display:grid;grid-template-columns:repeat(4, 1fr);gap:16px;max-width:1200px;width:100%;margin-bottom:30px;">
+            <div style="background:rgba(255,255,255,0.04);border:1.5px solid rgba(56, 189, 248, 0.3);padding:18px 20px;border-radius:18px;text-align:center;backdrop-filter:blur(12px);box-shadow:0 10px 30px rgba(0,0,0,0.4);">
+              <div style="font-size:28px;margin-bottom:6px;">⚡</div>
+              <div style="font-size:17px;color:#38bdf8;font-weight:800;margin-bottom:4px;">أوفلاين 100%</div>
+              <div style="font-size:12px;color:#94a3b8;line-height:1.4;">يعمل بدون إنترنت نهائياً وبياناتك مشفرة ومحفوظة محلياً</div>
             </div>
-            <div style="background:rgba(255,255,255,0.05);border:1px solid rgba(255,255,255,0.12);padding:14px 26px;border-radius:14px;font-size:18px;color:#f8fafc;font-weight:700;backdrop-blur:10px;box-shadow:0 10px 25px rgba(0,0,0,0.4);">
-              🔒 حماية كاملة للخزينة والورديات
+
+            <div style="background:rgba(255,255,255,0.04);border:1.5px solid rgba(250, 204, 21, 0.3);padding:18px 20px;border-radius:18px;text-align:center;backdrop-filter:blur(12px);box-shadow:0 10px 30px rgba(0,0,0,0.4);">
+              <div style="font-size:28px;margin-bottom:6px;">🔒</div>
+              <div style="font-size:17px;color:#facc15;font-weight:800;margin-bottom:4px;">تقفيل الوردية Z-Report</div>
+              <div style="font-size:12px;color:#94a3b8;line-height:1.4;">حساب النقدية بالقرش ومنع أي عجز أو تلاعب في الدرج</div>
             </div>
-            <div style="background:rgba(255,255,255,0.05);border:1px solid rgba(255,255,255,0.12);padding:14px 26px;border-radius:14px;font-size:18px;color:#f8fafc;font-weight:700;backdrop-blur:10px;box-shadow:0 10px 25px rgba(0,0,0,0.4);">
-              📲 كروت واتساب الذكية برمز QR
+
+            <div style="background:rgba(255,255,255,0.04);border:1.5px solid rgba(34, 197, 94, 0.3);padding:18px 20px;border-radius:18px;text-align:center;backdrop-filter:blur(12px);box-shadow:0 10px 30px rgba(0,0,0,0.4);">
+              <div style="font-size:28px;margin-bottom:6px;">📲</div>
+              <div style="font-size:17px;color:#4ade80;font-weight:800;margin-bottom:4px;">كروت واتساب QR</div>
+              <div style="font-size:12px;color:#94a3b8;line-height:1.4;">إرسال كارت ذكي فخم برمز QR على واتساب المشترك مباشرة</div>
+            </div>
+
+            <div style="background:rgba(255,255,255,0.04);border:1.5px solid rgba(192, 132, 252, 0.3);padding:18px 20px;border-radius:18px;text-align:center;backdrop-filter:blur(12px);box-shadow:0 10px 30px rgba(0,0,0,0.4);">
+              <div style="font-size:28px;margin-bottom:6px;">🚀</div>
+              <div style="font-size:17px;color:#c084fc;font-weight:800;margin-bottom:4px;">سرعة الذروة & Day Pass</div>
+              <div style="font-size:12px;color:#94a3b8;line-height:1.4;">تسجيل حضور بثوانٍ وتذاكر زائر حر سريعة بدون تعطيل</div>
             </div>
           </div>
 
-          <div style="display:inline-flex;align-items:center;gap:12px;background:rgba(34, 197, 94, 0.12);border:1.5px solid rgba(34, 197, 94, 0.4);padding:12px 32px;border-radius:14px;font-size:20px;color:#4ade80;font-weight:800;letter-spacing:1px;box-shadow:0 0 30px rgba(34, 197, 94, 0.2);">
-            📞 تواصل معنا الآن: 01288536381
+          <!-- Commercial Guarantee Strip -->
+          <div style="display:flex;gap:24px;margin-bottom:30px;font-size:15px;color:#e2e8f0;font-weight:700;">
+            <span style="display:flex;align-items:center;gap:6px;">💎 ترخيص دائم مدى الحياة (بدون اشتراك شهري)</span>
+            <span style="color:#475569;">•</span>
+            <span style="display:flex;align-items:center;gap:6px;">🛠️ ضمان شامل ودعم فني متواصل</span>
+            <span style="color:#475569;">•</span>
+            <span style="display:flex;align-items:center;gap:6px;">🧑‍🏫 تدريب كامل مجاني لفريق العمل</span>
           </div>
+
+          <!-- Grand Call to Action Contact -->
+          <div style="display:inline-flex;align-items:center;gap:18px;background:linear-gradient(135deg, rgba(34, 197, 94, 0.22), rgba(16, 185, 129, 0.22));border:2px solid rgba(34, 197, 94, 0.6);padding:16px 44px;border-radius:20px;box-shadow:0 0 45px rgba(34, 197, 94, 0.35);backdrop-filter:blur(10px);">
+            <span style="font-size:32px;">📞</span>
+            <div style="text-align:start;">
+              <div style="font-size:14px;color:#86efac;font-weight:800;">للحجز والطلب المباشر وتنسيق المعاينة التجريبية:</div>
+              <div dir="ltr" style="font-size:36px;font-weight:900;color:#ffffff;letter-spacing:2px;font-family:monospace;text-shadow:0 0 20px rgba(34,197,94,0.8);">
+                01288536381
+              </div>
+            </div>
+            <span style="background:#22c55e;color:#052e16;padding:8px 18px;border-radius:9999px;font-size:15px;font-weight:900;letter-spacing:0.5px;box-shadow:0 4px 15px rgba(34,197,94,0.5);">
+              واتساب ومكالمات 24/7
+            </span>
+          </div>
+
         </div>
       `;
     });
 
-    // Hold outro until exactly the end of the audio track (223.56s)
-    await syncToSecond(223.56);
-    console.log("✅ Recording timeline completed exactly at 223.56s!");
+    await captureSnapshot(page, "frame_scene8_outro_kotb_digital");
+
+    // Hold outro until exactly the end of the audio track (174.64s)
+    await syncToSecond(174.64);
+    console.log("✅ Recording timeline completed exactly at 174.64s!");
   } finally {
     await page.close();
     await context.close();
@@ -615,7 +705,7 @@ async function runMasterShowcase() {
   console.log(`🎉 Master Video Showcase successfully generated and copied to Desktop:\n${DESKTOP_MP4}`);
 }
 
-runMasterShowcase().catch((err) => {
-  console.error("❌ Master recording failed:", err);
+runMasterCommercial().catch((err) => {
+  console.error("❌ Master commercial recording failed:", err);
   process.exit(1);
 });

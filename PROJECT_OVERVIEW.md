@@ -3,9 +3,9 @@
 > **نظام إدارة الأندية والصالات الرياضية الذكي المتكامل (Offline-First Gym Management System)**  
 > **تطوير وهندسة:** قُطب للحلول الرقمية (KOTB Digital Solutions)  
 > **الهوية المؤسسية:** Enterprise Edition • KOTB Digital Solutions  
-> **الإصدار الحالي:** v5.5 (تحديث 2026 — حزمة فترات الذروة المسائية ومحرك v66)  
+> **الإصدار الحالي:** v5.6 (تحديث 2026 — الهيكل الموحد للسايد بار، جداول ونوافذ Modern Web، ومحرك v67)  
 > **المعمارية التقنية:** Node.js (>=22.5.0) + React 19 + SQLite WAL + Single Executable (GymGate.exe)  
-> **حقيبة الهوية والتسويق:** [`marketing/`](file:///d:/Systems/Gym/marketing/) (تتضمن الهوية البصرية، نصوص السوشيال ميديا، عروض البيع، وشعارات SVG)
+> **حقيبة الهوية والتسويق والفيديو التجاري:** [`marketing/`](file:///d:/Systems/Gym/marketing/) + الفيديو التسويقي الرسمي عالي الدقة المتزامن مع الفويس أوفر على سطح المكتب: `GymGate_Master_Commercial_Showcase.mp4` (Full HD 1080p بمزامنة 02:54 دقيقة)
 
 ---
 

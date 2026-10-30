@@ -29,7 +29,6 @@ import { todayKey, dateKey } from "@/core/dates";
 import { appConfig } from "@/config/app.config";
 import { formatDateShort, formatTime } from "@/services/format";
 import { Card, CardHeader } from "@/components/ui/card";
-import { StatCard } from "@/components/ui/stat-card";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Select } from "@/components/ui/select";
@@ -606,233 +605,309 @@ export function CashSessionsPanel() {
   }
 
   return (
-    <div className="space-y-5">
-      <div className="flex flex-wrap items-center justify-between gap-3">
-        <div>
-          <h2 className="text-xl font-black text-foreground">الخزينة النقدية والورديات</h2>
-          <p className="text-xs text-subtle mt-0.5">متابعة حركة النقدية، تسليم الدرج، وجرد العجز والزيادة بين الموظفين</p>
-        </div>
-        <div className="flex items-center gap-2">
-          <div className="inline-flex items-center gap-2 rounded-xl border border-emerald-500/30 bg-emerald-500/10 px-3.5 py-1.5 text-xs font-bold text-emerald-400 shadow-sm">
-            <span className="size-2 rounded-full bg-emerald-400 animate-pulse" />
-            <span>الخزينة النقدية الموحدة (الجيم والمتجر والبار)</span>
-          </div>
-        {openTotals ? (
-          <Button
-            type="button"
-            variant="secondary"
-            onClick={() => {
-              setDepositError(null);
-              setDepositOpen(true);
-            }}
-            className="border border-emerald-500/40 text-emerald-400 hover:bg-emerald-500/10 gap-2 font-bold"
-          >
-            <ArrowDownCircle className="size-4" />
-            {t("cashPage.drawerDepositBtn")}
-          </Button>
-        ) : null}
-        {openTotals && isOwner ? (
-          <Button
-            type="button"
-            variant="secondary"
-            onClick={() => {
-              setWithdrawError(null);
-              setWithdrawOpen(true);
-            }}
-            className="border border-amber/40 text-amber hover:bg-amber/10 gap-2 font-bold"
-          >
-            <Banknote className="size-4" />
-            {t("cashPage.ownerWithdrawBtn")}
-          </Button>
-        ) : null}
-        </div>
-      </div>
-
+    <div className="space-y-6">
       {openTotals ? (
-        <>
-          <section className="grid gap-4 sm:grid-cols-2 xl:grid-cols-4">
-            <StatCard
-              title={t("cashPage.cardOpening")}
-              value={formatMinor(openTotals.openingMinor)}
-              icon={<Wallet className="size-5" />}
-              accent="cyan"
-            />
-            <StatCard
-              title="المقبوضات النقدية (الجيم والمتجر)"
-              value={formatMinor(openTotals.cashInMinor)}
-              icon={<ArrowUpCircle className="size-5" />}
-              accent="neon"
-            />
-            <StatCard
-              title={t("cashPage.cardCashOut")}
-              value={formatMinor(openTotals.cashOutMinor)}
-              icon={<ArrowDownCircle className="size-5" />}
-              accent="amber"
-            />
-            <StatCard
-              title="الرصيد النقدي المتوقع بالدرج"
-              value={formatMinor(openTotals.expectedMinor)}
-              icon={<LockKeyhole className="size-5" />}
-              accent="violet"
-            />
-          </section>
+        <Card className="overflow-hidden border border-white/[0.08] bg-panel/75 shadow-xl backdrop-blur-xl">
+          {/* Active Session Header Banner */}
+          <div className="flex flex-wrap items-center justify-between gap-3 p-5 border-b border-white/[0.06] bg-emerald-500/[0.03]">
+            <div className="flex items-center gap-3">
+              <span className="relative flex size-3">
+                <span className="absolute inline-flex h-full w-full animate-ping rounded-full bg-emerald-400 opacity-75"></span>
+                <span className="relative inline-flex size-3 rounded-full bg-emerald-500"></span>
+              </span>
+              <div>
+                <div className="flex items-center gap-2">
+                  <h3 className="text-base font-black text-white">
+                    الوردية الحالية مفتوحة ونشطة بالدرج
+                  </h3>
+                  {openTotals.session.closingNo && (
+                    <Badge variant="success" className="text-[11px] font-mono">
+                      محضر #{openTotals.session.closingNo}
+                    </Badge>
+                  )}
+                </div>
+                <p className="text-xs text-subtle mt-0.5">
+                  الموظف المسؤول: <span className="font-bold text-white">{openTotals.session.openedByName}</span> • بدأت في {formatDateShort(new Date(openTotals.session.openedAt.replace(" ", "T")))} الساعة {formatTime(openTotals.session.openedAt)}
+                </p>
+              </div>
+            </div>
 
+            {/* Quick Drawer Action Buttons */}
+            <div className="flex items-center gap-2">
+              <Button
+                type="button"
+                variant="secondary"
+                size="sm"
+                onClick={() => {
+                  setDepositError(null);
+                  setDepositOpen(true);
+                }}
+                className="border border-emerald-500/40 text-emerald-400 hover:bg-emerald-500/10 gap-1.5 font-bold text-xs h-9 cursor-pointer"
+              >
+                <ArrowDownCircle className="size-4" />
+                {t("cashPage.drawerDepositBtn")}
+              </Button>
+              {isOwner && (
+                <Button
+                  type="button"
+                  variant="secondary"
+                  size="sm"
+                  onClick={() => {
+                    setWithdrawError(null);
+                    setWithdrawOpen(true);
+                  }}
+                  className="border border-amber-500/40 text-amber-400 hover:bg-amber-500/10 gap-1.5 font-bold text-xs h-9 cursor-pointer"
+                >
+                  <Banknote className="size-4" />
+                  {t("cashPage.ownerWithdrawBtn")}
+                </Button>
+              )}
+            </div>
+          </div>
+
+          {/* Real-time Drawer Metrics Grid */}
+          <div className="grid grid-cols-2 md:grid-cols-4 gap-3 p-5 bg-white/[0.01] border-b border-white/[0.06]">
+            {/* 1. Opening Balance */}
+            <div className="p-4 rounded-xl border border-white/[0.06] bg-surface/40 flex flex-col justify-between">
+              <div className="flex items-center justify-between text-subtle text-xs font-semibold mb-1">
+                <span>{t("cashPage.cardOpening")}</span>
+                <Wallet className="size-4 text-cyan-400" />
+              </div>
+              <div className="mt-1">
+                <span dir="ltr" className="text-xl font-black text-white tabnum">
+                  {formatMinor(openTotals.openingMinor)}
+                </span>
+                <span className="ms-1 text-xs text-subtle">ج.م</span>
+              </div>
+              <span className="text-[10px] text-faint mt-1">العهدة الافتتاحية عند فتح الدرج</span>
+            </div>
+
+            {/* 2. Cash Inflow */}
+            <div className="p-4 rounded-xl border border-white/[0.06] bg-surface/40 flex flex-col justify-between">
+              <div className="flex items-center justify-between text-subtle text-xs font-semibold mb-1">
+                <span>المقبوضات النقدية (+)</span>
+                <ArrowUpCircle className="size-4 text-emerald-400" />
+              </div>
+              <div className="mt-1">
+                <span dir="ltr" className="text-xl font-black text-emerald-400 tabnum">
+                  +{formatMinor(openTotals.cashInMinor)}
+                </span>
+                <span className="ms-1 text-xs text-subtle">ج.م</span>
+              </div>
+              <span className="text-[10px] text-emerald-400/70 mt-1">متحصلات اشتراكات ومتجر كاش</span>
+            </div>
+
+            {/* 3. Cash Outflow */}
+            <div className="p-4 rounded-xl border border-white/[0.06] bg-surface/40 flex flex-col justify-between">
+              <div className="flex items-center justify-between text-subtle text-xs font-semibold mb-1">
+                <span>{t("cashPage.cardCashOut")} (-)</span>
+                <ArrowDownCircle className="size-4 text-amber-400" />
+              </div>
+              <div className="mt-1">
+                <span dir="ltr" className="text-xl font-black text-amber-400 tabnum">
+                  -{formatMinor(openTotals.cashOutMinor)}
+                </span>
+                <span className="ms-1 text-xs text-subtle">ج.م</span>
+              </div>
+              <span className="text-[10px] text-amber-400/70 mt-1">مصروفات وسلف ومسحوبات كاش</span>
+            </div>
+
+            {/* 4. Expected Balance (Hero Metric) */}
+            <div className="p-4 rounded-xl border border-neon/40 bg-neon/10 shadow-[0_0_15px_rgba(57,255,20,0.1)] flex flex-col justify-between">
+              <div className="flex items-center justify-between text-neon text-xs font-bold mb-1">
+                <span>الرصيد المتوقع بالدرج الآن</span>
+                <LockKeyhole className="size-4 text-neon" />
+              </div>
+              <div className="mt-1">
+                <span dir="ltr" className="text-2xl font-black text-neon tabnum">
+                  {formatMinor(openTotals.expectedMinor)}
+                </span>
+                <span className="ms-1 text-xs font-bold text-white">ج.م</span>
+              </div>
+              <span className="text-[10px] text-neon/80 font-semibold mt-1">المبلغ الواجب تواجده فعلياً بالدرج</span>
+            </div>
+          </div>
+
+          {/* Close Shift Form / Handover */}
           {hasPermission("cash.close") && (
             canClose ? (
-              <Card>
-                <CardHeader
-                  title={t("cashPage.closeSession")}
-                  description={`${t("cashPage.sessionSince")} ${formatDateShort(new Date(openTotals.session.openedAt.replace(" ", "T")))} • ${formatTime(openTotals.session.openedAt)} · الموظف المستلم: ${openTotals.session.openedByName}`}
-                />
-                <form onSubmit={(e) => void onClose(e)} noValidate className="space-y-4 px-5 pb-5">
-                  {openTotals.expectedMinor < 0 && (
-                    <div className="rounded-xl border border-rose-500/40 bg-rose-500/10 p-3.5 text-xs text-rose-300 font-semibold space-y-1">
-                      <div className="flex items-center gap-2 font-bold text-rose-400">
-                        <AlertTriangle className="size-4 shrink-0" />
-                        <span>تنبيه: الرصيد المتوقع بالدرج سالب ({formatMinor(openTotals.expectedMinor)})</span>
-                      </div>
-                      <p>
-                        المصروفات النقدية المسجلة أكبر من المقبوضات. يمكنك إيداع عهدة بالدرج لتسوية الرصيد عبر زر «إيداع عهدة بالدرج» بالأعلى، أو كتابة تبرير الإغلاق في حقل الملاحظة للاعتماد.
-                      </p>
+              <form onSubmit={(e) => void onClose(e)} noValidate className="p-5 space-y-4">
+                <div className="flex flex-wrap items-center justify-between gap-2">
+                  <div>
+                    <h4 className="text-sm font-bold text-white flex items-center gap-2">
+                      <LockKeyhole className="size-4 text-amber-400" />
+                      <span>{t("cashPage.closeSession")}</span>
+                    </h4>
+                    <p className="text-xs text-subtle mt-0.5">
+                      قم بعد النقدية الفعلية الموجودة في الدرج وأدخل المبلغ لمطابقته مع السيستم
+                    </p>
+                  </div>
+                  <button
+                    type="button"
+                    onClick={() => setCalcOpen((v) => !v)}
+                    className="flex items-center gap-1.5 rounded-lg border border-neon/30 bg-neon/10 px-3 py-1.5 text-xs font-bold text-neon hover:bg-neon/20 transition-colors cursor-pointer"
+                  >
+                    <Calculator className="size-3.5" />
+                    <span>{calcOpen ? "إخفاء حاسبة الفئات" : "🧮 حاسبة عد الفئات والنقود"}</span>
+                  </button>
+                </div>
+
+                {openTotals.expectedMinor < 0 && (
+                  <div className="rounded-xl border border-rose-500/40 bg-rose-500/10 p-3.5 text-xs text-rose-300 font-semibold space-y-1">
+                    <div className="flex items-center gap-2 font-bold text-rose-400">
+                      <AlertTriangle className="size-4 shrink-0" />
+                      <span>تنبيه: الرصيد المتوقع بالدرج سالب ({formatMinor(openTotals.expectedMinor)})</span>
                     </div>
-                  )}
-                  {isOwner && !isOpener && (
-                    <div className="rounded-xl border border-amber/30 bg-amber/10 px-3.5 py-2.5 text-[12px] font-bold text-amber flex items-center gap-2">
-                      <ShieldAlert className="size-4 shrink-0" />
-                      إغلاق استثنائي: أنت تقوم بإغلاق الوردية نيابة عن ({openTotals.session.openedByName}) بصلاحية المالك.
-                    </div>
-                  )}
-                  <div className="space-y-3">
-                    <div className="grid gap-3 sm:grid-cols-2">
-                      <div className="space-y-1.5">
-                        <div className="flex items-center justify-between">
-                          <label className="text-xs font-bold text-foreground">
-                            {t("cashPage.countedBalance")}
-                          </label>
-                          <button
-                            type="button"
-                            onClick={() => setCalcOpen((v) => !v)}
-                            className="flex items-center gap-1 text-[11px] font-bold text-neon hover:underline"
-                          >
-                            <Calculator className="size-3" />
-                            {calcOpen ? "إخفاء حاسبة الفئات" : "🧮 حاسبة عد الفئات"}
-                          </button>
-                        </div>
-                        <Input
-                          type="number"
-                          min={0}
-                          step="0.01"
-                          dir="ltr"
-                          value={countedMajor}
-                          onChange={(e) => setCountedMajor(e.target.value)}
-                          disabled={busy}
-                        />
-                      </div>
+                    <p>
+                      المصروفات النقدية المسجلة أكبر من المقبوضات. يمكنك إيداع عهدة بالدرج لتسوية الرصيد عبر زر «إيداع عهدة بالدرج» بالأعلى، أو كتابة تبرير الإغلاق في حقل الملاحظة للاعتماد.
+                    </p>
+                  </div>
+                )}
+
+                {isOwner && !isOpener && (
+                  <div className="rounded-xl border border-amber/30 bg-amber/10 px-3.5 py-2.5 text-[12px] font-bold text-amber flex items-center gap-2">
+                    <ShieldAlert className="size-4 shrink-0" />
+                    إغلاق استثنائي: أنت تقوم بإغلاق الوردية نيابة عن ({openTotals.session.openedByName}) بصلاحية المالك.
+                  </div>
+                )}
+
+                <div className="space-y-3">
+                  <div className="grid gap-3 sm:grid-cols-2">
+                    <div className="space-y-1.5">
+                      <label className="text-xs font-bold text-foreground">
+                        {t("cashPage.countedBalance")}
+                      </label>
                       <Input
-                        label={t("cashPage.closeNote")}
+                        type="number"
+                        min={0}
+                        step="0.01"
+                        dir="ltr"
+                        placeholder="أدخل المبلغ الفعلي المعدود في الدرج..."
+                        value={countedMajor}
+                        onChange={(e) => setCountedMajor(e.target.value)}
+                        disabled={busy}
+                      />
+                    </div>
+                    <div className="space-y-1.5">
+                      <label className="text-xs font-bold text-foreground">
+                        {t("cashPage.closeNote")}
+                      </label>
+                      <Input
+                        placeholder="ملاحظات الإقفال أو سبب أي فرق جرد (اختياري)..."
                         value={closeNote}
                         onChange={(e) => setCloseNote(e.target.value)}
                         disabled={busy}
                       />
                     </div>
-
-                    {calcOpen && (
-                      <DenominationCalculator
-                        onApply={(totalVal) => {
-                          setCountedMajor(totalVal);
-                          setCalcOpen(false);
-                          toast("info", `تم اعتماد الرصيد المعدود: ${totalVal} ج.م`);
-                        }}
-                      />
-                    )}
                   </div>
 
-                  {previewDifference !== null && Number.isFinite(previewDifference) && (
-                    <div
-                      className={`rounded-xl border px-4 py-3 text-sm font-extrabold ${
-                        previewDifference === 0
-                          ? "border-neon/30 bg-neon/10 text-neon"
-                          : previewDifference > 0
-                            ? "border-amber/30 bg-amber/10 text-amber"
-                            : "border-red/30 bg-red/10 text-red"
-                      }`}
-                    >
-                      {t("cashPage.difference")}:{" "}
-                      <span dir="ltr" className="tabnum">
-                        {previewDifference === 0
-                          ? t("cashPage.diffZeroMatched")
-                          : previewDifference > 0
-                            ? t("cashPage.diffSurplus", { amount: formatMinor(previewDifference) })
-                            : t("cashPage.diffShortage", { amount: formatMinor(-previewDifference) })}
-                      </span>
-                    </div>
+                  {calcOpen && (
+                    <DenominationCalculator
+                      onApply={(totalVal) => {
+                        setCountedMajor(totalVal);
+                        setCalcOpen(false);
+                        toast("info", `تم اعتماد الرصيد المعدود: ${totalVal} ج.م`);
+                      }}
+                    />
                   )}
-
-                  <p className="rounded-xl border border-line bg-white/[0.03] px-3.5 py-2.5 text-[12px] font-semibold text-amber">
-                    {t("cashPage.closeWarning")}
-                  </p>
-
-                  {error && (
-                    <p role="alert" className="rounded-xl border border-red/30 bg-red/10 px-3.5 py-2.5 text-[13px] font-semibold text-red">
-                      {error}
-                    </p>
-                  )}
-
-                  <div className="flex items-center gap-2">
-                    <Button type="submit" loading={busy} disabled={busy || countedMajor === ""}>
-                      <LockKeyhole className="size-4" />
-                      {t("cashPage.closeBtn")}
-                    </Button>
-                    {hasPermission("cash.purge") && (
-                      <Button type="button" variant="ghost" className="text-red hover:text-red" disabled={busy}
-                        onClick={() => setConfirmAbort(true)}>
-                        {t("cashPage.deleteSessionBtn")}
-                      </Button>
-                    )}
-                  </div>
-                </form>
-              </Card>
-            ) : (
-              <Card>
-                <div className="p-5 flex items-start gap-3.5">
-                  <div className="grid size-10 place-items-center rounded-xl bg-amber/15 text-amber shrink-0">
-                    <ShieldAlert className="size-5" />
-                  </div>
-                  <div className="space-y-1">
-                    <h4 className="text-sm font-bold text-foreground">الوردية الحالية قيد التشغيل بواسطة موظف آخر</h4>
-                    <p className="text-xs text-subtle leading-relaxed">
-                      {t("cashPage.sessionOwnedByOther", { name: openTotals.session.openedByName })}
-                    </p>
-                    <p className="text-[11px] text-faint">
-                      تم فتح هذه الوردية في {formatDateShort(new Date(openTotals.session.openedAt.replace(" ", "T")))} • {formatTime(openTotals.session.openedAt)}. لا يمكن استلام الدرج وفتح وردية جديدة إلا بعد قيام الموظف المسؤول ({openTotals.session.openedByName}) أو المالك بإغلاقها وتوثيق رصيدها.
-                    </p>
-                  </div>
                 </div>
-              </Card>
+
+                {previewDifference !== null && Number.isFinite(previewDifference) && (
+                  <div
+                    className={`rounded-xl border px-4 py-3 text-sm font-extrabold transition-all duration-200 ${
+                      previewDifference === 0
+                        ? "border-emerald-500/40 bg-emerald-500/10 text-emerald-400"
+                        : previewDifference > 0
+                          ? "border-amber-500/40 bg-amber-500/10 text-amber-300"
+                          : "border-rose-500/40 bg-rose-500/10 text-rose-400"
+                    }`}
+                  >
+                    {t("cashPage.difference")}:{" "}
+                    <span dir="ltr" className="tabnum">
+                      {previewDifference === 0
+                        ? t("cashPage.diffZeroMatched")
+                        : previewDifference > 0
+                          ? t("cashPage.diffSurplus", { amount: formatMinor(previewDifference) })
+                          : t("cashPage.diffShortage", { amount: formatMinor(-previewDifference) })}
+                    </span>
+                  </div>
+                )}
+
+                <p className="rounded-xl border border-line bg-white/[0.02] px-3.5 py-2 text-[11px] font-semibold text-subtle">
+                  {t("cashPage.closeWarning")}
+                </p>
+
+                {error && (
+                  <p role="alert" className="rounded-xl border border-red/30 bg-red/10 px-3.5 py-2.5 text-[13px] font-semibold text-red">
+                    {error}
+                  </p>
+                )}
+
+                <div className="flex items-center gap-2 pt-1">
+                  <Button type="submit" loading={busy} disabled={busy || countedMajor === ""} className="font-bold">
+                    <LockKeyhole className="size-4" />
+                    {t("cashPage.closeBtn")}
+                  </Button>
+                  {hasPermission("cash.purge") && (
+                    <Button type="button" variant="ghost" className="text-red hover:text-red text-xs" disabled={busy}
+                      onClick={() => setConfirmAbort(true)}>
+                      {t("cashPage.deleteSessionBtn")}
+                    </Button>
+                  )}
+                </div>
+              </form>
+            ) : (
+              <div className="p-5 flex items-start gap-3.5 bg-amber-500/5 border-t border-white/[0.06]">
+                <div className="grid size-10 place-items-center rounded-xl bg-amber/15 text-amber shrink-0">
+                  <ShieldAlert className="size-5" />
+                </div>
+                <div className="space-y-1">
+                  <h4 className="text-sm font-bold text-foreground">الوردية الحالية قيد التشغيل بواسطة موظف آخر</h4>
+                  <p className="text-xs text-subtle leading-relaxed">
+                    {t("cashPage.sessionOwnedByOther", { name: openTotals.session.openedByName })}
+                  </p>
+                  <p className="text-[11px] text-faint">
+                    تم فتح هذه الوردية في {formatDateShort(new Date(openTotals.session.openedAt.replace(" ", "T")))} • {formatTime(openTotals.session.openedAt)}. لا يمكن استلام الدرج وفتح وردية جديدة إلا بعد قيام الموظف المسؤول ({openTotals.session.openedByName}) أو المالك بإغلاقها وتوثيق رصيدها.
+                  </p>
+                </div>
+              </div>
             )
           )}
-        </>
+        </Card>
       ) : (
         hasPermission("cash.open") && (
-          <Card>
-            <CardHeader
-              title={t("cashPage.openSession")}
-              description="بدء وردية استلام الخزينة وجرد النقدية الافتتاحية في الدرج"
-            />
-            <div className="px-5 pb-5 space-y-4">
-              {/* بطاقة توضيحية لآخر رصيد إغلاق مرحل */}
+          <Card className="overflow-hidden border border-white/[0.08] bg-panel/75 shadow-xl backdrop-blur-xl">
+            {/* Header */}
+            <div className="p-5 border-b border-white/[0.06]">
+              <div className="flex items-center gap-3">
+                <span className="relative flex size-3">
+                  <span className="relative inline-flex size-3 rounded-full bg-zinc-600"></span>
+                </span>
+                <div>
+                  <h3 className="text-base font-black text-white">
+                    درج الخزينة مغلق — لا توجد وردية مفتوحة حالياً
+                  </h3>
+                  <p className="text-xs text-subtle mt-0.5">
+                    الدرج جاهز للاستلام وبدء وردية عمل جديدة لموظف الاستقبال أو الكاشير
+                  </p>
+                </div>
+              </div>
+            </div>
+
+            <div className="p-5 space-y-4">
+              {/* Handover summary from last closed shift */}
               {lastClosedSession && (
-                <div className="p-3.5 rounded-2xl border border-line bg-surface/50 flex flex-wrap items-center justify-between gap-3 shadow-sm">
+                <div className="p-4 rounded-xl border border-white/[0.08] bg-surface/50 flex flex-wrap items-center justify-between gap-3 shadow-sm">
                   <div className="space-y-1">
-                    <span className="text-[11px] font-medium text-subtle block">
+                    <span className="text-xs font-semibold text-subtle block">
                       الرصيد الفعلي المرحل من آخر وردية مغلقة (الخزينة الموحدة):
                     </span>
-                    <div className="flex items-center gap-2">
-                      <span className="text-xl font-black text-white tabnum">
+                    <div className="flex items-center gap-2.5">
+                      <span className="text-2xl font-black text-neon tabnum">
                         {formatMinor(lastClosedSession.countedClosingMinor ?? lastClosedSession.expectedClosingMinor ?? 0)}
                       </span>
                       <span className="text-xs text-subtle">
-                        (الموظف: {lastClosedSession.closedByName || lastClosedSession.openedByName} • {formatDateShort(new Date(lastClosedSession.closedAt?.replace(" ", "T") || ""))} {formatTime(lastClosedSession.closedAt)})
+                        (الموظف: <span className="text-white font-bold">{lastClosedSession.closedByName || lastClosedSession.openedByName}</span> • {formatDateShort(new Date(lastClosedSession.closedAt?.replace(" ", "T") || ""))} {formatTime(lastClosedSession.closedAt)})
                       </span>
                     </div>
                   </div>
@@ -845,13 +920,14 @@ export function CashSessionsPanel() {
                       setOpeningMajor(prevVal);
                       toast("info", `تم ملء رصيد الفتح مطابقاً لرصيد الإغلاق السابق (${prevVal} ج.م)`);
                     }}
-                    className="text-xs font-bold h-8 border border-emerald-500/40 text-emerald-400 hover:bg-emerald-500/10 cursor-pointer"
+                    className="text-xs font-bold h-9 border border-emerald-500/40 text-emerald-400 hover:bg-emerald-500/10 cursor-pointer"
                   >
-                    استلام نفس رصيد الإغلاق السابق
+                    📋 استلام نفس رصيد الإغلاق السابق
                   </Button>
                 </div>
               )}
 
+              {/* Open Shift Form */}
               <form onSubmit={(e) => void onOpen(e)} noValidate className="max-w-xl space-y-4">
                 <div>
                   <Input
@@ -869,7 +945,7 @@ export function CashSessionsPanel() {
                   <p className="mt-1 text-[11px] text-faint">{t("cashPage.openingHint")}</p>
                 </div>
 
-                {/* كشف وتنبيه العجز عند الفتح */}
+                {/* Handover deficit alert if entered < previous closing */}
                 {lastClosedSession && openingMajor !== "" && (() => {
                   const prevClosing = lastClosedSession.countedClosingMinor ?? lastClosedSession.expectedClosingMinor ?? 0;
                   const entered = toMinor(openingMajor);
@@ -921,8 +997,8 @@ export function CashSessionsPanel() {
       )}
 
       {canViewReports && (
-      <Card>
-        <CardHeader
+        <Card className="border border-white/[0.08] bg-panel/75 shadow-xl backdrop-blur-xl overflow-hidden">
+          <CardHeader
           title={t("cashPage.historyTitle")}
           action={
             <div className="flex flex-wrap items-center gap-1.5">

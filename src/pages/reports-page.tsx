@@ -773,109 +773,10 @@ export function ReportsPage() {
         </div>
       </section>
 
-      {/* Executive Dashboard Hub */}
-      {report && (
-        <div className="grid grid-cols-2 gap-3 sm:grid-cols-3 lg:grid-cols-5">
-          {/* Card 1: Consolidated 5 Revenue Streams */}
-          <div className="group relative overflow-hidden rounded-2xl border border-emerald-500/30 bg-emerald-500/[0.04] p-3.5 backdrop-blur-md transition-all duration-200 hover:border-emerald-500/60 shadow-[0_0_15px_rgba(16,185,129,0.15)]">
-            <div className="flex items-center justify-between">
-              <span className="text-xs font-bold text-subtle">إيرادات الروافد الـ 5</span>
-              <div className="size-6 rounded-lg bg-emerald-500/15 text-emerald-400 grid place-items-center">
-                <TrendingUp className="size-3.5" />
-              </div>
-            </div>
-            <div className="mt-2 flex items-baseline gap-2">
-              <span className="tabnum font-mono text-2xl font-black text-emerald-400">
-                {formatMinor(report.revenueMinor)}
-              </span>
-            </div>
-            <div className="mt-1 flex items-center gap-1 text-[11px] text-emerald-400/80">
-              <span className="size-1.5 rounded-full bg-emerald-400 animate-pulse" />
-              <span>اشتراكات • متجر • PT • حصص • جلسات</span>
-            </div>
-          </div>
-
-          {/* Card 2: Net Profit & Net Margin */}
-          <div className="group relative overflow-hidden rounded-2xl border border-cyan-500/30 bg-cyan-500/[0.04] p-3.5 backdrop-blur-md transition-all duration-200 hover:border-cyan-500/60 shadow-[0_0_15px_rgba(6,182,212,0.15)]">
-            <div className="flex items-center justify-between">
-              <span className="text-xs font-bold text-subtle">صافي الأرباح</span>
-              <div className="size-6 rounded-lg bg-cyan-500/15 text-cyan-400 grid place-items-center">
-                <BarChart3 className="size-3.5" />
-              </div>
-            </div>
-            <div className="mt-2 flex items-baseline gap-2">
-              <span className="tabnum font-mono text-2xl font-black text-cyan-400">
-                {formatMinor(report.incomeStatement.netProfitMinor)}
-              </span>
-            </div>
-            <div className="mt-1 flex items-center gap-1 text-[11px] text-cyan-400/80">
-              <Percent className="size-3" />
-              <span>هامش صافي ربح: {report.incomeStatement.netMarginPercent}%</span>
-            </div>
-          </div>
-
-          {/* Card 3: Member Growth & Transactions */}
-          <div className="group relative overflow-hidden rounded-2xl border border-amber-500/30 bg-amber-500/[0.04] p-3.5 backdrop-blur-md transition-all duration-200 hover:border-amber-500/60 shadow-[0_0_15px_rgba(245,158,11,0.15)]">
-            <div className="flex items-center justify-between">
-              <span className="text-xs font-bold text-subtle">حركات الدفع والنمو</span>
-              <div className="size-6 rounded-lg bg-amber-500/15 text-amber-400 grid place-items-center">
-                <Users className="size-3.5" />
-              </div>
-            </div>
-            <div className="mt-2 flex items-baseline gap-2">
-              <span className="tabnum font-mono text-2xl font-black text-amber-400">
-                {report.paymentCount}
-              </span>
-              <span className="text-[11px] text-subtle">حركة توريد</span>
-            </div>
-            <div className="mt-1 flex items-center gap-1 text-[11px] text-amber-400/80">
-              <span>متوسط السند: {formatMinor(report.avgTicketMinor)}</span>
-            </div>
-          </div>
-
-          {/* Card 4: Net Liquidity */}
-          <div className="group relative overflow-hidden rounded-2xl border border-violet-500/30 bg-violet-500/[0.04] p-3.5 backdrop-blur-md transition-all duration-200 hover:border-violet-500/60 shadow-[0_0_15px_rgba(139,92,246,0.15)]">
-            <div className="flex items-center justify-between">
-              <span className="text-xs font-bold text-subtle">السيولة النقدية</span>
-              <div className="size-6 rounded-lg bg-violet-500/15 text-violet-400 grid place-items-center">
-                <Wallet className="size-3.5" />
-              </div>
-            </div>
-            <div className="mt-2 flex items-baseline gap-2">
-              <span className="tabnum font-mono text-xl font-black text-violet-400">
-                {formatMinor(report.liquidity.netLiquidityMinor)}
-              </span>
-            </div>
-            <div className="mt-1 flex items-center gap-1 text-[11px] text-violet-400/80">
-              <Coins className="size-3" />
-              <span>نقدية وخزائن وبنوك</span>
-            </div>
-          </div>
-
-          {/* Card 5: Outstanding Debts */}
-          <div className="group relative overflow-hidden rounded-2xl border border-rose-500/30 bg-rose-500/[0.04] p-3.5 backdrop-blur-md transition-all duration-200 hover:border-rose-500/60 shadow-[0_0_15px_rgba(244,63,94,0.15)]">
-            <div className="flex items-center justify-between">
-              <span className="text-xs font-bold text-subtle">الديون والمستحقات</span>
-              <div className="size-6 rounded-lg bg-rose-500/15 text-rose-400 grid place-items-center">
-                <ReceiptText className="size-3.5" />
-              </div>
-            </div>
-            <div className="mt-2 flex items-baseline gap-2">
-              <span className="tabnum font-mono text-xl font-black text-rose-400">
-                {formatMinor(report.receivables.totalReceivablesMinor)}
-              </span>
-            </div>
-            <div className="mt-1 flex items-center gap-1 text-[11px] text-rose-400/80">
-              <span>مستحقات معلقة بالسوق</span>
-            </div>
-          </div>
-        </div>
-      )}
-
-      {/* Unified Glass Capsule Navigation Console */}
-      <div className="space-y-3 rounded-2xl border border-white/[0.08] bg-[#0F1420]/80 p-3 shadow-lg backdrop-blur-md">
-        {/* Primary View Glass Capsules */}
-        <div className="flex flex-wrap items-center gap-1.5 p-1 rounded-full bg-panel/60 backdrop-blur-md border border-panel-border/50">
+      {/* Navigation, Period & Actions Toolbar */}
+      <div className="flex flex-col gap-3 rounded-2xl border border-white/[0.08] bg-panel/75 p-3 shadow-lg shadow-black/20 backdrop-blur-xl sm:flex-row sm:items-center sm:justify-between">
+        {/* Primary View Pills */}
+        <div className="flex flex-wrap items-center gap-1.5 rounded-xl bg-surface/60 p-1 border border-white/[0.06]">
           {VIEWS.map((v) => {
             const active = view === v.value;
             return (
@@ -884,10 +785,10 @@ export function ReportsPage() {
                 type="button"
                 onClick={() => setView(v.value as ReportView)}
                 className={cn(
-                  "flex items-center gap-2 px-4 py-2 rounded-full text-xs font-bold transition-all duration-200",
+                  "flex items-center gap-2 px-3.5 py-1.5 rounded-lg text-xs font-bold transition-all duration-200 cursor-pointer",
                   active
-                    ? "bg-neon/15 text-neon border border-neon/50 shadow-glow-sm"
-                    : "text-subtle hover:text-ink hover:bg-white/[0.05] border border-transparent"
+                    ? "bg-neon/15 text-white border border-neon/50 shadow-[0_0_12px_rgba(57,255,20,0.25)]"
+                    : "text-subtle hover:text-white hover:bg-white/[0.05] border border-transparent"
                 )}
               >
                 <span>{t(v.key)}</span>
@@ -896,104 +797,199 @@ export function ReportsPage() {
           })}
         </div>
 
-        {/* Period Glass Capsule Pills */}
-        <div className="flex flex-wrap items-center gap-1.5 p-1 rounded-full bg-surface/40 backdrop-blur-md border border-white/[0.06]">
-          {PERIODS.map((p) => {
-            const active = period === p.value;
-            return (
-              <button
-                key={p.value}
-                type="button"
-                onClick={() => setPeriod(p.value as PeriodValue)}
-                className={cn(
-                  "flex items-center gap-1.5 px-3 py-1.5 rounded-full text-xs font-bold transition-all duration-200",
-                  active
-                    ? "bg-cyan-500/15 text-cyan-400 border border-cyan-500/50 shadow-glow-sm"
-                    : "text-subtle hover:text-ink hover:bg-white/[0.05] border border-transparent"
-                )}
+        {/* Period Pills + Action Buttons */}
+        <div className="flex flex-wrap items-center gap-2">
+          <div className="flex items-center gap-1 rounded-xl bg-surface/60 p-1 border border-white/[0.06]">
+            {PERIODS.map((p) => {
+              const active = period === p.value;
+              return (
+                <button
+                  key={p.value}
+                  type="button"
+                  onClick={() => setPeriod(p.value as PeriodValue)}
+                  className={cn(
+                    "px-3 py-1.5 rounded-lg text-xs font-bold transition-all duration-200 cursor-pointer",
+                    active
+                      ? "bg-cyan-500/20 text-cyan-300 border border-cyan-500/50 shadow-sm"
+                      : "text-subtle hover:text-white hover:bg-white/[0.05] border border-transparent"
+                  )}
+                >
+                  <span>{t(p.key)}</span>
+                </button>
+              );
+            })}
+          </div>
+
+          {view === "finance" && report && (
+            <div className="flex items-center gap-2">
+              <Button
+                variant="secondary"
+                size="sm"
+                onClick={handleExportCsv}
+                className="rounded-xl h-8 text-xs gap-1.5 border border-white/[0.08]"
               >
-                <span>{t(p.key)}</span>
-              </button>
-            );
-          })}
+                <FileSpreadsheet className="size-3.5 text-emerald-400" />
+                <span>{t("rpt.exportExcel")}</span>
+              </Button>
+              <Button
+                variant="primary"
+                size="sm"
+                onClick={() => setPrintModalOpen(true)}
+                className="rounded-xl h-8 text-xs gap-1.5 shadow-md shadow-neon/10"
+              >
+                <Printer className="size-3.5" />
+                <span>{t("rpt.printReport")}</span>
+              </Button>
+            </div>
+          )}
         </div>
       </div>
 
       {period === "custom" && (
-        <Card className="max-w-xl">
-          <div className="flex flex-wrap items-end gap-3 px-5 py-4">
-            <Input
-              label={t("rpt.from")}
-              type="date"
-              dir="ltr"
-              value={customFrom}
-              onChange={(e) => setCustomFrom(e.target.value)}
-            />
-            <Input
-              label={t("rpt.to")}
-              type="date"
-              dir="ltr"
-              value={customTo}
-              onChange={(e) => setCustomTo(e.target.value)}
-            />
-            <Button onClick={() => setAppliedCustom({ fromKey: customFrom, toKey: customTo })}>
-              {t("rpt.apply")}
-            </Button>
+        <div className="flex flex-wrap items-end gap-3 rounded-2xl border border-white/[0.08] bg-panel/75 p-3.5 backdrop-blur-md shadow-sm max-w-xl">
+          <Input
+            label={t("rpt.from")}
+            type="date"
+            dir="ltr"
+            value={customFrom}
+            onChange={(e) => setCustomFrom(e.target.value)}
+          />
+          <Input
+            label={t("rpt.to")}
+            type="date"
+            dir="ltr"
+            value={customTo}
+            onChange={(e) => setCustomTo(e.target.value)}
+          />
+          <Button onClick={() => setAppliedCustom({ fromKey: customFrom, toKey: customTo })}>
+            {t("rpt.apply")}
+          </Button>
+        </div>
+      )}
+
+      {/* 4 Clean Primary Financial KPI Cards */}
+      {view === "finance" && report && (
+        <section className="grid gap-3.5 sm:grid-cols-2 lg:grid-cols-4">
+          {/* Card 1: الإيرادات */}
+          <div className="relative overflow-hidden rounded-2xl border border-emerald-500/25 bg-emerald-500/[0.04] p-4 backdrop-blur-md shadow-md transition-all hover:border-emerald-500/50">
+            <div className="flex items-center justify-between">
+              <span className="text-xs font-bold text-subtle">{t("rpt.revenue")}</span>
+              <div className="size-8 rounded-xl bg-emerald-500/15 text-emerald-400 grid place-items-center shadow-inner">
+                <TrendingUp className="size-4" />
+              </div>
+            </div>
+            <div className="mt-2.5">
+              <span className="font-mono text-2xl font-black text-emerald-400 tabnum" dir="ltr">
+                {formatMinor(report.revenueMinor)}
+              </span>
+            </div>
+            <div className="mt-1 flex items-center gap-1.5 text-xs text-subtle">
+              <span className="size-1.5 rounded-full bg-emerald-400" />
+              <span>{t("rpt.count", { count: report.paymentCount })} • متوسط {formatMinor(report.avgTicketMinor)}</span>
+            </div>
           </div>
-        </Card>
+
+          {/* Card 2: المصروفات */}
+          <div className="relative overflow-hidden rounded-2xl border border-rose-500/25 bg-rose-500/[0.04] p-4 backdrop-blur-md shadow-md transition-all hover:border-rose-500/50">
+            <div className="flex items-center justify-between">
+              <span className="text-xs font-bold text-subtle">{t("rpt.expenses")}</span>
+              <div className="size-8 rounded-xl bg-rose-500/15 text-rose-400 grid place-items-center shadow-inner">
+                <TrendingDown className="size-4" />
+              </div>
+            </div>
+            <div className="mt-2.5">
+              <span className="font-mono text-2xl font-black text-rose-400 tabnum" dir="ltr">
+                {formatMinor(report.expensesMinor)}
+              </span>
+            </div>
+            <div className="mt-1 flex items-center gap-1.5 text-xs text-subtle">
+              <span className="size-1.5 rounded-full bg-rose-400" />
+              <span>شامل المصروفات التشغيلية والرواتب</span>
+            </div>
+          </div>
+
+          {/* Card 3: صافي الأرباح */}
+          <div className={cn(
+            "relative overflow-hidden rounded-2xl border p-4 backdrop-blur-md shadow-md transition-all",
+            report.incomeStatement.netProfitMinor >= 0
+              ? "border-cyan-500/25 bg-cyan-500/[0.04] hover:border-cyan-500/50"
+              : "border-rose-500/25 bg-rose-500/[0.04] hover:border-rose-500/50"
+          )}>
+            <div className="flex items-center justify-between">
+              <span className="text-xs font-bold text-subtle">{t("rpt.netProfit")}</span>
+              <div className={cn(
+                "size-8 rounded-xl grid place-items-center shadow-inner",
+                report.incomeStatement.netProfitMinor >= 0
+                  ? "bg-cyan-500/15 text-cyan-400"
+                  : "bg-rose-500/15 text-rose-400"
+              )}>
+                <BarChart3 className="size-4" />
+              </div>
+            </div>
+            <div className="mt-2.5">
+              <span className={cn(
+                "font-mono text-2xl font-black tabnum",
+                report.incomeStatement.netProfitMinor >= 0 ? "text-cyan-400" : "text-rose-400"
+              )} dir="ltr">
+                {formatMinor(report.incomeStatement.netProfitMinor)}
+              </span>
+            </div>
+            <div className="mt-1 flex items-center gap-1.5 text-xs text-subtle">
+              <Percent className="size-3 text-cyan-400" />
+              <span>هامش صافي ربح: {report.incomeStatement.netMarginPercent}%</span>
+            </div>
+          </div>
+
+          {/* Card 4: السيولة النقدية المتاحة */}
+          <div className="relative overflow-hidden rounded-2xl border border-amber-500/25 bg-amber-500/[0.04] p-4 backdrop-blur-md shadow-md transition-all hover:border-amber-500/50">
+            <div className="flex items-center justify-between">
+              <span className="text-xs font-bold text-subtle">{t("rpt.netLiquidity")}</span>
+              <div className="size-8 rounded-xl bg-amber-500/15 text-amber-400 grid place-items-center shadow-inner">
+                <Wallet className="size-4" />
+              </div>
+            </div>
+            <div className="mt-2.5">
+              <span className="font-mono text-2xl font-black text-amber-400 tabnum" dir="ltr">
+                {formatMinor(report.liquidity.netLiquidityMinor)}
+              </span>
+            </div>
+            <div className="mt-1 flex items-center gap-1.5 text-xs text-subtle">
+              <Coins className="size-3 text-amber-400" />
+              <span>نقدية الخزينة والمحافظ والبنوك</span>
+            </div>
+          </div>
+        </section>
       )}
 
       {view === "finance" && (report === null ? (
         <EmptyState icon={<BarChart3 />} title={t("rpt.emptyRange")} />
       ) : (
         <>
-          <div className="flex flex-wrap items-center justify-between gap-3 bg-[#0F1420]/80 p-2.5 rounded-2xl border border-white/[0.08] backdrop-blur-md">
-            <div className="flex flex-wrap items-center gap-1.5 p-1 rounded-full bg-surface/50 border border-white/[0.06]">
-              {[
-                { value: "overview", label: t("rpt.tabSubOverview") },
-                { value: "streams", label: t("rpt.tabSubStreams") },
-                { value: "receivables", label: t("rpt.tabSubReceivables") },
-                { value: "liquidity", label: t("rpt.tabSubLiquidity") },
-                { value: "details", label: t("rpt.tabSubDetails") },
-              ].map((sub) => {
-                const active = financeSubTab === sub.value;
-                return (
-                  <button
-                    key={sub.value}
-                    type="button"
-                    onClick={() => setFinanceSubTab(sub.value as typeof financeSubTab)}
-                    className={cn(
-                      "px-3.5 py-1.5 rounded-full text-xs font-bold transition-all duration-200",
-                      active
-                        ? "bg-neon/15 text-neon border border-neon/50 shadow-glow-sm"
-                        : "text-subtle hover:text-ink hover:bg-white/[0.05] border border-transparent"
-                    )}
-                  >
-                    {sub.label}
-                  </button>
-                );
-              })}
-            </div>
-            <div className="flex items-center gap-2">
-              <Button
-                variant="secondary"
-                size="sm"
-                onClick={handleExportCsv}
-                icon={<FileSpreadsheet className="size-4" />}
-                className="rounded-xl h-8 text-xs"
-              >
-                {t("rpt.exportExcel")}
-              </Button>
-              <Button
-                variant="primary"
-                size="sm"
-                onClick={() => setPrintModalOpen(true)}
-                icon={<Printer className="size-4" />}
-                className="rounded-xl h-8 text-xs shadow-glow-sm"
-              >
-                {t("rpt.printReport")}
-              </Button>
-            </div>
+          <div className="flex flex-wrap items-center gap-2 rounded-2xl border border-white/[0.08] bg-panel/75 p-2 backdrop-blur-xl shadow-md">
+            {[
+              { value: "overview", label: t("rpt.tabSubOverview") },
+              { value: "streams", label: t("rpt.tabSubStreams") },
+              { value: "receivables", label: t("rpt.tabSubReceivables") },
+              { value: "liquidity", label: t("rpt.tabSubLiquidity") },
+              { value: "details", label: t("rpt.tabSubDetails") },
+            ].map((sub) => {
+              const active = financeSubTab === sub.value;
+              return (
+                <button
+                  key={sub.value}
+                  type="button"
+                  onClick={() => setFinanceSubTab(sub.value as typeof financeSubTab)}
+                  className={cn(
+                    "px-4 py-2 rounded-xl text-xs font-bold transition-all duration-200 cursor-pointer",
+                    active
+                      ? "bg-neon/15 text-white border border-neon/50 shadow-[0_0_12px_rgba(57,255,20,0.25)]"
+                      : "text-subtle hover:text-white hover:bg-white/[0.05] border border-transparent"
+                  )}
+                >
+                  {sub.label}
+                </button>
+              );
+            })}
           </div>
 
           {selectedBranch !== "all" && (
@@ -1006,67 +1002,6 @@ export function ReportsPage() {
           {/* SubTab 1: Overview & P&L */}
           {financeSubTab === "overview" && (
             <div className="space-y-5">
-              <section className="grid gap-4 sm:grid-cols-2 xl:grid-cols-4">
-                <StatCard
-                  title={t("rpt.revenue")}
-                  subtitle={`${t("rpt.count", { count: report.paymentCount })}`}
-                  value={formatMinor(report.revenueMinor)}
-                  icon={<TrendingUp className="size-5" />}
-                  accent="neon"
-                />
-                <StatCard
-                  title={t("rpt.cogs")}
-                  subtitle={t("rpt.cogsSubtitle")}
-                  value={formatMinor(report.incomeStatement.cogsMinor)}
-                  icon={<ShoppingBag className="size-5" />}
-                  accent="amber"
-                />
-                <StatCard
-                  title={t("rpt.grossProfit")}
-                  subtitle={`هامش ربح إجمالي: ${report.incomeStatement.grossMarginPercent}%`}
-                  value={formatMinor(report.incomeStatement.grossProfitMinor)}
-                  icon={<Percent className="size-5" />}
-                  accent={report.incomeStatement.grossProfitMinor >= 0 ? "emerald" : "red"}
-                />
-                <StatCard
-                  title={t("rpt.expenses")}
-                  value={formatMinor(report.expensesMinor)}
-                  icon={<TrendingDown className="size-5" />}
-                  accent="red"
-                />
-              </section>
-
-              <section className="grid gap-4 sm:grid-cols-2 xl:grid-cols-4">
-                <StatCard
-                  title={t("rpt.netProfit")}
-                  subtitle={`هامش صافي ربح: ${report.incomeStatement.netMarginPercent}%`}
-                  value={formatMinor(report.incomeStatement.netProfitMinor)}
-                  icon={<BarChart3 className="size-5" />}
-                  accent={report.incomeStatement.netProfitMinor >= 0 ? "cyan" : "red"}
-                />
-                <StatCard
-                  title={t("rpt.refunds")}
-                  subtitle={`${t("rpt.avgTicket")}: ${formatMinor(report.avgTicketMinor)}`}
-                  value={formatMinor(report.refundsMinor + report.incomeStatement.returnsMinor)}
-                  icon={<ReceiptText className="size-5" />}
-                  accent="amber"
-                />
-                <StatCard
-                  title={t("rpt.totalReceivablesTitle")}
-                  subtitle="مستحقات معلقة بالسوق"
-                  value={formatMinor(report.receivables.totalReceivablesMinor)}
-                  icon={<Coins className="size-5" />}
-                  accent="violet"
-                />
-                <StatCard
-                  title={t("rpt.netLiquidity")}
-                  subtitle="نقدية ومحافظ وبنوك"
-                  value={formatMinor(report.liquidity.netLiquidityMinor)}
-                  icon={<Wallet className="size-5" />}
-                  accent="neon"
-                />
-              </section>
-
               {/* Full P&L Table */}
               <Card>
                 <CardHeader

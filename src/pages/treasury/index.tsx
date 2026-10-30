@@ -14,23 +14,19 @@ import { Pagination } from "@/components/ui/pagination";
 import {
   ArrowDownLeft,
   ArrowUpRight,
-  CheckCircle2,
   Coins,
   FileSpreadsheet,
   ReceiptText,
-  ShieldAlert,
   TrendingDown,
   TrendingUp,
-  Users,
   Clock3,
-  ShoppingBag,
+  LockKeyhole,
 } from "lucide-react";
 import { CashSessionsPanel } from "@/pages/cash-page";
 import { PaymentMethodsBreakdownRibbon } from "@/components/finance/payment-methods-breakdown-ribbon";
-import { TreasuryStoreTab } from "@/components/treasury/treasury-store-tab";
+import { ZReportModal } from "@/components/finance/z-report-modal";
 import {
   api,
-  type CashierPerformanceItem,
   type LedgerEntry,
   type PublicUser,
 } from "@/api";
@@ -38,20 +34,20 @@ import { formatMinor } from "@/core/money";
 import { formatDateShort, formatTime } from "@/services/format";
 import { appConfig } from "@/config/app.config";
 import { downloadCsvWithBom } from "@/utils/csv-helper";
-import { FinanceHubHeader } from "@/components/finance/finance-hub-header";
 import { cn } from "@/utils/cn";
 
-type TreasuryTab = "sessions" | "store" | "ledger" | "cashiers";
+type TreasuryTab = "sessions" | "ledger";
 
 export function TreasuryPage() {
   const t = useT();
   const { hasPermission } = useAuth();
   const [activeTab, setActiveTab] = useState<TreasuryTab>("sessions");
   const [selectedMethod, setSelectedMethod] = useState<string | null>(null);
+  const [zReportOpen, setZReportOpen] = useState(false);
 
   const canView = hasPermission("payments.view");
   const canViewReports = hasPermission("reports.view");
-  const canViewStore = hasPermission("store.view");
+  const canCashClose = hasPermission("cash.close");
 
   if (!canView) {
     return (
@@ -62,16 +58,10 @@ export function TreasuryPage() {
   }
 
   const subTabs = [
-    { value: "sessions", label: "الورديات اليومية وتقفيل الوردية (Z-Report)", icon: Clock3 },
-    ...(canViewStore
-      ? [
-          { value: "store", label: "مبيعات وأرباح المتجر والبار", icon: ShoppingBag },
-        ]
-      : []),
+    { value: "sessions", label: "الورديات اليومية وتقفيل الوردية", icon: Clock3 },
     ...(canViewReports
       ? [
           { value: "ledger", label: "سجل القيود المحاسبي المباشر", icon: ReceiptText },
-          { value: "cashiers", label: "أداء وتحصيل الكاشير", icon: Users },
         ]
       : []),
   ];
@@ -84,24 +74,38 @@ export function TreasuryPage() {
           <h2 className="text-2xl font-extrabold tracking-tight text-foreground">{t("treasury.title")}</h2>
           <p className="text-[13px] text-subtle mt-1">{t("treasury.subtitle")}</p>
         </div>
+        {canCashClose && (
+          <Button
+            type="button"
+            variant="secondary"
+            onClick={() => setZReportOpen(true)}
+            className="border border-amber-500/40 text-amber-300 hover:bg-amber-500/10 font-bold gap-2 cursor-pointer h-10 shadow-md shadow-amber-500/10"
+          >
+            <LockKeyhole className="size-4 text-amber-400" />
+            <span>⚡ تقفيل الوردية (Z-Report)</span>
+          </Button>
+        )}
       </section>
-
-      {/* Finance Hub Navigation & Live Telemetry Strip */}
-      <FinanceHubHeader currentSection="treasury" />
 
       {/* Real-time Payment Methods Distribution Ribbon (كاش، انستاباي، فيزا، محفظة...) */}
       <PaymentMethodsBreakdownRibbon
         selectedMethod={selectedMethod}
         onSelectMethod={(method) => {
           setSelectedMethod(method);
-          if (method && activeTab !== "ledger" && activeTab !== "store") {
+          if (method && activeTab !== "ledger") {
             setActiveTab("ledger");
           }
         }}
       />
 
-      {/* Glass Capsule Sub-Tabs */}
-      <div className="flex flex-wrap items-center gap-2 rounded-full border border-panel-border/50 bg-panel/60 p-2 backdrop-blur-xl shadow-lg shadow-black/20">
+      {/* Z-Report Modal */}
+      <ZReportModal
+        open={zReportOpen}
+        onClose={() => setZReportOpen(false)}
+      />
+
+      {/* Strip 4: Glass Capsule Sub-Tabs */}
+      <div className="flex flex-wrap items-center gap-2 rounded-2xl border border-white/[0.08] bg-panel/75 p-2 backdrop-blur-xl shadow-lg shadow-black/20">
         {subTabs.map((st) => {
           const isActive = activeTab === st.value;
           const Icon = st.icon;
@@ -111,7 +115,7 @@ export function TreasuryPage() {
               type="button"
               onClick={() => setActiveTab(st.value as TreasuryTab)}
               className={cn(
-                "group flex items-center gap-2 rounded-full px-4 py-2 text-xs font-bold transition-all duration-200 cursor-pointer",
+                "group flex items-center gap-2 rounded-xl px-4 py-2 text-xs font-bold transition-all duration-200 cursor-pointer",
                 isActive
                   ? "bg-neon/15 border border-neon/60 text-white shadow-[0_0_12px_rgba(57,255,20,0.25)]"
                   : "border border-transparent text-subtle hover:text-white hover:bg-surface/60",
@@ -127,19 +131,11 @@ export function TreasuryPage() {
       {/* Tab 1: Cash Sessions (الورديات اليومية والخزائن) */}
       {activeTab === "sessions" && (
         <section className="space-y-4">
-          <p className="text-xs text-subtle">{t("treasury.sessionsDesc")}</p>
           <CashSessionsPanel />
         </section>
       )}
 
-      {/* Tab 2: Store & Bar Hub (مبيعات وأرباح المتجر والبار) */}
-      {canViewStore && activeTab === "store" && (
-        <section className="space-y-4">
-          <TreasuryStoreTab />
-        </section>
-      )}
-
-      {/* Tab 3: Live Financial Ledger (سجل القيود وحركات الخزينة المباشرة) */}
+      {/* Tab 2: Live Financial Ledger (سجل القيود وحركات الخزينة المباشرة) */}
       {canViewReports && activeTab === "ledger" && (
         <section className="space-y-4">
           <p className="text-xs text-subtle">{t("treasury.ledgerDesc")}</p>
@@ -147,14 +143,6 @@ export function TreasuryPage() {
             selectedMethod={selectedMethod}
             onSelectMethod={setSelectedMethod}
           />
-        </section>
-      )}
-
-      {/* Tab 3: Cashier Performance Summary (ملخص أداء وتحصيل الكاشير) */}
-      {canViewReports && activeTab === "cashiers" && (
-        <section className="space-y-4">
-          <p className="text-xs text-subtle">{t("treasury.cashiersDesc")}</p>
-          <CashierPerformancePanel />
         </section>
       )}
     </div>
@@ -651,249 +639,6 @@ function TreasuryLedgerPanel({ selectedMethod, onSelectMethod }: TreasuryLedgerP
               onPageChange={setPage}
             />
           </>
-        )}
-      </Card>
-    </div>
-  );
-}
-
-/** Component for Tab 3: Cashier Performance Summary */
-function CashierPerformancePanel() {
-  const [items, setItems] = useState<CashierPerformanceItem[]>([]);
-  const [fromKey, setFromKey] = useState("");
-  const [toKey, setToKey] = useState("");
-  const { toast } = useToast();
-
-  const onExportCashiersCsv = () => {
-    if (items.length === 0) return;
-    const headers = [
-      "الموظف / الكاشير",
-      "اسم المستخدم",
-      "عدد الورديات",
-      "إجمالي المقبوضات (ج.م)",
-      "إجمالي النقد المعدود (ج.م)",
-      "الورديات المطابقة",
-      "حالات العجز",
-      "حالات الفائض",
-      "صافي فرق الجرد (ج.م)",
-      "نسبة المطابقة (%)",
-    ];
-    const dataRows = items.map((r) => [
-      r.fullName || r.username,
-      `@${r.username}`,
-      r.sessionsCount,
-      (r.totalCollectionsMinor / 100).toFixed(2),
-      (r.totalCountedMinor / 100).toFixed(2),
-      r.exactCount,
-      r.shortageCount,
-      r.surplusCount,
-      (r.totalDifferenceMinor / 100).toFixed(2),
-      `${r.sessionsCount > 0 ? Math.round((r.exactCount / r.sessionsCount) * 100) : 100}%`,
-    ]);
-    downloadCsvWithBom(`تقرير_أداء_الكاشير_${new Date().toISOString().slice(0, 10)}`, headers, dataRows);
-    toast("success", "تم تصدير تقرير أداء الكاشير إلى إكسيل بنجاح");
-  };
-
-  useEffect(() => {
-    let alive = true;
-    api.cash
-      .cashierSummary({
-        fromKey: fromKey || undefined,
-        toKey: toKey || undefined,
-      })
-      .then((res) => {
-        if (alive) {
-          setItems(res);
-        }
-      })
-      .catch((err) => {
-        console.error(err);
-      });
-    return () => {
-      alive = false;
-    };
-  }, [fromKey, toKey]);
-
-  const columns: Column<CashierPerformanceItem>[] = [
-    {
-      key: "name",
-      header: "اسم الموظف / الكاشير",
-      render: (row) => (
-        <div className="flex flex-col text-xs">
-          <span className="font-bold text-foreground text-sm">{row.fullName || row.username}</span>
-          <span className="text-[11px] text-faint">@{row.username}</span>
-        </div>
-      ),
-    },
-    {
-      key: "sessions",
-      header: "عدد الورديات",
-      render: (row) => (
-        <span className="tabnum font-bold text-foreground">{row.sessionsCount}</span>
-      ),
-    },
-    {
-      key: "collections",
-      header: "إجمالي المقبوضات المحصلة",
-      render: (row) => (
-        <span dir="ltr" className="tabnum font-extrabold text-emerald text-sm">
-          {formatMinor(row.totalCollectionsMinor)}
-        </span>
-      ),
-    },
-    {
-      key: "counted",
-      header: "إجمالي النقد المعدود بالدرج",
-      render: (row) => (
-        <span dir="ltr" className="tabnum font-bold text-foreground">
-          {formatMinor(row.totalCountedMinor)}
-        </span>
-      ),
-    },
-    {
-      key: "exact",
-      header: "ورديات مطابقة تماماً",
-      render: (row) => (
-        <span className="flex items-center gap-1 text-emerald font-semibold text-xs">
-          <CheckCircle2 className="size-3.5" />
-          {row.exactCount} وردية
-        </span>
-      ),
-    },
-    {
-      key: "discrepancies",
-      header: "الورديات غير المطابقة",
-      render: (row) => (
-        <div className="flex flex-col gap-1 text-xs">
-          {row.shortageCount > 0 ? (
-            <span className="text-red font-bold flex items-center gap-1">
-              <ShieldAlert className="size-3" />
-              عجز في {row.shortageCount} وردية
-            </span>
-          ) : null}
-          {row.surplusCount > 0 ? (
-            <span className="text-amber font-bold">فائض في {row.surplusCount} وردية</span>
-          ) : null}
-          {row.shortageCount === 0 && row.surplusCount === 0 ? (
-            <span className="text-faint">لا يوجد أي عجز أو زيادة</span>
-          ) : null}
-        </div>
-      ),
-    },
-    {
-      key: "diff",
-      header: "صافي فرق الجرد",
-      render: (row) => (
-        <span
-          dir="ltr"
-          className={`tabnum font-extrabold text-sm ${
-            row.totalDifferenceMinor === 0
-              ? "text-faint"
-              : row.totalDifferenceMinor < 0
-              ? "text-red"
-              : "text-amber"
-          }`}
-        >
-          {row.totalDifferenceMinor === 0
-            ? "0.00"
-            : row.totalDifferenceMinor > 0
-            ? `+${formatMinor(row.totalDifferenceMinor)}`
-            : formatMinor(row.totalDifferenceMinor)}
-        </span>
-      ),
-    },
-    {
-      key: "accuracy",
-      header: "نسبة المطابقة",
-      render: (row) => {
-        const rate = row.sessionsCount > 0 ? Math.round((row.exactCount / row.sessionsCount) * 100) : 100;
-        return (
-          <Badge variant={rate === 100 ? "success" : rate >= 80 ? "warning" : "danger"}>
-            {rate}% مطابقة
-          </Badge>
-        );
-      },
-    },
-  ];
-
-  return (
-    <div className="space-y-4">
-      {/* Date filter presets */}
-      <Card>
-        <CardHeader
-          title="ملخص ومقارنة أداء مسؤولي الخزينة والكاشير"
-          action={
-            <div className="flex flex-wrap items-center gap-1.5">
-              <Button
-                variant={!fromKey && !toKey ? "secondary" : "ghost"}
-                size="sm"
-                onClick={() => {
-                  setFromKey("");
-                  setToKey("");
-                }}
-                className="text-xs h-7 px-2.5"
-              >
-                الكل
-              </Button>
-              <Button
-                variant="ghost"
-                size="sm"
-                onClick={() => {
-                  const today = new Date().toISOString().slice(0, 10);
-                  setFromKey(today);
-                  setToKey(today);
-                }}
-                className="text-xs h-7 px-2.5"
-              >
-                اليوم
-              </Button>
-              <Button
-                variant="ghost"
-                size="sm"
-                onClick={() => {
-                  const now = new Date();
-                  const sevenDaysAgo = new Date(now.getTime() - 7 * 86400000).toISOString().slice(0, 10);
-                  setFromKey(sevenDaysAgo);
-                  setToKey(now.toISOString().slice(0, 10));
-                }}
-                className="text-xs h-7 px-2.5"
-              >
-                آخر 7 أيام
-              </Button>
-              <Button
-                variant="secondary"
-                size="sm"
-                onClick={onExportCashiersCsv}
-                disabled={items.length === 0}
-                className="text-xs h-7 px-2.5 gap-1.5 font-bold border border-emerald/40 text-emerald hover:bg-emerald/10"
-              >
-                <FileSpreadsheet className="size-3.5" />
-                تصدير Excel
-              </Button>
-            </div>
-          }
-        />
-        <div className="border-b border-line/40 bg-subtle/5 p-4 flex flex-wrap items-center gap-3">
-          <Input
-            label="من تاريخ"
-            type="date"
-            dir="ltr"
-            value={fromKey}
-            onChange={(e) => setFromKey(e.target.value)}
-          />
-          <Input
-            label="إلى تاريخ"
-            type="date"
-            dir="ltr"
-            value={toKey}
-            onChange={(e) => setToKey(e.target.value)}
-          />
-        </div>
-
-        {items.length === 0 ? (
-          <EmptyState icon={<Users />} title="لا توجد بيانات مسجلة للكاشير في هذه الفترة" />
-        ) : (
-          <DataTable columns={columns} data={items} rowKey={(r) => r.userId} />
         )}
       </Card>
     </div>

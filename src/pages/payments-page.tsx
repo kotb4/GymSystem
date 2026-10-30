@@ -25,7 +25,6 @@ import { PaymentFormModal } from "@/components/finance/payment-form-modal";
 import { PaymentRefundModal, PaymentVoidModal } from "@/components/finance/payment-actions";
 import { ReceiptActions } from "@/components/finance/receipt-actions";
 import { useFocusRow } from "@/hooks/use-focus-row";
-import { FinanceHubHeader } from "@/components/finance/finance-hub-header";
 
 const STATUS_OPTIONS: Array<{ value: string; key: string }> = [
   { value: "all", key: "common.all" },
@@ -351,9 +350,6 @@ export function PaymentsPage() {
           </Button>
         )}
       </section>
-
-      {/* Finance Hub Navigation & Live Telemetry Strip */}
-      <FinanceHubHeader currentSection="payments" />
 
       <section className="grid gap-4 sm:grid-cols-2">
         <StatCard
